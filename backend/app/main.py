@@ -1,0 +1,74 @@
+"""FastAPI application entry point"""
+
+from contextlib import asynccontextmanager
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+from app.api.router import api_router
+from app.core.config import settings
+from app.core.logging import setup_logging
+from app.core.exceptions import AppException
+
+
+# Setup logging
+setup_logging()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Application lifespan manager"""
+    # Startup
+    print(f"Starting {settings.app_name} v{settings.app_version}")
+    print(f"Environment: {settings.environment}")
+    yield
+    # Shutdown
+    print(f"Shutting down {settings.app_name}")
+
+
+# Create FastAPI application
+app = FastAPI(
+    title=settings.app_name,
+    version=settings.app_version,
+    description="AI-powered Project Management Backend",
+    docs_url="/docs",
+    redoc_url="/redoc",
+    lifespan=lifespan,
+)
+
+
+# Configure CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.cors_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+# Include API router
+app.include_router(api_router, prefix="/api/v1")
+
+
+# Exception handlers
+@app.exception_handler(AppException)
+async def app_exception_handler(request, exc: AppException):
+    """Handle custom application exceptions"""
+    from fastapi.responses import JSONResponse
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"code": exc.status_code, "message": exc.detail},
+    )
+
+
+@app.exception_handler(Exception)
+async def general_exception_handler(request, exc: Exception):
+    """Handle all other exceptions"""
+    from fastapi.responses import JSONResponse
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.error(f"Unhandled exception: {exc}", exc_info=True)
+    return JSONResponse(
+        status_code=500,
+        content={"code": 500, "message": "Internal server error"},
+    )
