@@ -12,6 +12,16 @@ from app.core.db import Base
 from app.modules.item.models import Item, ItemSuggestion
 from app.modules.analysis.models import Analysis
 from app.modules.output.models import Output
+from app.modules.delivery.models import (
+    CodingTask,
+    DemandItem,
+    ExecutionLog,
+    ExecutionRun,
+    GateCheck,
+    ImpactAnalysis,
+    RepoContext,
+    SpecCard,
+)
 
 # Alembic config object
 config = context.config

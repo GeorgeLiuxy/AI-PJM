@@ -38,6 +38,11 @@ class Settings(BaseSettings):
 
     # AI API (reserved)
     anthropic_api_key: str = ""
+    ai_workflow_provider: str = "mock"
+    dify_api_base_url: str = ""
+    dify_api_key: str = ""
+    dify_spec_workflow_id: str = ""
+    dify_impact_workflow_id: str = ""
 
     # CORS
     cors_origins: List[str] = ["http://localhost:5173", "http://localhost:5174", "http://localhost:5175", "http://localhost:5176"]
