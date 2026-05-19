@@ -71,20 +71,87 @@ The platform should automate these steps when gates pass:
 - Create MR/PR.
 - Collect review, test, and deployment evidence.
 
-## 5. Current Implementation Slice
+## 5. Current Implementation Status
 
-The current code implements the main orchestration framework up to executor run creation:
+The v2 delivery framework is now fully implemented with all 8 core entities and complete API endpoints:
 
+### Core Data Models (Complete)
 ```text
-DemandItem
--> SpecCard
--> GateCheck
--> RepoContext
--> ImpactAnalysis
--> CodingTask
--> ExecutionRun
--> ExecutionLog
+DemandItem        # Raw business demand
+-> SpecCard        # Engineering specification
+-> GateCheck       # Hard gate evaluation results
+-> RepoContext     # Repository context collection
+-> ImpactAnalysis  # Code impact analysis
+-> CodingTask      # Codex-ready task package
+-> ExecutionRun    # Executor run attempts
+-> ExecutionLog    # Structured execution logs
 ```
+
+### API Endpoints (Complete)
+```text
+POST /api/v2/demands                        # Create demand
+GET  /api/v2/demands/{demand_id}            # Get demand detail with artifacts
+POST /api/v2/demands/{demand_id}/spec       # Generate spec card
+GET  /api/v2/spec-cards/{spec_card_id}      # Get spec card
+POST /api/v2/demands/{demand_id}/repo-context           # Collect repository context
+GET  /api/v2/repo-contexts/{repo_context_id}           # Get repository context
+POST /api/v2/demands/{demand_id}/impact-analysis       # Analyze impact
+GET  /api/v2/impact-analyses/{impact_analysis_id}      # Get impact analysis
+POST /api/v2/spec-cards/{spec_card_id}/coding-task     # Create coding task
+GET  /api/v2/coding-tasks/{coding_task_id}             # Get coding task
+POST /api/v2/coding-tasks/{coding_task_id}/runs        # Create execution run
+GET  /api/v2/execution-runs/{execution_run_id}        # Get execution run
+POST /api/v2/execution-runs/{execution_run_id}/dispatch # Dispatch execution
+GET  /health                                  # Health check
+```
+
+### Gate Engine (Complete)
+- Risk classification: L0 (low), L1 (normal), L2 (high), L3 (critical)
+- Confidence estimation based on input quality
+- Automated spec approval for low-risk demands
+- Manual review requirements for high-risk changes
+- Execution gate blocking for unsafe operations
+- Repository context sufficiency evaluation
+
+### Provider Architecture (Complete)
+- Provider interface contracts defined
+- Mock provider implemented (default)
+- Provider factory for future Dify/OpenAI integration
+- All providers return structured drafts only
+- Backend maintains state and gate control
+
+### Executor Architecture (Complete)
+- Executor interface contracts defined
+- LocalChecksExecutor implemented
+- Safe command execution (pytest, npm build, compileall)
+- Execution evidence collection and persistence
+- Support for future Codex worker integration
+
+### Automation Status (Complete)
+- ✅ Low-risk auto-approval flow
+- ✅ High-risk manual review flow
+- ✅ Gate check persistence
+- ✅ Repository context collection
+- ✅ Impact analysis generation
+- ✅ Coding task packaging
+- ✅ Execution run creation with gate checks
+- ✅ Local command execution and evidence collection
+- ✅ Self-test passed gate evaluation
+
+### Frontend Implementation (Complete)
+- ✅ Complete TypeScript type definitions
+- ✅ API client library
+- ✅ DeliveryV2Page with 6-step workflow UI
+- ✅ Real-time pipeline visualization
+- ✅ Evidence and results display
+- ✅ Error handling and status tracking
+
+### Future Enhancements (Not Implemented)
+- ⏳ Real Codex AI worker integration
+- ⏳ MR/PR creation automation
+- ⏳ Test deployment workflow
+- ⏳ Business verification flow
+- ⏳ Dify/OpenAI provider implementations
 
 Current API path:
 
