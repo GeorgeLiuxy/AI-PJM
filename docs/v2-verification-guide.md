@@ -20,12 +20,8 @@ Expected result:
 
 Prerequisite:
 
-- PostgreSQL is running.
-- Test database from `backend/tests/conftest.py` is reachable:
-
-```text
-postgresql+asyncpg://ai_pjm_user:ai_pjm_password@localhost:5432/ai_pjm_test
-```
+- The tests use an isolated SQLite database session through `backend/tests/conftest.py`.
+- PostgreSQL is not required for local verification.
 
 Run:
 
@@ -50,7 +46,7 @@ Start backend only when you intentionally want to test the API:
 
 ```powershell
 cd backend
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8010
 ```
 
 Create a normal-risk demand:
@@ -58,9 +54,9 @@ Create a normal-risk demand:
 ```powershell
 $demand = Invoke-RestMethod `
   -Method Post `
-  -Uri "http://localhost:8000/api/v2/demands" `
+  -Uri "http://localhost:8010/api/v2/demands" `
   -ContentType "application/json" `
-  -Body '{"raw_input":"Add a compact status badge to the workbench todo list.","source_type":"new_requirement"}'
+  -Body '{"raw_input":"Add a compact execution status badge to the delivery dashboard.","source_type":"new_requirement"}'
 
 $demand.data
 ```
@@ -76,7 +72,7 @@ Generate spec:
 ```powershell
 $spec = Invoke-RestMethod `
   -Method Post `
-  -Uri "http://localhost:8000/api/v2/demands/$($demand.data.id)/spec" `
+  -Uri "http://localhost:8010/api/v2/demands/$($demand.data.id)/spec" `
   -ContentType "application/json" `
   -Body '{"auto_approve_low_risk":true}'
 
@@ -94,7 +90,7 @@ Collect repository context:
 ```powershell
 $repoContext = Invoke-RestMethod `
   -Method Post `
-  -Uri "http://localhost:8000/api/v2/demands/$($demand.data.id)/repo-context" `
+  -Uri "http://localhost:8010/api/v2/demands/$($demand.data.id)/repo-context" `
   -ContentType "application/json" `
   -Body '{}'
 
@@ -113,7 +109,7 @@ Generate impact analysis:
 ```powershell
 $impact = Invoke-RestMethod `
   -Method Post `
-  -Uri "http://localhost:8000/api/v2/demands/$($demand.data.id)/impact-analysis" `
+  -Uri "http://localhost:8010/api/v2/demands/$($demand.data.id)/impact-analysis" `
   -ContentType "application/json" `
   -Body "{`"repo_context_id`":$($repoContext.data.id)}"
 
@@ -132,7 +128,7 @@ Generate CodingTask:
 ```powershell
 $task = Invoke-RestMethod `
   -Method Post `
-  -Uri "http://localhost:8000/api/v2/spec-cards/$($spec.data.id)/coding-task" `
+  -Uri "http://localhost:8010/api/v2/spec-cards/$($spec.data.id)/coding-task" `
   -ContentType "application/json" `
   -Body '{"allowed_paths":["frontend/src/app/components"],"required_checks":["npm run build"]}'
 
@@ -151,7 +147,7 @@ Create execution run record:
 ```powershell
 $run = Invoke-RestMethod `
   -Method Post `
-  -Uri "http://localhost:8000/api/v2/coding-tasks/$($task.data.id)/runs" `
+  -Uri "http://localhost:8010/api/v2/coding-tasks/$($task.data.id)/runs" `
   -ContentType "application/json" `
   -Body '{"executor_type":"codex","trigger_mode":"manual"}'
 
@@ -165,12 +161,32 @@ status = queued
 logs count >= 1
 ```
 
+Dispatch execution run:
+
+```powershell
+$run = Invoke-RestMethod `
+  -Method Post `
+  -Uri "http://localhost:8010/api/v2/execution-runs/$($run.data.id)/dispatch" `
+  -ContentType "application/json" `
+  -Body '{}'
+
+$run.data
+```
+
+Expected:
+
+```text
+status = succeeded
+result_summary = Required checks passed (1/1).
+evidence_json.dispatch.check_results count = 1
+```
+
 Fetch demand detail:
 
 ```powershell
 $detail = Invoke-RestMethod `
   -Method Get `
-  -Uri "http://localhost:8000/api/v2/demands/$($demand.data.id)"
+  -Uri "http://localhost:8010/api/v2/demands/$($demand.data.id)"
 
 $detail.data
 ```
@@ -194,19 +210,19 @@ Create a high-risk demand:
 ```powershell
 $riskDemand = Invoke-RestMethod `
   -Method Post `
-  -Uri "http://localhost:8000/api/v2/demands" `
+  -Uri "http://localhost:8010/api/v2/demands" `
   -ContentType "application/json" `
   -Body '{"raw_input":"Change login permission logic and migrate production user tokens.","source_type":"bug_report"}'
 
 $riskSpec = Invoke-RestMethod `
   -Method Post `
-  -Uri "http://localhost:8000/api/v2/demands/$($riskDemand.data.id)/spec" `
+  -Uri "http://localhost:8010/api/v2/demands/$($riskDemand.data.id)/spec" `
   -ContentType "application/json" `
   -Body '{}'
 
 $riskDetail = Invoke-RestMethod `
   -Method Get `
-  -Uri "http://localhost:8000/api/v2/demands/$($riskDemand.data.id)"
+  -Uri "http://localhost:8010/api/v2/demands/$($riskDemand.data.id)"
 
 $riskDetail.data
 ```
@@ -225,9 +241,8 @@ one gate_check.status = manual_required
 ### Slice 0: Baseline
 
 - v2 docs exist.
-- Existing v1 APIs remain mounted under `/api/v1`.
 - v2 APIs are mounted under `/api/v2`.
-- Old `Item -> Analysis -> Output` behavior is not changed.
+- Legacy v1 product APIs and pages are removed from the active codebase.
 
 ### Slice 1: Demand to Spec
 
@@ -255,13 +270,13 @@ one gate_check.status = manual_required
 
 - ExecutionRun and ExecutionLog records are persisted.
 - `execution_allowed` gate controls whether a run is `queued` or `blocked`.
-- Real worker dispatch is not implemented yet.
+- Queued runs can be dispatched through the local required-check executor.
+- Check command status, exit code, duration, stdout tail, and stderr tail are persisted as evidence.
 
 To be added:
 
 - worker creates isolated workspace.
 - Codex CLI or SDK is invoked.
-- required checks run.
 - failed checks trigger fix loop when policy allows.
 
 ### Slice 5: Delivery
@@ -279,5 +294,5 @@ Before every larger change:
 
 - `python -m compileall app`
 - `python -m pytest tests/test_delivery_v2_units.py -q`
-- database-backed v2 tests when PostgreSQL is available
-- existing v1 tests when the change touches shared core or routing
+- `python -m pytest tests/test_delivery_v2.py tests/test_health.py -q`
+- `npm run build` from `frontend/` when UI code changes

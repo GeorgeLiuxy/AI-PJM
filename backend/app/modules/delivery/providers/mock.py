@@ -53,7 +53,7 @@ class MockWorkflowProvider:
         discovered_files = explicit_files or path_hints
         source_refs = explicit_sources or ["demand.raw_input"]
         dependency_refs = explicit_dependencies
-        confidence = 0.78 if discovered_files or explicit_sources else 0.62
+        confidence = 0.78 if discovered_files or explicit_sources else 0.72
 
         return RepoContextDraft(
             summary=(

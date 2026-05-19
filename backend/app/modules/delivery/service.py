@@ -2,6 +2,8 @@
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
+from app.core.db import utc_now
 from app.core.exceptions import BadRequestException, NotFoundException
 from app.modules.delivery.enums import (
     CodingTaskStatus,
@@ -15,6 +17,7 @@ from app.modules.delivery.enums import (
     RepoContextStatus,
     SpecStatus,
 )
+from app.modules.delivery.executors import get_execution_executor
 from app.modules.delivery.gates import DeliveryGateEngine, gate_engine
 from app.modules.delivery.models import (
     CodingTask,
@@ -374,6 +377,103 @@ class DeliveryService:
             else ExecutionLogLevel.WARNING,
             message=gate.reason,
             event_json=gate.evidence,
+        )
+
+        await db.commit()
+        loaded_run = await delivery_repository.get_execution_run(db, run.id)
+        if not loaded_run:
+            raise NotFoundException(f"Execution run {run.id} not found")
+        return loaded_run
+
+    async def dispatch_execution_run(
+        self,
+        db: AsyncSession,
+        execution_run_id: int,
+    ) -> ExecutionRun:
+        run = await delivery_repository.get_execution_run_for_dispatch(db, execution_run_id)
+        if not run:
+            raise NotFoundException(f"Execution run {execution_run_id} not found")
+        if run.status != ExecutionRunStatus.QUEUED:
+            raise BadRequestException(f"Execution run {execution_run_id} is not queued")
+
+        task = run.coding_task
+        if not task:
+            raise NotFoundException(f"Coding task for execution run {execution_run_id} not found")
+        demand = await delivery_repository.get_demand(db, task.demand_id)
+        if not demand:
+            raise NotFoundException(f"Demand {task.demand_id} not found")
+
+        started_at = utc_now()
+        await delivery_repository.update_execution_run(
+            db,
+            run,
+            status=ExecutionRunStatus.RUNNING,
+            started_at=started_at,
+            result_summary="Execution dispatch started.",
+        )
+        await delivery_repository.update_coding_task_status(db, task, CodingTaskStatus.RUNNING)
+        await delivery_repository.create_execution_log(
+            db=db,
+            execution_run_id=run.id,
+            level=ExecutionLogLevel.INFO,
+            message="Execution dispatch started.",
+            event_json={
+                "executor_type": run.executor_type,
+                "required_checks": task.required_checks_json,
+            },
+        )
+        await db.commit()
+
+        executor = get_execution_executor(run.executor_type)
+        result = await executor.dispatch(
+            run=run,
+            task=task,
+            timeout_seconds=settings.execution_command_timeout_seconds,
+        )
+
+        final_status = (
+            ExecutionRunStatus.SUCCEEDED
+            if result.succeeded
+            else ExecutionRunStatus.FAILED
+        )
+        task_status = (
+            CodingTaskStatus.COMPLETED
+            if result.succeeded
+            else CodingTaskStatus.BLOCKED
+        )
+        existing_evidence = run.evidence_json or {}
+        finished_at = utc_now()
+
+        await delivery_repository.update_execution_run(
+            db,
+            run,
+            status=final_status,
+            finished_at=finished_at,
+            worktree_path=result.evidence.get("workspace_root"),
+            result_summary=result.summary,
+            evidence_json={
+                "execution_allowed": existing_evidence,
+                "dispatch": result.evidence,
+            },
+        )
+        await delivery_repository.update_coding_task_status(db, task, task_status)
+
+        for level, message, event_json in result.logs:
+            await delivery_repository.create_execution_log(
+                db=db,
+                execution_run_id=run.id,
+                level=level,
+                message=message,
+                event_json=event_json,
+            )
+
+        await delivery_repository.create_gate_check(
+            db=db,
+            demand_id=demand.id,
+            gate_type=GateType.SELF_TEST_PASSED,
+            status=GateStatus.PASSED if result.succeeded else GateStatus.FAILED,
+            reason=result.summary,
+            evidence_json=result.evidence,
         )
 
         await db.commit()

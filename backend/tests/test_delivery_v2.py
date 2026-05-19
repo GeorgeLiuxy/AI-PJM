@@ -8,7 +8,7 @@ async def test_delivery_v2_demand_to_coding_task(client):
     demand_response = await client.post(
         "/api/v2/demands",
         json={
-            "raw_input": "Add a compact status badge to the workbench todo list.",
+            "raw_input": "Add a compact execution status badge to the delivery dashboard.",
             "source_type": "new_requirement",
         },
     )
@@ -49,7 +49,7 @@ async def test_delivery_v2_demand_to_coding_task(client):
         f"/api/v2/spec-cards/{spec_data['id']}/coding-task",
         json={
             "allowed_paths": ["frontend/src/app/components"],
-            "required_checks": ["npm run build"],
+            "required_checks": ["python -m compileall app"],
         },
     )
     assert task_response.status_code == 201
@@ -68,6 +68,14 @@ async def test_delivery_v2_demand_to_coding_task(client):
     assert run_data["status"] == "queued"
     assert run_data["logs"]
 
+    dispatch_response = await client.post(f"/api/v2/execution-runs/{run_data['id']}/dispatch")
+    assert dispatch_response.status_code == 200
+    dispatched_run = dispatch_response.json()["data"]
+    assert dispatched_run["status"] == "succeeded"
+    assert dispatched_run["result_summary"] == "Required checks passed (1/1)."
+    assert dispatched_run["evidence_json"]["dispatch"]["check_results"][0]["status"] == "passed"
+    assert any(log["message"].startswith("Check passed") for log in dispatched_run["logs"])
+
     spec_get_response = await client.get(f"/api/v2/spec-cards/{spec_data['id']}")
     assert spec_get_response.status_code == 200
     assert spec_get_response.json()["data"]["id"] == spec_data["id"]
@@ -79,6 +87,7 @@ async def test_delivery_v2_demand_to_coding_task(client):
     run_get_response = await client.get(f"/api/v2/execution-runs/{run_data['id']}")
     assert run_get_response.status_code == 200
     assert run_get_response.json()["data"]["id"] == run_data["id"]
+    assert run_get_response.json()["data"]["status"] == "succeeded"
 
     detail_response = await client.get(f"/api/v2/demands/{demand_id}")
     assert detail_response.status_code == 200

@@ -23,7 +23,7 @@ from app.modules.delivery.schemas import (
 from app.modules.delivery.service import delivery_service
 
 
-router = APIRouter(tags=["delivery-v2"])
+router = APIRouter(tags=["delivery"])
 
 
 @router.post("/demands", response_model=dict, status_code=status.HTTP_201_CREATED)
@@ -212,4 +212,16 @@ async def get_execution_run(
     return success_response(
         data=ExecutionRunResponse.model_validate(run).model_dump(),
         message="Success",
+    )
+
+
+@router.post("/execution-runs/{execution_run_id}/dispatch", response_model=dict)
+async def dispatch_execution_run(
+    execution_run_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    run = await delivery_service.dispatch_execution_run(db, execution_run_id)
+    return success_response(
+        data=ExecutionRunResponse.model_validate(run).model_dump(),
+        message="Execution run dispatched",
     )

@@ -1,7 +1,7 @@
 [project]
 name = "ai-pjm-backend"
 version = "0.1.0"
-description = "AI-powered Project Management Backend"
+description = "AI-assisted engineering delivery orchestration backend"
 authors = [
     {name = "AI PJM Team"}
 ]
@@ -12,7 +12,7 @@ dependencies = [
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.32.0",
 
-    # Database (asyncpg only)
+    # Database
     "sqlalchemy>=2.0.36",
     "asyncpg>=0.30.0",
     "aiosqlite>=0.20.0",
@@ -24,9 +24,6 @@ dependencies = [
     "python-dotenv>=1.0.1",
     "python-multipart>=0.0.12",
 
-    # Task Queue (reserved for future use)
-    "celery>=5.4.0",
-    "redis>=5.2.1",
 ]
 
 [project.optional-dependencies]

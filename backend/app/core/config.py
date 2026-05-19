@@ -23,18 +23,15 @@ class Settings(BaseSettings):
 
     # Server
     host: str = "0.0.0.0"
-    port: int = 8000
+    port: int = 8010
 
     # Database
-    database_url: str = "postgresql+asyncpg://user:password@localhost:5432/ai_pjm"
+    database_url: str = "sqlite+aiosqlite:///./data/ai_pjm_dev.db"
     database_echo: bool = False
 
-    # Redis
-    redis_url: str = "redis://localhost:6379/0"
-
-    # Celery
-    celery_broker_url: str = "redis://localhost:6379/1"
-    celery_result_backend: str = "redis://localhost:6379/2"
+    # Delivery execution
+    workspace_root: str = ""
+    execution_command_timeout_seconds: int = 120
 
     # AI API (reserved)
     anthropic_api_key: str = ""

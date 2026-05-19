@@ -1,11 +1,12 @@
 """FastAPI application entry point"""
 
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.router import api_router
 from app.api.v2_router import v2_router
+from app.common.responses import HealthResponse
 from app.core.config import settings
 from app.core.db import init_db, is_sqlite_url
 from app.core.logging import setup_logging
@@ -34,7 +35,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title=settings.app_name,
     version=settings.app_version,
-    description="AI-powered Project Management Backend",
+    description="AI-assisted engineering delivery orchestration backend",
     docs_url="/docs",
     redoc_url="/redoc",
     lifespan=lifespan,
@@ -52,8 +53,18 @@ app.add_middleware(
 
 
 # Include API router
-app.include_router(api_router, prefix="/api/v1")
 app.include_router(v2_router, prefix="/api/v2")
+
+
+@app.get("/health", response_model=HealthResponse, tags=["health"])
+async def health_check() -> HealthResponse:
+    """Health check endpoint."""
+    return HealthResponse(
+        status="healthy",
+        version=settings.app_version,
+        timestamp=datetime.now(timezone.utc),
+        database=None,
+    )
 
 
 # Exception handlers

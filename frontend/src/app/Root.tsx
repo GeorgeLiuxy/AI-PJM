@@ -1,84 +1,57 @@
-import { Outlet, Link, useLocation } from "react-router";
-import { Sparkles } from "lucide-react";
+import { Link, Outlet, useLocation } from 'react-router';
+import { GitBranch, Sparkles } from 'lucide-react';
+
+const navItems = [
+  { to: '/', label: 'Delivery' },
+];
 
 export default function Root() {
   const location = useLocation();
-  
+
   return (
-    <div className="min-h-screen bg-gray-50">
-      {/* Header */}
-      <header className="bg-white border-b border-gray-200">
-        <div className="max-w-[1400px] mx-auto px-8 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-6">
-            <Link to="/" className="flex items-center gap-3 hover:opacity-80 transition-opacity">
-              <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-blue-600 rounded-lg flex items-center justify-center">
-                <Sparkles className="w-5 h-5 text-white" />
+    <div className="min-h-screen bg-slate-50">
+      <header className="border-b border-slate-200 bg-white">
+        <div className="mx-auto flex max-w-[1400px] items-center justify-between gap-6 px-8 py-4">
+          <div className="flex min-w-0 items-center gap-6">
+            <Link to="/" className="flex shrink-0 items-center gap-3 hover:opacity-85">
+              <div className="flex h-8 w-8 items-center justify-center rounded bg-blue-600">
+                <Sparkles className="h-5 w-5 text-white" />
               </div>
-              <h1 className="text-lg font-medium text-gray-900">安全型团队提效 AI 工作台</h1>
+              <div>
+                <div className="text-sm font-semibold text-slate-950">AI PJM</div>
+                <div className="text-xs text-slate-500">Delivery orchestration</div>
+              </div>
             </Link>
-            <nav className="flex items-center gap-1">
-              <Link
-                to="/"
-                className={`px-3 py-2 text-sm rounded-lg transition-colors ${
-                  location.pathname === "/" 
-                    ? "bg-blue-50 text-blue-700 font-medium" 
-                    : "text-gray-600 hover:text-gray-900 hover:bg-gray-50"
-                }`}
-              >
-                工作台
-              </Link>
-              <Link
-                to="/input"
-                className={`px-3 py-2 text-sm rounded-lg transition-colors ${
-                  location.pathname === "/input" 
-                    ? "bg-blue-50 text-blue-700 font-medium" 
-                    : "text-gray-600 hover:text-gray-900 hover:bg-gray-50"
-                }`}
-              >
-                统一输入
-              </Link>
-              <Link
-                to="/process"
-                className={`px-3 py-2 text-sm rounded-lg transition-colors ${
-                  location.pathname === "/process" 
-                    ? "bg-blue-50 text-blue-700 font-medium" 
-                    : "text-gray-600 hover:text-gray-900 hover:bg-gray-50"
-                }`}
-              >
-                事项处理
-              </Link>
-              <Link
-                to="/impact"
-                className={`px-3 py-2 text-sm rounded-lg transition-colors ${
-                  location.pathname === "/impact" 
-                    ? "bg-blue-50 text-blue-700 font-medium" 
-                    : "text-gray-600 hover:text-gray-900 hover:bg-gray-50"
-                }`}
-              >
-                影响分析
-              </Link>
-              <Link
-                to="/results"
-                className={`px-3 py-2 text-sm rounded-lg transition-colors ${
-                  location.pathname === "/results" 
-                    ? "bg-blue-50 text-blue-700 font-medium" 
-                    : "text-gray-600 hover:text-gray-900 hover:bg-gray-50"
-                }`}
-              >
-                AI 结果
-              </Link>
+            <nav className="flex flex-wrap items-center gap-1">
+              {navItems.map((item) => {
+                const active = item.to === '/' ? location.pathname === '/' : location.pathname.startsWith(item.to);
+                return (
+                  <Link
+                    key={item.to}
+                    to={item.to}
+                    className={`rounded px-3 py-2 text-sm transition-colors ${
+                      active
+                        ? 'bg-blue-50 font-medium text-blue-700'
+                        : 'text-slate-600 hover:bg-slate-50 hover:text-slate-950'
+                    }`}
+                  >
+                    {item.label}
+                  </Link>
+                );
+              })}
             </nav>
           </div>
-          <div className="flex items-center gap-4">
-            <button className="text-sm text-gray-600 hover:text-gray-900">帮助</button>
-            <div className="w-8 h-8 bg-gray-200 rounded-full flex items-center justify-center">
-              <span className="text-sm font-medium text-gray-700">张</span>
-            </div>
-          </div>
+          <a
+            href="http://localhost:8010/docs"
+            target="_blank"
+            rel="noreferrer"
+            className="hidden items-center gap-2 rounded border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 md:inline-flex"
+          >
+            <GitBranch className="h-4 w-4" />
+            API docs
+          </a>
         </div>
       </header>
-
-      {/* Main Content */}
       <Outlet />
     </div>
   );

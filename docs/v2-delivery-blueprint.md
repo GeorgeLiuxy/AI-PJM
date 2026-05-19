@@ -35,7 +35,7 @@ business input
 - No default multi-agent review.
 - No automatic production merge or production deployment.
 - No complex knowledge graph.
-- No replacement of existing `items`, `analyses`, and `outputs` APIs in the first cut.
+- No production-grade executor, MR/PR, deployment, or verification automation in the first cut.
 
 ## 4. Main Workflow
 
@@ -130,12 +130,13 @@ DemandItem
 -> RepoContext draft
 -> ImpactAnalysis draft
 -> CodingTask package draft
--> ExecutionRun record
+-> ExecutionRun dispatch with local check evidence
 ```
 
 Current boundaries:
 
 - Provider boundary exists with a deterministic `mock` provider.
 - Gate engine owns risk, confidence, and execution decisions.
+- Local required-check execution is implemented for safe commands such as `npm run build`, `pytest`, `python -m pytest`, and `python -m compileall`.
 - Dify/OpenAI providers are not implemented yet.
-- Codex execution worker, MR creation, deployment, and verification are separate follow-up slices.
+- Real Codex code execution, MR creation, deployment, and verification are separate follow-up slices.

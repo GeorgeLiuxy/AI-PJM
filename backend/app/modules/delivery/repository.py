@@ -106,6 +106,23 @@ class DeliveryRepository:
             select(ExecutionRun)
             .options(selectinload(ExecutionRun.logs))
             .where(ExecutionRun.id == execution_run_id)
+            .execution_options(populate_existing=True)
+        )
+        return result.scalar_one_or_none()
+
+    async def get_execution_run_for_dispatch(
+        self,
+        db: AsyncSession,
+        execution_run_id: int,
+    ) -> Optional[ExecutionRun]:
+        result = await db.execute(
+            select(ExecutionRun)
+            .options(
+                selectinload(ExecutionRun.logs),
+                selectinload(ExecutionRun.coding_task),
+            )
+            .where(ExecutionRun.id == execution_run_id)
+            .execution_options(populate_existing=True)
         )
         return result.scalar_one_or_none()
 
@@ -284,6 +301,27 @@ class DeliveryRepository:
         db.add(log)
         await db.flush()
         return log
+
+    async def update_execution_run(
+        self,
+        db: AsyncSession,
+        run: ExecutionRun,
+        **values,
+    ) -> ExecutionRun:
+        for key, value in values.items():
+            setattr(run, key, value)
+        await db.flush()
+        return run
+
+    async def update_coding_task_status(
+        self,
+        db: AsyncSession,
+        task: CodingTask,
+        status: str,
+    ) -> CodingTask:
+        task.status = status
+        await db.flush()
+        return task
 
 
 delivery_repository = DeliveryRepository()

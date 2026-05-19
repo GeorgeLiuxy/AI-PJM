@@ -97,6 +97,7 @@ POST /api/v2/demands/{demand_id}/impact-analysis
 GET  /api/v2/impact-analyses/{impact_analysis_id}
 POST /api/v2/spec-cards/{spec_card_id}/coding-task
 POST /api/v2/coding-tasks/{coding_task_id}/runs
+POST /api/v2/execution-runs/{execution_run_id}/dispatch
 GET  /api/v2/execution-runs/{execution_run_id}
 GET  /api/v2/demands/{demand_id}
 ```
@@ -111,11 +112,12 @@ Current automation:
 - CodingTask is generated as `ready` only when risk and spec status allow it.
 - ExecutionRun is created as `queued` only when `execution_allowed` passes.
 - ExecutionRun is created as `blocked` when the gate requires manual input.
+- Queued ExecutionRun can be dispatched through the local required-check executor.
+- Required check results are persisted as execution evidence and `self_test_passed` gate checks.
 
 Not implemented yet:
 
-- Codex execution worker.
-- Self-test runner.
+- Real Codex execution worker.
 - MR/PR creation.
 - Test deployment.
 - Verification workflow.

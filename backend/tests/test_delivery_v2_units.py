@@ -7,10 +7,10 @@ from app.modules.delivery.service import delivery_service
 
 def test_delivery_v2_low_risk_auto_approval_rule():
     risk_level = delivery_service._classify_risk(
-        "Add a compact status badge to the workbench todo list."
+        "Add a compact execution status badge to the delivery dashboard."
     )
     confidence = delivery_service._estimate_confidence(
-        "Add a compact status badge to the workbench todo list."
+        "Add a compact execution status badge to the delivery dashboard."
     )
     status = delivery_service._decide_spec_status(
         risk_level=risk_level,

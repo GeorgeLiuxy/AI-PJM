@@ -57,19 +57,9 @@ class Base(DeclarativeBase):
 def import_all_models() -> None:
     """Import all SQLAlchemy models so metadata is complete."""
 
-    from app.modules.analysis import models as _analysis_models
-    from app.modules.audit import models as _audit_models
     from app.modules.delivery import models as _delivery_models
-    from app.modules.item import models as _item_models
-    from app.modules.output import models as _output_models
 
-    _ = (
-        _analysis_models,
-        _audit_models,
-        _delivery_models,
-        _item_models,
-        _output_models,
-    )
+    _ = (_delivery_models,)
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
@@ -77,8 +67,8 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
     Dependency function that yields database sessions.
 
     Usage in FastAPI:
-        @app.get("/items")
-        async def get_items(db: AsyncSession = Depends(get_db)):
+        @app.get("/demands")
+        async def get_demands(db: AsyncSession = Depends(get_db)):
             ...
     """
     async with async_session_maker() as session:
