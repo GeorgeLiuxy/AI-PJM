@@ -7,9 +7,8 @@ from sqlalchemy import (
     ForeignKey, Index, Numeric, Boolean,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy.dialects.postgresql import JSONB
 
-from app.core.db import Base, utc_now
+from app.core.db import Base, DB_BIGINT, DB_JSON, utc_now
 from app.common.enums import ItemStatus, SourceType, ItemType, Priority
 
 
@@ -27,7 +26,7 @@ class Item(Base):
     
     # ==================== 主键 ====================
     id: Mapped[int] = mapped_column(
-        BigInteger, 
+        DB_BIGINT,
         primary_key=True, 
         autoincrement=True
     )
@@ -140,14 +139,14 @@ class ItemSuggestion(Base):
     
     # ==================== 主键 ====================
     id: Mapped[int] = mapped_column(
-        BigInteger,
+        DB_BIGINT,
         primary_key=True,
         autoincrement=True
     )
     
     # ==================== 关联 Item（一对一） ====================
     item_id: Mapped[int] = mapped_column(
-        BigInteger,
+        DB_BIGINT,
         ForeignKey("items.id", ondelete="CASCADE"),
         nullable=False,
         unique=True,  # 关键：一对一关系
@@ -178,7 +177,7 @@ class ItemSuggestion(Base):
     
     # ==================== 扩展建议字段（JSONB，Python typing 精确） ====================
     modules_suggestion_json: Mapped[Optional[list[str]]] = mapped_column(
-        JSONB,  # PostgreSQL JSONB 类型，Python list[str]
+        DB_JSON,
         nullable=True,
         comment="AI建议的影响模块列表 (list[str])"
     )
@@ -188,12 +187,12 @@ class ItemSuggestion(Base):
         comment="AI建议的影响范围描述"
     )
     pending_questions_json: Mapped[Optional[list[str]]] = mapped_column(
-        JSONB,  # PostgreSQL JSONB 类型，Python list[str]
+        DB_JSON,
         nullable=True,
         comment="AI提出的待确认问题列表 (list[str])"
     )
     similar_cases_json: Mapped[Optional[list[dict[str, Any]]]] = mapped_column(
-        JSONB,  # PostgreSQL JSONB 类型，Python list[dict[str, Any]]
+        DB_JSON,
         nullable=True,
         comment="AI找到的相似案例列表 (list[dict])"
     )

@@ -8,7 +8,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.core.db import Base, utc_now
+from app.core.db import Base, DB_BIGINT, utc_now
 from app.common.enums import (
     OutputStatus, OutputType, AdoptedTarget,
 )
@@ -28,21 +28,21 @@ class Output(Base):
     
     # ==================== 主键 ====================
     id: Mapped[int] = mapped_column(
-        BigInteger,
+        DB_BIGINT,
         primary_key=True,
         autoincrement=True
     )
     
     # ==================== 关联 Item 和 Analysis ====================
     item_id: Mapped[int] = mapped_column(
-        BigInteger,
+        DB_BIGINT,
         ForeignKey("items.id", ondelete="CASCADE"),
         nullable=False,
         comment="关联的Item ID"
     )
     
     analysis_id: Mapped[Optional[int]] = mapped_column(
-        BigInteger,
+        DB_BIGINT,
         ForeignKey("analyses.id", ondelete="SET NULL"),
         nullable=True,
         comment="关联的Analysis ID（可选）"

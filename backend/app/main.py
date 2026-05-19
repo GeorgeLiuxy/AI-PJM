@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.router import api_router
 from app.api.v2_router import v2_router
 from app.core.config import settings
+from app.core.db import init_db, is_sqlite_url
 from app.core.logging import setup_logging
 from app.core.exceptions import AppException
 
@@ -21,6 +22,9 @@ async def lifespan(app: FastAPI):
     # Startup
     print(f"Starting {settings.app_name} v{settings.app_version}")
     print(f"Environment: {settings.environment}")
+    if is_sqlite_url(settings.database_url):
+        await init_db()
+        print("SQLite development database initialized")
     yield
     # Shutdown
     print(f"Shutting down {settings.app_name}")

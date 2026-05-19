@@ -1,12 +1,38 @@
 """Database connection and session management"""
 
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import AsyncGenerator
+from sqlalchemy import BigInteger, Integer, JSON
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 
 from app.core.config import settings
 
+
+DB_BIGINT = BigInteger().with_variant(Integer, "sqlite")
+DB_JSON = JSON().with_variant(JSONB, "postgresql")
+
+
+def is_sqlite_url(database_url: str) -> bool:
+    """Return whether a database URL points at SQLite."""
+
+    return database_url.startswith("sqlite")
+
+
+def _ensure_sqlite_parent_dir(database_url: str) -> None:
+    if not is_sqlite_url(database_url) or ":memory:" in database_url:
+        return
+    if ":///" not in database_url:
+        return
+    raw_path = database_url.split(":///", 1)[1].split("?", 1)[0]
+    if not raw_path:
+        return
+    Path(raw_path).expanduser().parent.mkdir(parents=True, exist_ok=True)
+
+
+_ensure_sqlite_parent_dir(settings.database_url)
 
 # Create async engine
 engine = create_async_engine(
@@ -26,6 +52,24 @@ async_session_maker = async_sessionmaker(
 class Base(DeclarativeBase):
     """Base class for all SQLAlchemy models"""
     pass
+
+
+def import_all_models() -> None:
+    """Import all SQLAlchemy models so metadata is complete."""
+
+    from app.modules.analysis import models as _analysis_models
+    from app.modules.audit import models as _audit_models
+    from app.modules.delivery import models as _delivery_models
+    from app.modules.item import models as _item_models
+    from app.modules.output import models as _output_models
+
+    _ = (
+        _analysis_models,
+        _audit_models,
+        _delivery_models,
+        _item_models,
+        _output_models,
+    )
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
@@ -50,6 +94,7 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
 
 async def init_db() -> None:
     """Initialize database - create all tables (for development only)"""
+    import_all_models()
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 

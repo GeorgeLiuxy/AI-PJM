@@ -7,9 +7,8 @@ from sqlalchemy import (
     Integer, Boolean, Index, ForeignKey, CheckConstraint,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy.dialects.postgresql import JSONB
 
-from app.core.db import Base, utc_now
+from app.core.db import Base, DB_BIGINT, DB_JSON, utc_now
 from app.common.enums import (
     AnalysisStatus, AnalysisType, RiskLevel, Recommendation,
 )
@@ -30,14 +29,14 @@ class Analysis(Base):
 
     # ==================== 主键 ====================
     id: Mapped[int] = mapped_column(
-        BigInteger,
+        DB_BIGINT,
         primary_key=True,
         autoincrement=True
     )
 
     # ==================== 关联 Item（一对一） ====================
     item_id: Mapped[int] = mapped_column(
-        BigInteger,
+        DB_BIGINT,
         ForeignKey("items.id", ondelete="CASCADE"),
         nullable=False,
         unique=True,
@@ -82,19 +81,19 @@ class Analysis(Base):
 
     # ==================== JSONB 字段 ====================
     candidate_capabilities_json: Mapped[Optional[list[str]]] = mapped_column(
-        JSONB,
+        DB_JSON,
         nullable=True,
         comment="候选能力列表 (list[str])"
     )
 
     candidate_modules_json: Mapped[Optional[list[str]]] = mapped_column(
-        JSONB,
+        DB_JSON,
         nullable=True,
         comment="候选模块列表 (list[str])"
     )
 
     similar_cases_json: Mapped[Optional[list[dict[str, Any]]]] = mapped_column(
-        JSONB,
+        DB_JSON,
         nullable=True,
         comment="相似案例列表 (list[dict])"
     )

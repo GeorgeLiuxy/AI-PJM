@@ -4,10 +4,9 @@ from datetime import datetime
 from typing import Any, Optional
 
 from sqlalchemy import BigInteger, DateTime, ForeignKey, Index, String, Text
-from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.core.db import Base, utc_now
+from app.core.db import Base, DB_BIGINT, DB_JSON, utc_now
 from app.modules.delivery.enums import (
     CodingTaskStatus,
     DeliveryRiskLevel,
@@ -27,7 +26,7 @@ class DemandItem(Base):
 
     __tablename__ = "delivery_demand_items"
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    id: Mapped[int] = mapped_column(DB_BIGINT, primary_key=True, autoincrement=True)
     raw_input: Mapped[str] = mapped_column(Text, nullable=False)
     source_type: Mapped[str] = mapped_column(String(50), nullable=False, default="other")
     title: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
@@ -39,7 +38,7 @@ class DemandItem(Base):
     )
     risk_level: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     confidence_score: Mapped[Optional[float]] = mapped_column(nullable=True)
-    context_payload: Mapped[Optional[dict[str, Any]]] = mapped_column(JSONB, nullable=True)
+    context_payload: Mapped[Optional[dict[str, Any]]] = mapped_column(DB_JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -86,9 +85,9 @@ class SpecCard(Base):
 
     __tablename__ = "delivery_spec_cards"
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    id: Mapped[int] = mapped_column(DB_BIGINT, primary_key=True, autoincrement=True)
     demand_id: Mapped[int] = mapped_column(
-        BigInteger,
+        DB_BIGINT,
         ForeignKey("delivery_demand_items.id", ondelete="CASCADE"),
         nullable=False,
     )
@@ -96,10 +95,10 @@ class SpecCard(Base):
     title: Mapped[str] = mapped_column(String(500), nullable=False)
     user_story: Mapped[str] = mapped_column(Text, nullable=False)
     scope: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    acceptance_criteria_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
-    constraints_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
-    risks_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
-    open_questions_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    acceptance_criteria_json: Mapped[list[str]] = mapped_column(DB_JSON, nullable=False, default=list)
+    constraints_json: Mapped[list[str]] = mapped_column(DB_JSON, nullable=False, default=list)
+    risks_json: Mapped[list[str]] = mapped_column(DB_JSON, nullable=False, default=list)
+    open_questions_json: Mapped[list[str]] = mapped_column(DB_JSON, nullable=False, default=list)
     created_by: Mapped[str] = mapped_column(String(50), nullable=False, default="ai")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(
@@ -123,16 +122,16 @@ class GateCheck(Base):
 
     __tablename__ = "delivery_gate_checks"
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    id: Mapped[int] = mapped_column(DB_BIGINT, primary_key=True, autoincrement=True)
     demand_id: Mapped[int] = mapped_column(
-        BigInteger,
+        DB_BIGINT,
         ForeignKey("delivery_demand_items.id", ondelete="CASCADE"),
         nullable=False,
     )
     gate_type: Mapped[str] = mapped_column(String(100), nullable=False)
     status: Mapped[str] = mapped_column(String(50), nullable=False)
     reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    evidence_json: Mapped[Optional[dict[str, Any]]] = mapped_column(JSONB, nullable=True)
+    evidence_json: Mapped[Optional[dict[str, Any]]] = mapped_column(DB_JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
 
     demand: Mapped["DemandItem"] = relationship("DemandItem", back_populates="gate_checks")
@@ -149,20 +148,20 @@ class RepoContext(Base):
 
     __tablename__ = "delivery_repo_contexts"
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    id: Mapped[int] = mapped_column(DB_BIGINT, primary_key=True, autoincrement=True)
     demand_id: Mapped[int] = mapped_column(
-        BigInteger,
+        DB_BIGINT,
         ForeignKey("delivery_demand_items.id", ondelete="CASCADE"),
         nullable=False,
     )
     status: Mapped[str] = mapped_column(String(50), nullable=False, default=RepoContextStatus.READY)
     provider: Mapped[str] = mapped_column(String(100), nullable=False, default="mock")
     summary: Mapped[str] = mapped_column(Text, nullable=False)
-    source_refs_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
-    discovered_files_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
-    dependency_refs_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    source_refs_json: Mapped[list[str]] = mapped_column(DB_JSON, nullable=False, default=list)
+    discovered_files_json: Mapped[list[str]] = mapped_column(DB_JSON, nullable=False, default=list)
+    dependency_refs_json: Mapped[list[str]] = mapped_column(DB_JSON, nullable=False, default=list)
     confidence_score: Mapped[float] = mapped_column(nullable=False, default=0.0)
-    provider_metadata_json: Mapped[Optional[dict[str, Any]]] = mapped_column(JSONB, nullable=True)
+    provider_metadata_json: Mapped[Optional[dict[str, Any]]] = mapped_column(DB_JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -188,26 +187,26 @@ class ImpactAnalysis(Base):
 
     __tablename__ = "delivery_impact_analyses"
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    id: Mapped[int] = mapped_column(DB_BIGINT, primary_key=True, autoincrement=True)
     demand_id: Mapped[int] = mapped_column(
-        BigInteger,
+        DB_BIGINT,
         ForeignKey("delivery_demand_items.id", ondelete="CASCADE"),
         nullable=False,
     )
     repo_context_id: Mapped[Optional[int]] = mapped_column(
-        BigInteger,
+        DB_BIGINT,
         ForeignKey("delivery_repo_contexts.id", ondelete="SET NULL"),
         nullable=True,
     )
     status: Mapped[str] = mapped_column(String(50), nullable=False, default=ImpactAnalysisStatus.READY)
     provider: Mapped[str] = mapped_column(String(100), nullable=False, default="mock")
     summary: Mapped[str] = mapped_column(Text, nullable=False)
-    impacted_areas_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
-    affected_files_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
-    recommendations_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    impacted_areas_json: Mapped[list[str]] = mapped_column(DB_JSON, nullable=False, default=list)
+    affected_files_json: Mapped[list[str]] = mapped_column(DB_JSON, nullable=False, default=list)
+    recommendations_json: Mapped[list[str]] = mapped_column(DB_JSON, nullable=False, default=list)
     risk_level: Mapped[str] = mapped_column(String(20), nullable=False)
     confidence_score: Mapped[float] = mapped_column(nullable=False, default=0.0)
-    provider_metadata_json: Mapped[Optional[dict[str, Any]]] = mapped_column(JSONB, nullable=True)
+    provider_metadata_json: Mapped[Optional[dict[str, Any]]] = mapped_column(DB_JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -235,24 +234,24 @@ class CodingTask(Base):
 
     __tablename__ = "delivery_coding_tasks"
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    id: Mapped[int] = mapped_column(DB_BIGINT, primary_key=True, autoincrement=True)
     demand_id: Mapped[int] = mapped_column(
-        BigInteger,
+        DB_BIGINT,
         ForeignKey("delivery_demand_items.id", ondelete="CASCADE"),
         nullable=False,
     )
     spec_card_id: Mapped[int] = mapped_column(
-        BigInteger,
+        DB_BIGINT,
         ForeignKey("delivery_spec_cards.id", ondelete="CASCADE"),
         nullable=False,
     )
     status: Mapped[str] = mapped_column(String(50), nullable=False, default=CodingTaskStatus.DRAFT)
     title: Mapped[str] = mapped_column(String(500), nullable=False)
     task_prompt: Mapped[str] = mapped_column(Text, nullable=False)
-    allowed_paths_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
-    forbidden_actions_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
-    required_checks_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
-    expected_evidence_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    allowed_paths_json: Mapped[list[str]] = mapped_column(DB_JSON, nullable=False, default=list)
+    forbidden_actions_json: Mapped[list[str]] = mapped_column(DB_JSON, nullable=False, default=list)
+    required_checks_json: Mapped[list[str]] = mapped_column(DB_JSON, nullable=False, default=list)
+    expected_evidence_json: Mapped[list[str]] = mapped_column(DB_JSON, nullable=False, default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -281,9 +280,9 @@ class ExecutionRun(Base):
 
     __tablename__ = "delivery_execution_runs"
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    id: Mapped[int] = mapped_column(DB_BIGINT, primary_key=True, autoincrement=True)
     coding_task_id: Mapped[int] = mapped_column(
-        BigInteger,
+        DB_BIGINT,
         ForeignKey("delivery_coding_tasks.id", ondelete="CASCADE"),
         nullable=False,
     )
@@ -294,7 +293,7 @@ class ExecutionRun(Base):
     branch_name: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     commit_sha: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     result_summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    evidence_json: Mapped[Optional[dict[str, Any]]] = mapped_column(JSONB, nullable=True)
+    evidence_json: Mapped[Optional[dict[str, Any]]] = mapped_column(DB_JSON, nullable=True)
     started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
@@ -324,15 +323,15 @@ class ExecutionLog(Base):
 
     __tablename__ = "delivery_execution_logs"
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    id: Mapped[int] = mapped_column(DB_BIGINT, primary_key=True, autoincrement=True)
     execution_run_id: Mapped[int] = mapped_column(
-        BigInteger,
+        DB_BIGINT,
         ForeignKey("delivery_execution_runs.id", ondelete="CASCADE"),
         nullable=False,
     )
     level: Mapped[str] = mapped_column(String(50), nullable=False, default=ExecutionLogLevel.INFO)
     message: Mapped[str] = mapped_column(Text, nullable=False)
-    event_json: Mapped[Optional[dict[str, Any]]] = mapped_column(JSONB, nullable=True)
+    event_json: Mapped[Optional[dict[str, Any]]] = mapped_column(DB_JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
 
     execution_run: Mapped["ExecutionRun"] = relationship("ExecutionRun", back_populates="logs")

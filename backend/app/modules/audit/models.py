@@ -4,9 +4,8 @@ from datetime import datetime, timezone
 from typing import Any
 from sqlalchemy import Column, BigInteger, String, DateTime, Text, Index, Boolean
 from sqlalchemy.orm import Mapped, mapped_column
-from sqlalchemy.dialects.postgresql import JSONB
 
-from app.core.db import Base, utc_now
+from app.core.db import Base, DB_BIGINT, DB_JSON, utc_now
 
 
 class ActionLog(Base):
@@ -21,7 +20,7 @@ class ActionLog(Base):
     __tablename__ = "action_logs"
 
     # Primary key
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    id: Mapped[int] = mapped_column(DB_BIGINT, primary_key=True, autoincrement=True)
 
     # Business entity reference
     biz_type: Mapped[str] = mapped_column(
@@ -31,7 +30,7 @@ class ActionLog(Base):
         comment="Business entity type: item | analysis | output"
     )
     biz_id: Mapped[int] = mapped_column(
-        BigInteger,
+        DB_BIGINT,
         nullable=False,
         index=True,
         comment="Business entity ID"
@@ -70,7 +69,7 @@ class ActionLog(Base):
 
     # Action payload
     action_payload: Mapped[dict[str, Any] | None] = mapped_column(
-        JSONB,  # PostgreSQL JSONB 类型
+        DB_JSON,
         nullable=True,
         comment="Action payload: changes, diff, reasons, etc."
     )
