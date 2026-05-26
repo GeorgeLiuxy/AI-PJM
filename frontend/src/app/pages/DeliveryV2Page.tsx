@@ -809,7 +809,7 @@ export default function DeliveryV2Page() {
             </div>
 
             <div className="p-3">
-              {activeTab === 'summary' && <SummaryTab result={result} checks={checks} />}
+              {activeTab === 'summary' && <SummaryTab result={result} />}
               {activeTab === 'spec' && <SpecTab result={result} />}
               {activeTab === 'execution' && <ExecutionTab result={result} checks={checks} />}
               {activeTab === 'taskPackage' && <TaskPackageTab result={result} />}
@@ -843,7 +843,7 @@ function HistoryPanel({
       <div className="flex items-center justify-between gap-2 border-b border-slate-200 px-3 py-2">
         <div className="min-w-0">
           <div className="text-sm font-medium text-slate-950">最近任务</div>
-          <div className="text-xs text-slate-500">显示 {Math.min(demands.length, 8)} / {demands.length} 条</div>
+          <div className="text-xs text-slate-500">显示 {Math.min(demands.length, 5)} / {demands.length} 条</div>
         </div>
         <button
           type="button"
@@ -859,13 +859,13 @@ function HistoryPanel({
       <div className="p-2">
         {demands.length > 0 ? (
           <div className="space-y-1">
-            {demands.slice(0, 8).map((demand) => (
+            {demands.slice(0, 5).map((demand) => (
               <button
                 key={demand.id}
                 type="button"
                 onClick={() => onSelect(demand.id)}
                 disabled={disabled}
-                className={`block w-full rounded border px-2.5 py-2 text-left transition-colors ${
+                className={`block w-full rounded border px-2.5 py-1.5 text-left transition-colors ${
                   selectedDemandId === demand.id
                     ? 'border-blue-200 bg-blue-50'
                     : 'border-transparent hover:border-slate-200 hover:bg-slate-50'
@@ -875,7 +875,6 @@ function HistoryPanel({
                   <span className="truncate text-sm font-medium text-slate-900">#{demand.id} {localizeText(demand.title)}</span>
                   <StatusBadge value={demand.risk_level || 'risk'} />
                 </div>
-                <div className="mb-1.5 line-clamp-1 text-xs leading-5 text-slate-500">{localizeText(demand.raw_input)}</div>
                 <div className="flex items-center justify-between gap-2">
                   <StatusBadge value={demand.status} />
                   <span className="text-xs text-slate-400">{formatDateTime(demand.updated_at)}</span>
@@ -936,12 +935,9 @@ function RunSummary({
       <div className="grid grid-cols-2 gap-px bg-slate-100">
         <SummaryRow label="结果" value={running ? 'running' : outcome} />
         <SummaryRow label="风险" value={result.demand?.risk_level || result.impact?.risk_level || 'empty'} />
-        <SummaryRow label="规格" value={result.spec?.status || 'empty'} />
-        <SummaryRow label="任务" value={result.task?.status || 'empty'} />
         <SummaryRow label="执行" value={result.run?.status || 'empty'} />
         <SummaryRow label="检查" value={checkCount > 0 ? `${passedChecks}/${checkCount} 通过` : 'empty'} />
-        <SummaryRow label="MR" value={result.mergeRequest?.status || 'empty'} />
-        <SummaryRow label="部署" value={result.deployRecord?.status || 'empty'} />
+        <SummaryRow label="评审" value={result.mergeRequest?.review_status || result.mergeRequest?.status || 'empty'} />
         <SummaryRow label="验收" value={result.verificationRecord?.status || 'empty'} />
       </div>
     </aside>
@@ -1053,10 +1049,9 @@ function SummaryRow({ label, value }: { label: string; value?: string | number |
   );
 }
 
-function SummaryTab({ result, checks }: { result: DeliveryResult; checks: CheckEvidence[] }) {
+function SummaryTab({ result }: { result: DeliveryResult }) {
   return (
-    <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+    <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
         <Metric label="需求" value={result.demand?.id} />
         <Metric label="风险" value={result.demand?.risk_level || result.impact?.risk_level} />
         <Metric label="置信度" value={formatConfidence(result.impact?.confidence_score || result.demand?.confidence_score)} />
@@ -1067,26 +1062,6 @@ function SummaryTab({ result, checks }: { result: DeliveryResult; checks: CheckE
         <Metric label="评审" value={result.mergeRequest?.review_status} />
         <Metric label="测试环境" value={result.deployRecord?.status} />
         <Metric label="验收" value={result.verificationRecord?.status} />
-      </div>
-      <div className="rounded border border-slate-200">
-        <div className="flex items-center gap-2 border-b border-slate-200 px-3 py-2 text-sm font-medium text-slate-900">
-          <FileCheck2 className="h-4 w-4 text-emerald-600" />
-          证据
-        </div>
-        <div className="space-y-3 p-3">
-          <TextBlock title="需求" value={result.demand?.raw_input} compact />
-          <TextBlock title="执行结果" value={result.run?.result_summary} compact />
-          <MergeRequestSummary mergeRequest={result.mergeRequest} />
-          <DeploymentSummary deployRecord={result.deployRecord} verificationRecord={result.verificationRecord} />
-          <ListBlock
-            title="检查"
-            items={checks.map((check) => {
-              const exitCode = check.exit_code === null || check.exit_code === undefined ? '无' : check.exit_code;
-              return `${formatStatusLabel(check.status)}：${check.command}（${check.duration_ms}ms，退出码 ${exitCode}）`;
-            })}
-          />
-        </div>
-      </div>
     </div>
   );
 }
