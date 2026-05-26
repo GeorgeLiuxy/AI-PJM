@@ -31,18 +31,36 @@ class Settings(BaseSettings):
 
     # Delivery execution
     workspace_root: str = ""
+    execution_worktree_root: str = ""
     execution_command_timeout_seconds: int = 120
+    execution_codex_enabled: bool = False
+    execution_codex_command_template: str = ""
+    execution_codex_preflight_command: str = ""
+    execution_codex_preflight_timeout_seconds: int = 30
+    execution_codex_timeout_seconds: int = 1800
+    execution_auto_repair_max_attempts: int = 1
+    execution_max_concurrency: int = 1
+    merge_request_default_target_branch: str = "main"
 
     # AI API (reserved)
     anthropic_api_key: str = ""
-    ai_workflow_provider: str = "mock"
+    ai_workflow_provider: str = "local"
     dify_api_base_url: str = ""
     dify_api_key: str = ""
     dify_spec_workflow_id: str = ""
     dify_impact_workflow_id: str = ""
 
     # CORS
-    cors_origins: List[str] = ["http://localhost:5173", "http://localhost:5174", "http://localhost:5175", "http://localhost:5176"]
+    cors_origins: List[str] = [
+        "http://localhost:5173",
+        "http://localhost:5174",
+        "http://localhost:5175",
+        "http://localhost:5176",
+        "http://127.0.0.1:5173",
+        "http://127.0.0.1:5174",
+        "http://127.0.0.1:5175",
+        "http://127.0.0.1:5176",
+    ]
 
     # Logging
     log_level: str = "INFO"

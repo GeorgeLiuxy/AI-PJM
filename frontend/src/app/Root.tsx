@@ -2,7 +2,7 @@ import { Link, Outlet, useLocation } from 'react-router';
 import { GitBranch, Sparkles } from 'lucide-react';
 
 const navItems = [
-  { to: '/', label: 'Delivery' },
+  { to: '/', label: '交付工作台' },
 ];
 
 export default function Root() {
@@ -19,7 +19,7 @@ export default function Root() {
               </div>
               <div>
                 <div className="text-sm font-semibold text-slate-950">AI PJM</div>
-                <div className="text-xs text-slate-500">Delivery orchestration</div>
+                <div className="text-xs text-slate-500">交付编排工作台</div>
               </div>
             </Link>
             <nav className="flex flex-wrap items-center gap-1">
@@ -48,7 +48,7 @@ export default function Root() {
             className="hidden items-center gap-2 rounded border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 md:inline-flex"
           >
             <GitBranch className="h-4 w-4" />
-            API docs
+            接口文档
           </a>
         </div>
       </header>

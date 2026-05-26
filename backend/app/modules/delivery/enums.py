@@ -90,6 +90,38 @@ class ExecutionRunStatus(str, Enum):
     SUCCEEDED = "succeeded"
 
 
+class MergeRequestStatus(str, Enum):
+    """Merge request lifecycle status."""
+
+    CREATED = "created"
+    REVIEWING = "reviewing"
+    REVIEW_PASSED = "review_passed"
+    REVIEW_BLOCKED = "review_blocked"
+    CLOSED = "closed"
+
+
+class ReviewStatus(str, Enum):
+    """Code review status for a merge request."""
+
+    PENDING = "pending"
+    PASSED = "passed"
+    BLOCKING = "blocking"
+
+
+class DeploymentStatus(str, Enum):
+    """Test deployment status."""
+
+    DEPLOYED = "deployed"
+    FAILED = "failed"
+
+
+class VerificationStatus(str, Enum):
+    """Human or automated verification status."""
+
+    PASSED = "passed"
+    FAILED = "failed"
+
+
 class ExecutionLogLevel(str, Enum):
     """Executor run log level."""
 

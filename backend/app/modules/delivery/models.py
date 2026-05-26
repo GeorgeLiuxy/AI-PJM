@@ -11,13 +11,17 @@ from app.modules.delivery.enums import (
     CodingTaskStatus,
     DeliveryRiskLevel,
     DemandStatus,
+    DeploymentStatus,
     ExecutionLogLevel,
     ExecutionRunStatus,
     GateStatus,
     GateType,
     ImpactAnalysisStatus,
+    MergeRequestStatus,
     RepoContextStatus,
+    ReviewStatus,
     SpecStatus,
+    VerificationStatus,
 )
 
 
@@ -267,6 +271,11 @@ class CodingTask(Base):
         back_populates="coding_task",
         cascade="all, delete-orphan",
     )
+    merge_requests: Mapped[list["MergeRequestRecord"]] = relationship(
+        "MergeRequestRecord",
+        back_populates="coding_task",
+        cascade="all, delete-orphan",
+    )
 
     __table_args__ = (
         Index("ix_delivery_coding_tasks_demand_id", "demand_id"),
@@ -310,6 +319,10 @@ class ExecutionRun(Base):
         back_populates="execution_run",
         cascade="all, delete-orphan",
     )
+    merge_requests: Mapped[list["MergeRequestRecord"]] = relationship(
+        "MergeRequestRecord",
+        back_populates="execution_run",
+    )
 
     __table_args__ = (
         Index("ix_delivery_execution_runs_coding_task_id", "coding_task_id"),
@@ -339,4 +352,130 @@ class ExecutionLog(Base):
     __table_args__ = (
         Index("ix_delivery_execution_logs_execution_run_id", "execution_run_id"),
         Index("ix_delivery_execution_logs_level", "level"),
+    )
+
+
+class MergeRequestRecord(Base):
+    """Merge request or pull request metadata and review evidence."""
+
+    __tablename__ = "delivery_merge_request_records"
+
+    id: Mapped[int] = mapped_column(DB_BIGINT, primary_key=True, autoincrement=True)
+    coding_task_id: Mapped[int] = mapped_column(
+        DB_BIGINT,
+        ForeignKey("delivery_coding_tasks.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    execution_run_id: Mapped[int] = mapped_column(
+        DB_BIGINT,
+        ForeignKey("delivery_execution_runs.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    provider: Mapped[str] = mapped_column(String(50), nullable=False, default="local")
+    status: Mapped[str] = mapped_column(String(50), nullable=False, default=MergeRequestStatus.CREATED)
+    review_status: Mapped[str] = mapped_column(String(50), nullable=False, default=ReviewStatus.PENDING)
+    title: Mapped[str] = mapped_column(String(500), nullable=False)
+    source_branch: Mapped[str] = mapped_column(String(500), nullable=False)
+    target_branch: Mapped[str] = mapped_column(String(500), nullable=False, default="main")
+    external_id: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    url: Mapped[Optional[str]] = mapped_column(String(1000), nullable=True)
+    review_summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    review_comments_json: Mapped[list[dict[str, Any]]] = mapped_column(DB_JSON, nullable=False, default=list)
+    evidence_json: Mapped[Optional[dict[str, Any]]] = mapped_column(DB_JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
+        onupdate=utc_now,
+    )
+
+    coding_task: Mapped["CodingTask"] = relationship("CodingTask", back_populates="merge_requests")
+    execution_run: Mapped["ExecutionRun"] = relationship("ExecutionRun", back_populates="merge_requests")
+    deploy_records: Mapped[list["DeployRecord"]] = relationship(
+        "DeployRecord",
+        back_populates="merge_request",
+        cascade="all, delete-orphan",
+    )
+
+    __table_args__ = (
+        Index("ix_delivery_merge_request_records_coding_task_id", "coding_task_id"),
+        Index("ix_delivery_merge_request_records_execution_run_id", "execution_run_id"),
+        Index("ix_delivery_merge_request_records_status", "status"),
+        Index("ix_delivery_merge_request_records_review_status", "review_status"),
+    )
+
+
+class DeployRecord(Base):
+    """Test environment deployment evidence."""
+
+    __tablename__ = "delivery_deploy_records"
+
+    id: Mapped[int] = mapped_column(DB_BIGINT, primary_key=True, autoincrement=True)
+    merge_request_id: Mapped[int] = mapped_column(
+        DB_BIGINT,
+        ForeignKey("delivery_merge_request_records.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    coding_task_id: Mapped[int] = mapped_column(
+        DB_BIGINT,
+        ForeignKey("delivery_coding_tasks.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    provider: Mapped[str] = mapped_column(String(50), nullable=False, default="local")
+    status: Mapped[str] = mapped_column(String(50), nullable=False, default=DeploymentStatus.DEPLOYED)
+    environment: Mapped[str] = mapped_column(String(100), nullable=False, default="test")
+    url: Mapped[Optional[str]] = mapped_column(String(1000), nullable=True)
+    evidence_json: Mapped[Optional[dict[str, Any]]] = mapped_column(DB_JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
+        onupdate=utc_now,
+    )
+
+    merge_request: Mapped["MergeRequestRecord"] = relationship("MergeRequestRecord", back_populates="deploy_records")
+    verification_records: Mapped[list["VerificationRecord"]] = relationship(
+        "VerificationRecord",
+        back_populates="deploy_record",
+        cascade="all, delete-orphan",
+    )
+
+    __table_args__ = (
+        Index("ix_delivery_deploy_records_merge_request_id", "merge_request_id"),
+        Index("ix_delivery_deploy_records_coding_task_id", "coding_task_id"),
+        Index("ix_delivery_deploy_records_status", "status"),
+    )
+
+
+class VerificationRecord(Base):
+    """Verification result for a test deployment."""
+
+    __tablename__ = "delivery_verification_records"
+
+    id: Mapped[int] = mapped_column(DB_BIGINT, primary_key=True, autoincrement=True)
+    deploy_record_id: Mapped[int] = mapped_column(
+        DB_BIGINT,
+        ForeignKey("delivery_deploy_records.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    status: Mapped[str] = mapped_column(String(50), nullable=False, default=VerificationStatus.PASSED)
+    verifier_ref: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    evidence_links_json: Mapped[list[str]] = mapped_column(DB_JSON, nullable=False, default=list)
+    evidence_json: Mapped[Optional[dict[str, Any]]] = mapped_column(DB_JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
+        onupdate=utc_now,
+    )
+
+    deploy_record: Mapped["DeployRecord"] = relationship("DeployRecord", back_populates="verification_records")
+
+    __table_args__ = (
+        Index("ix_delivery_verification_records_deploy_record_id", "deploy_record_id"),
+        Index("ix_delivery_verification_records_status", "status"),
     )

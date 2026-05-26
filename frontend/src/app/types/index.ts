@@ -83,6 +83,8 @@ export interface DeliveryCodingTask {
   expected_evidence_json: string[];
   created_at: string;
   updated_at: string;
+  execution_runs?: DeliveryExecutionRun[];
+  merge_requests?: DeliveryMergeRequestRecord[];
 }
 
 export interface DeliveryExecutionLog {
@@ -110,4 +112,80 @@ export interface DeliveryExecutionRun {
   created_at: string;
   updated_at: string;
   logs: DeliveryExecutionLog[];
+}
+
+export interface DeliveryExecutionQueueItem extends DeliveryExecutionRun {
+  coding_task_title: string;
+  demand_id: number;
+  demand_title: string | null;
+  risk_level: 'L0' | 'L1' | 'L2' | 'L3' | null;
+}
+
+export interface DeliveryMergeRequestRecord {
+  id: number;
+  coding_task_id: number;
+  execution_run_id: number;
+  provider: string;
+  status: 'created' | 'reviewing' | 'review_passed' | 'review_blocked' | 'closed';
+  review_status: 'pending' | 'passed' | 'blocking';
+  title: string;
+  source_branch: string;
+  target_branch: string;
+  external_id: string | null;
+  url: string | null;
+  review_summary: string | null;
+  review_comments_json: Array<Record<string, unknown>>;
+  evidence_json: Record<string, unknown> | null;
+  created_at: string;
+  updated_at: string;
+  deploy_records?: DeliveryDeployRecord[];
+}
+
+export interface DeliveryVerificationRecord {
+  id: number;
+  deploy_record_id: number;
+  status: 'passed' | 'failed';
+  verifier_ref: string | null;
+  summary: string | null;
+  evidence_links_json: string[];
+  evidence_json: Record<string, unknown> | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DeliveryDeployRecord {
+  id: number;
+  merge_request_id: number;
+  coding_task_id: number;
+  provider: string;
+  status: 'deployed' | 'failed';
+  environment: string;
+  url: string | null;
+  evidence_json: Record<string, unknown> | null;
+  created_at: string;
+  updated_at: string;
+  verification_records?: DeliveryVerificationRecord[];
+}
+
+export interface DeliveryGateCheck {
+  id: number;
+  demand_id: number;
+  gate_type: string;
+  status: string;
+  reason: string | null;
+  evidence_json: Record<string, unknown> | null;
+  created_at: string;
+}
+
+export interface DeliveryDemandDetail extends DeliveryDemand {
+  spec_cards: DeliverySpecCard[];
+  gate_checks: DeliveryGateCheck[];
+  repo_contexts: DeliveryRepoContext[];
+  impact_analyses: DeliveryImpactAnalysis[];
+  coding_tasks: DeliveryCodingTask[];
+}
+
+export interface DeliveryCodingTaskDetail extends DeliveryCodingTask {
+  execution_runs: DeliveryExecutionRun[];
+  merge_requests: DeliveryMergeRequestRecord[];
 }

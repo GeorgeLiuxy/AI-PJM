@@ -89,8 +89,10 @@ DemandItem        # Raw business demand
 
 ### API Endpoints (Complete)
 ```text
+GET  /api/v2/demands                        # List recent demands
 POST /api/v2/demands                        # Create demand
 GET  /api/v2/demands/{demand_id}            # Get demand detail with artifacts
+POST /api/v2/demands/{demand_id}/manual-approval       # Record manual approval or rejection
 POST /api/v2/demands/{demand_id}/spec       # Generate spec card
 GET  /api/v2/spec-cards/{spec_card_id}      # Get spec card
 POST /api/v2/demands/{demand_id}/repo-context           # Collect repository context
@@ -100,6 +102,7 @@ GET  /api/v2/impact-analyses/{impact_analysis_id}      # Get impact analysis
 POST /api/v2/spec-cards/{spec_card_id}/coding-task     # Create coding task
 GET  /api/v2/coding-tasks/{coding_task_id}             # Get coding task
 POST /api/v2/coding-tasks/{coding_task_id}/runs        # Create execution run
+POST /api/v2/coding-tasks/{coding_task_id}/retry       # Retry checks for an existing task
 GET  /api/v2/execution-runs/{execution_run_id}        # Get execution run
 POST /api/v2/execution-runs/{execution_run_id}/dispatch # Dispatch execution
 GET  /health                                  # Health check
@@ -115,7 +118,8 @@ GET  /health                                  # Health check
 
 ### Provider Architecture (Complete)
 - Provider interface contracts defined
-- Mock provider implemented (default)
+- Local provider implemented (default): scans workspace structure, docs, configs, tests, dependency refs, and demand-related candidate files
+- Mock provider remains available for deterministic fallback
 - Provider factory for future Dify/OpenAI integration
 - All providers return structured drafts only
 - Backend maintains state and gate control
@@ -123,6 +127,8 @@ GET  /health                                  # Health check
 ### Executor Architecture (Complete)
 - Executor interface contracts defined
 - LocalChecksExecutor implemented
+- `codex` executor path prepares an isolated Git worktree and branch before running checks
+- Configurable Codex command hook can run before checks when enabled
 - Safe command execution (pytest, npm build, compileall)
 - Execution evidence collection and persistence
 - Support for future Codex worker integration
@@ -138,6 +144,21 @@ GET  /health                                  # Health check
 - ✅ Local command execution and evidence collection
 - ✅ Self-test passed gate evaluation
 
+Current failure handling for local checks:
+
+- Failed required checks persist exit code, stdout tail, stderr tail, error, execution logs, and a failed `self_test_passed` gate.
+- Failed tasks move to `blocked`.
+- `POST /api/v2/coding-tasks/{coding_task_id}/retry` reruns checks for `ready`, `blocked`, or `completed` low-risk tasks.
+- Retry does not bypass L2/L3 risk gates.
+
+Current manual approval handling:
+
+- L2/L3 demands still produce `manual_review` specs and draft coding tasks.
+- A manual approval records gate evidence with approver, note, risk level, spec id, and task id.
+- Approval promotes the latest spec to `approved` and the latest draft task to `ready`.
+- Rejection blocks the demand and blocks the latest draft or ready task.
+- After approval, `Continue` can resume execution without changing the recorded risk level.
+
 ### Frontend Implementation (Complete)
 - ✅ Complete TypeScript type definitions
 - ✅ API client library
@@ -145,6 +166,14 @@ GET  /health                                  # Health check
 - ✅ Real-time pipeline visualization
 - ✅ Evidence and results display
 - ✅ Error handling and status tracking
+
+Current operator console includes:
+
+- History list and detail restore.
+- Manual approval and rejection for high-risk blocked work.
+- `Continue` for missing or failed low-risk workflow stages.
+- `Retry checks` for existing task checks.
+- Failed check output and failure details.
 
 ### Future Enhancements (Not Implemented)
 - ⏳ Real Codex AI worker integration
@@ -156,7 +185,9 @@ GET  /health                                  # Health check
 Current API path:
 
 ```text
+GET  /api/v2/demands
 POST /api/v2/demands
+POST /api/v2/demands/{demand_id}/manual-approval
 POST /api/v2/demands/{demand_id}/spec
 POST /api/v2/demands/{demand_id}/repo-context
 GET  /api/v2/repo-contexts/{repo_context_id}
@@ -164,6 +195,7 @@ POST /api/v2/demands/{demand_id}/impact-analysis
 GET  /api/v2/impact-analyses/{impact_analysis_id}
 POST /api/v2/spec-cards/{spec_card_id}/coding-task
 POST /api/v2/coding-tasks/{coding_task_id}/runs
+POST /api/v2/coding-tasks/{coding_task_id}/retry
 POST /api/v2/execution-runs/{execution_run_id}/dispatch
 GET  /api/v2/execution-runs/{execution_run_id}
 GET  /api/v2/demands/{demand_id}
@@ -181,10 +213,15 @@ Current automation:
 - ExecutionRun is created as `blocked` when the gate requires manual input.
 - Queued ExecutionRun can be dispatched through the local required-check executor.
 - Required check results are persisted as execution evidence and `self_test_passed` gate checks.
+- Failed check results are visible in the UI and can be retried as a new execution attempt.
+- High-risk execution can continue only after manual approval evidence is recorded.
+- For `executor_type = codex`, checks run inside a generated Git worktree and branch. Evidence records `workspace_root`, `original_workspace_root`, `branch_name`, and `commit_sha`.
+- When Codex command execution is enabled, evidence also records command status, prompt file path, exit code, stdout/stderr tails, and changed files.
 
 Not implemented yet:
 
-- Real Codex execution worker.
+- Production-ready Codex CLI or SDK command configuration.
+- Automated code-fix loop.
 - MR/PR creation.
 - Test deployment.
 - Verification workflow.

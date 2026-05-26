@@ -2,19 +2,22 @@
 
 from typing import Optional
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.modules.delivery.models import (
     CodingTask,
+    DeployRecord,
     DemandItem,
     ExecutionLog,
     ExecutionRun,
     GateCheck,
     ImpactAnalysis,
+    MergeRequestRecord,
     RepoContext,
     SpecCard,
+    VerificationRecord,
 )
 
 
@@ -45,6 +48,20 @@ class DeliveryRepository:
         result = await db.execute(select(DemandItem).where(DemandItem.id == demand_id))
         return result.scalar_one_or_none()
 
+    async def list_demands(
+        self,
+        db: AsyncSession,
+        limit: int = 30,
+        offset: int = 0,
+    ) -> list[DemandItem]:
+        result = await db.execute(
+            select(DemandItem)
+            .order_by(DemandItem.updated_at.desc(), DemandItem.id.desc())
+            .offset(offset)
+            .limit(limit)
+        )
+        return list(result.scalars().all())
+
     async def get_demand_detail(self, db: AsyncSession, demand_id: int) -> Optional[DemandItem]:
         result = await db.execute(
             select(DemandItem)
@@ -53,25 +70,102 @@ class DeliveryRepository:
                 selectinload(DemandItem.gate_checks),
                 selectinload(DemandItem.repo_contexts),
                 selectinload(DemandItem.impact_analyses),
-                selectinload(DemandItem.coding_tasks),
+                selectinload(DemandItem.coding_tasks)
+                .selectinload(CodingTask.execution_runs)
+                .selectinload(ExecutionRun.logs),
+                selectinload(DemandItem.coding_tasks)
+                .selectinload(CodingTask.merge_requests)
+                .selectinload(MergeRequestRecord.deploy_records)
+                .selectinload(DeployRecord.verification_records),
             )
             .where(DemandItem.id == demand_id)
+            .execution_options(populate_existing=True)
         )
         return result.scalar_one_or_none()
+
+    async def has_manual_execution_approval(self, db: AsyncSession, demand_id: int) -> bool:
+        result = await db.execute(
+            select(GateCheck).where(
+                GateCheck.demand_id == demand_id,
+                GateCheck.gate_type == "execution_allowed",
+                GateCheck.status == "passed",
+            )
+        )
+        for gate in result.scalars().all():
+            evidence = gate.evidence_json or {}
+            if evidence.get("approval_type") == "manual" and evidence.get("approved") is True:
+                return True
+        return False
 
     async def get_spec_card(self, db: AsyncSession, spec_card_id: int) -> Optional[SpecCard]:
         result = await db.execute(select(SpecCard).where(SpecCard.id == spec_card_id))
         return result.scalar_one_or_none()
 
     async def get_coding_task(self, db: AsyncSession, coding_task_id: int) -> Optional[CodingTask]:
-        result = await db.execute(select(CodingTask).where(CodingTask.id == coding_task_id))
+        result = await db.execute(
+            select(CodingTask)
+            .options(
+                selectinload(CodingTask.execution_runs).selectinload(ExecutionRun.logs),
+                selectinload(CodingTask.merge_requests)
+                .selectinload(MergeRequestRecord.deploy_records)
+                .selectinload(DeployRecord.verification_records),
+            )
+            .where(CodingTask.id == coding_task_id)
+        )
         return result.scalar_one_or_none()
 
     async def get_coding_task_detail(self, db: AsyncSession, coding_task_id: int) -> Optional[CodingTask]:
         result = await db.execute(
             select(CodingTask)
-            .options(selectinload(CodingTask.execution_runs))
+            .options(
+                selectinload(CodingTask.execution_runs),
+                selectinload(CodingTask.merge_requests)
+                .selectinload(MergeRequestRecord.deploy_records)
+                .selectinload(DeployRecord.verification_records),
+            )
             .where(CodingTask.id == coding_task_id)
+        )
+        return result.scalar_one_or_none()
+
+    async def get_merge_request_record(
+        self,
+        db: AsyncSession,
+        merge_request_id: int,
+    ) -> Optional[MergeRequestRecord]:
+        result = await db.execute(
+            select(MergeRequestRecord)
+            .options(
+                selectinload(MergeRequestRecord.deploy_records).selectinload(DeployRecord.verification_records),
+            )
+            .where(MergeRequestRecord.id == merge_request_id)
+            .execution_options(populate_existing=True)
+        )
+        return result.scalar_one_or_none()
+
+    async def get_deploy_record(
+        self,
+        db: AsyncSession,
+        deploy_record_id: int,
+    ) -> Optional[DeployRecord]:
+        result = await db.execute(
+            select(DeployRecord)
+            .options(selectinload(DeployRecord.verification_records))
+            .where(DeployRecord.id == deploy_record_id)
+            .execution_options(populate_existing=True)
+        )
+        return result.scalar_one_or_none()
+
+    async def get_latest_merge_request_for_task(
+        self,
+        db: AsyncSession,
+        coding_task_id: int,
+    ) -> Optional[MergeRequestRecord]:
+        result = await db.execute(
+            select(MergeRequestRecord)
+            .where(MergeRequestRecord.coding_task_id == coding_task_id)
+            .order_by(MergeRequestRecord.created_at.desc(), MergeRequestRecord.id.desc())
+            .limit(1)
+            .execution_options(populate_existing=True)
         )
         return result.scalar_one_or_none()
 
@@ -101,6 +195,15 @@ class DeliveryRepository:
         result = await db.execute(select(ImpactAnalysis).where(ImpactAnalysis.id == impact_analysis_id))
         return result.scalar_one_or_none()
 
+    async def get_latest_impact_analysis(self, db: AsyncSession, demand_id: int) -> Optional[ImpactAnalysis]:
+        result = await db.execute(
+            select(ImpactAnalysis)
+            .where(ImpactAnalysis.demand_id == demand_id)
+            .order_by(ImpactAnalysis.created_at.desc(), ImpactAnalysis.id.desc())
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+
     async def get_execution_run(self, db: AsyncSession, execution_run_id: int) -> Optional[ExecutionRun]:
         result = await db.execute(
             select(ExecutionRun)
@@ -125,6 +228,40 @@ class DeliveryRepository:
             .execution_options(populate_existing=True)
         )
         return result.scalar_one_or_none()
+
+    async def list_execution_runs(
+        self,
+        db: AsyncSession,
+        statuses: list[str] | None = None,
+        limit: int = 30,
+        offset: int = 0,
+    ) -> list[ExecutionRun]:
+        query = (
+            select(ExecutionRun)
+            .options(
+                selectinload(ExecutionRun.logs),
+                selectinload(ExecutionRun.coding_task).selectinload(CodingTask.demand),
+            )
+            .order_by(ExecutionRun.updated_at.desc(), ExecutionRun.id.desc())
+            .offset(offset)
+            .limit(limit)
+            .execution_options(populate_existing=True)
+        )
+        if statuses:
+            query = query.where(ExecutionRun.status.in_(statuses))
+        result = await db.execute(query)
+        return list(result.scalars().all())
+
+    async def count_running_execution_runs(
+        self,
+        db: AsyncSession,
+        exclude_run_id: int | None = None,
+    ) -> int:
+        query = select(func.count(ExecutionRun.id)).where(ExecutionRun.status == "running")
+        if exclude_run_id is not None:
+            query = query.where(ExecutionRun.id != exclude_run_id)
+        result = await db.execute(query)
+        return int(result.scalar_one() or 0)
 
     async def create_spec_card(
         self,
@@ -302,6 +439,88 @@ class DeliveryRepository:
         await db.flush()
         return log
 
+    async def create_merge_request_record(
+        self,
+        db: AsyncSession,
+        coding_task_id: int,
+        execution_run_id: int,
+        provider: str,
+        status: str,
+        review_status: str,
+        title: str,
+        source_branch: str,
+        target_branch: str,
+        external_id: str | None = None,
+        url: str | None = None,
+        review_summary: str | None = None,
+        review_comments: list[dict] | None = None,
+        evidence_json: dict | None = None,
+    ) -> MergeRequestRecord:
+        record = MergeRequestRecord(
+            coding_task_id=coding_task_id,
+            execution_run_id=execution_run_id,
+            provider=provider,
+            status=status,
+            review_status=review_status,
+            title=title,
+            source_branch=source_branch,
+            target_branch=target_branch,
+            external_id=external_id,
+            url=url,
+            review_summary=review_summary,
+            review_comments_json=review_comments or [],
+            evidence_json=evidence_json,
+        )
+        db.add(record)
+        await db.flush()
+        return record
+
+    async def create_deploy_record(
+        self,
+        db: AsyncSession,
+        merge_request_id: int,
+        coding_task_id: int,
+        provider: str,
+        status: str,
+        environment: str,
+        url: str | None = None,
+        evidence_json: dict | None = None,
+    ) -> DeployRecord:
+        record = DeployRecord(
+            merge_request_id=merge_request_id,
+            coding_task_id=coding_task_id,
+            provider=provider,
+            status=status,
+            environment=environment,
+            url=url,
+            evidence_json=evidence_json,
+        )
+        db.add(record)
+        await db.flush()
+        return record
+
+    async def create_verification_record(
+        self,
+        db: AsyncSession,
+        deploy_record_id: int,
+        status: str,
+        verifier_ref: str | None = None,
+        summary: str | None = None,
+        evidence_links: list[str] | None = None,
+        evidence_json: dict | None = None,
+    ) -> VerificationRecord:
+        record = VerificationRecord(
+            deploy_record_id=deploy_record_id,
+            status=status,
+            verifier_ref=verifier_ref,
+            summary=summary,
+            evidence_links_json=evidence_links or [],
+            evidence_json=evidence_json,
+        )
+        db.add(record)
+        await db.flush()
+        return record
+
     async def update_execution_run(
         self,
         db: AsyncSession,
@@ -322,6 +541,38 @@ class DeliveryRepository:
         task.status = status
         await db.flush()
         return task
+
+    async def update_merge_request_record(
+        self,
+        db: AsyncSession,
+        record: MergeRequestRecord,
+        **values,
+    ) -> MergeRequestRecord:
+        for key, value in values.items():
+            setattr(record, key, value)
+        await db.flush()
+        return record
+
+    async def update_deploy_record(
+        self,
+        db: AsyncSession,
+        record: DeployRecord,
+        **values,
+    ) -> DeployRecord:
+        for key, value in values.items():
+            setattr(record, key, value)
+        await db.flush()
+        return record
+
+    async def update_spec_status(
+        self,
+        db: AsyncSession,
+        spec: SpecCard,
+        status: str,
+    ) -> SpecCard:
+        spec.status = status
+        await db.flush()
+        return spec
 
 
 delivery_repository = DeliveryRepository()

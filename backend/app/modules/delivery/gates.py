@@ -179,6 +179,7 @@ class DeliveryGateEngine:
         coding_task_id: int,
         coding_task_status: str,
         risk_level: str | None,
+        manual_approved: bool = False,
     ) -> GateDecision:
         if coding_task_status != CodingTaskStatus.READY:
             return GateDecision(
@@ -186,6 +187,18 @@ class DeliveryGateEngine:
                 status=GateStatus.MANUAL_REQUIRED,
                 reason="Coding task is not ready for automatic execution.",
                 evidence={"coding_task_id": coding_task_id, "coding_task_status": coding_task_status},
+            )
+
+        if manual_approved:
+            return GateDecision(
+                gate_type=GateType.EXECUTION_ALLOWED,
+                status=GateStatus.PASSED,
+                reason="Manual approval allows executor dispatch.",
+                evidence={
+                    "coding_task_id": coding_task_id,
+                    "risk_level": risk_level,
+                    "manual_approved": True,
+                },
             )
 
         if risk_level in {DeliveryRiskLevel.L2, DeliveryRiskLevel.L3}:

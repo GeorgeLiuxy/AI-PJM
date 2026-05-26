@@ -9,13 +9,17 @@ from app.modules.delivery.enums import (
     CodingTaskStatus,
     DeliveryRiskLevel,
     DemandStatus,
+    DeploymentStatus,
     ExecutionLogLevel,
     ExecutionRunStatus,
     GateStatus,
     GateType,
     ImpactAnalysisStatus,
+    MergeRequestStatus,
     RepoContextStatus,
+    ReviewStatus,
     SpecStatus,
+    VerificationStatus,
 )
 
 
@@ -52,6 +56,14 @@ class SpecGenerateRequest(BaseModel):
     """Generate a spec card for a demand."""
 
     auto_approve_low_risk: bool = True
+
+
+class ManualApprovalRequest(BaseModel):
+    """Record a human approval or rejection for a demand."""
+
+    approved: bool = True
+    approver_ref: Optional[str] = Field(default=None, max_length=200)
+    note: Optional[str] = Field(default=None, max_length=2000)
 
 
 class SpecCardResponse(BaseModel):
@@ -178,6 +190,49 @@ class ExecutionRunCreateRequest(BaseModel):
     trigger_mode: str = Field(default="manual", max_length=50)
 
 
+class AutoRepairExecutionRequest(BaseModel):
+    """Run a bounded automatic repair loop for a failed coding task."""
+
+    executor_type: str = Field(default="codex", max_length=50)
+    max_attempts: int | None = Field(default=None, ge=1, le=3)
+
+
+class MergeRequestCreateRequest(BaseModel):
+    """Create or register a merge request for a completed coding task."""
+
+    execution_run_id: Optional[int] = None
+    provider: str = Field(default="local", max_length=50)
+    target_branch: Optional[str] = Field(default=None, max_length=500)
+    title: Optional[str] = Field(default=None, max_length=500)
+    url: Optional[str] = Field(default=None, max_length=1000)
+
+
+class MergeRequestReviewRequest(BaseModel):
+    """Record review result for a merge request."""
+
+    review_status: ReviewStatus = ReviewStatus.PASSED
+    review_summary: Optional[str] = Field(default=None, max_length=4000)
+    review_comments: list[dict[str, Any]] = Field(default_factory=list)
+    blocking_issues: list[str] = Field(default_factory=list)
+
+
+class DeployRecordCreateRequest(BaseModel):
+    """Create or register a test environment deployment."""
+
+    provider: str = Field(default="local", max_length=50)
+    environment: str = Field(default="test", max_length=100)
+    url: Optional[str] = Field(default=None, max_length=1000)
+
+
+class VerificationRecordCreateRequest(BaseModel):
+    """Record verification result for a test deployment."""
+
+    status: VerificationStatus = VerificationStatus.PASSED
+    verifier_ref: Optional[str] = Field(default=None, max_length=200)
+    summary: Optional[str] = Field(default=None, max_length=4000)
+    evidence_links: list[str] = Field(default_factory=list)
+
+
 class ExecutionLogResponse(BaseModel):
     """Execution run log response."""
 
@@ -215,6 +270,83 @@ class ExecutionRunResponse(BaseModel):
         from_attributes = True
 
 
+class ExecutionRunQueueItemResponse(ExecutionRunResponse):
+    """Execution queue item with task and demand context."""
+
+    coding_task_title: str
+    demand_id: int
+    demand_title: Optional[str] = None
+    risk_level: Optional[DeliveryRiskLevel] = None
+
+
+class MergeRequestRecordResponse(BaseModel):
+    """Merge request or pull request record response."""
+
+    id: int
+    coding_task_id: int
+    execution_run_id: int
+    provider: str
+    status: MergeRequestStatus
+    review_status: ReviewStatus
+    title: str
+    source_branch: str
+    target_branch: str
+    external_id: Optional[str] = None
+    url: Optional[str] = None
+    review_summary: Optional[str] = None
+    review_comments_json: list[dict[str, Any]]
+    evidence_json: Optional[dict[str, Any]] = None
+    created_at: datetime
+    updated_at: datetime
+    deploy_records: list["DeployRecordResponse"] = Field(default_factory=list)
+
+    class Config:
+        from_attributes = True
+
+
+class VerificationRecordResponse(BaseModel):
+    """Verification record response."""
+
+    id: int
+    deploy_record_id: int
+    status: VerificationStatus
+    verifier_ref: Optional[str] = None
+    summary: Optional[str] = None
+    evidence_links_json: list[str]
+    evidence_json: Optional[dict[str, Any]] = None
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class DeployRecordResponse(BaseModel):
+    """Test deployment record response."""
+
+    id: int
+    merge_request_id: int
+    coding_task_id: int
+    provider: str
+    status: DeploymentStatus
+    environment: str
+    url: Optional[str] = None
+    evidence_json: Optional[dict[str, Any]] = None
+    created_at: datetime
+    updated_at: datetime
+    verification_records: list[VerificationRecordResponse] = Field(default_factory=list)
+
+    class Config:
+        from_attributes = True
+
+
+class CodingTaskDetailResponse(CodingTaskResponse):
+    """Coding task response with execution attempts."""
+
+    execution_runs: list[ExecutionRunResponse] = Field(default_factory=list)
+    merge_requests: list[MergeRequestRecordResponse] = Field(default_factory=list)
+
+
 class DemandDetailResponse(DemandResponse):
     """Demand detail with generated artifacts."""
 
@@ -222,4 +354,4 @@ class DemandDetailResponse(DemandResponse):
     gate_checks: list[GateCheckResponse] = Field(default_factory=list)
     repo_contexts: list[RepoContextResponse] = Field(default_factory=list)
     impact_analyses: list[ImpactAnalysisResponse] = Field(default_factory=list)
-    coding_tasks: list[CodingTaskResponse] = Field(default_factory=list)
+    coding_tasks: list[CodingTaskDetailResponse] = Field(default_factory=list)

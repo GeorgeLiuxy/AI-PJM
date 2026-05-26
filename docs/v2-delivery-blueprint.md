@@ -135,8 +135,11 @@ DemandItem
 
 Current boundaries:
 
-- Provider boundary exists with a deterministic `mock` provider.
+- Provider boundary exists with `local` and `mock` providers.
+- The default `local` provider scans the current workspace for repository structure, docs, frontend/backend config, tests, dependency references, and demand-related candidate files.
 - Gate engine owns risk, confidence, and execution decisions.
 - Local required-check execution is implemented for safe commands such as `npm run build`, `pytest`, `python -m pytest`, and `python -m compileall`.
+- The `codex` executor path now prepares an isolated Git worktree and branch before running checks.
+- A configurable Codex command hook can run inside that worktree before checks when `EXECUTION_CODEX_ENABLED=true` and `EXECUTION_CODEX_COMMAND_TEMPLATE` is set.
 - Dify/OpenAI providers are not implemented yet.
-- Real Codex code execution, MR creation, deployment, and verification are separate follow-up slices.
+- Production-grade Codex command configuration, MR creation, deployment, and verification are separate follow-up slices.
