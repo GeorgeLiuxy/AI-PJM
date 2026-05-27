@@ -30,7 +30,7 @@ AI PJM 是一个 AI 辅助工程交付编排平台。它不是通用项目管理
 - 真实 Codex CLI 首版接入：通过 npm 版 `@openai/codex` 在隔离 worktree 中执行。
 - 本地 MR/PR 记录、评审门禁、测试环境记录和验收记录。
 - 执行队列可见性和基础并发上限保护。
-- Dify Provider 边界首版，可通过配置接入 Spec/Impact workflow。
+- Dify Provider 边界首版，可通过配置接入 Spec/Impact workflow，并优先按项目从 SecretStore 读取 `dify_api_key`。
 - 本地认证与项目权限首版：账号密码登录、Bearer Token、项目成员、角色权限、交付 API 权限保护。
 - 权限管理页面首版：查看项目/用户、创建项目、创建本地用户并分配项目角色。
 - 审计事件首版：关键人工/敏感动作落库，并在工作台审计页签展示。
@@ -45,7 +45,7 @@ AI PJM 是一个 AI 辅助工程交付编排平台。它不是通用项目管理
 - Codex CLI 首版已可用，但仍需继续做自动修复闭环、性能优化和生产化运维配置。本机 WindowsApps 下的 `codex.exe` 仍会返回 `Access is denied`，当前使用全局 npm 版 `@openai/codex`。
 - 当前 MR/PR、测试环境部署和验收是本地记录闭环；真实 GitLab/GitHub 创建、远端评审拉取、真实部署 Provider 仍待实现。
 - 认证授权和项目权限已有本地首版，仍需补齐企业 SSO、细粒度按钮权限、人工动作操作者落库和审计报表。
-- 密钥管理已有本地加密存储首版，仍需接入 Vault/KMS、凭证健康检查、过期提醒和外部 Provider 消费。
+- 密钥管理已有本地加密存储首版，Dify API Key 已可按项目读取；仍需接入 Vault/KMS、凭证健康检查、过期提醒和更多外部 Provider 消费。
 - PostgreSQL、数据库迁移、后台 Worker、审计报表和监控仍待实现。
 - 默认子 Agent 评审、多仓库编排、自动生产发布暂不做。
 
@@ -116,6 +116,8 @@ $env:SECRET_STORE_MASTER_KEY="replace-with-a-long-random-secret"
 ```
 
 密钥 API 和访问管理页只返回掩码，例如 `****alue`；明文只在服务端按项目权限解析，不进入前端响应。
+
+Dify 项目级凭证约定密钥名为 `dify_api_key`，可通过 `DIFY_API_KEY_SECRET_NAME` 调整。项目未配置该密钥时，Dify Provider 回退使用全局 `DIFY_API_KEY`，便于本地调试。
 
 前端：
 

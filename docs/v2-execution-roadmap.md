@@ -18,7 +18,7 @@
 - 低风险自动修复闭环首版。
 - 本地 MR/PR 记录、评审门禁、测试环境记录和验收记录。
 - 执行队列可见性和基础并发上限保护。
-- Dify Provider 边界首版。
+- Dify Provider 边界首版，Dify API Key 可按项目从 SecretStore 读取。
 - 本地认证、Bearer Token、项目成员和交付 API 权限保护首版。
 - 本地 SecretStore 首版：项目级密钥服务端加密存储、掩码展示、创建/轮换审计。
 - 中文化交付工作台页面。
@@ -218,13 +218,14 @@
 
 目标：在 Provider 合同稳定后，引入外部编排工具，而不是让 Dify 接管平台状态。
 
-状态：Dify Provider 边界首版已实现，默认不启用。`ai_workflow_provider=dify` 时，Spec 和影响分析可通过 Dify workflow 获取结构化输出；仓库上下文和任务包仍可复用本地规则。缺少 Dify URL、API Key 或 workflow id 时会明确失败，不会静默推进门禁。OpenAI Provider 仍待实现。
+状态：Dify Provider 边界首版已实现，默认不启用。`ai_workflow_provider=dify` 时，Spec 和影响分析可通过 Dify workflow 获取结构化输出；仓库上下文和任务包仍可复用本地规则。Dify API Key 会优先按项目从 SecretStore 读取 `dify_api_key`，项目未配置时回退到全局 `DIFY_API_KEY`。缺少 Dify URL、API Key 或 workflow id 时会明确失败，不会静默推进门禁。OpenAI Provider 仍待实现。
 
 任务：
 
 - 实现 `DifyProvider`。（已完成首版）
 - 实现 `OpenAIProvider` 或其他模型 Provider。（待实现）
 - Provider 只返回结构化草稿，不直接改数据库状态。（已按合同约束）
+- Dify API Key 按项目从 SecretStore 读取。（已完成首版）
 - 加入 schema 校验、超时、重试、降级到本地规则。（结构化校验和超时已完成，重试/降级策略待细化）
 
 完成标准：

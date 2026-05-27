@@ -59,6 +59,7 @@ class Settings(BaseSettings):
     ai_workflow_provider: str = "local"
     dify_api_base_url: str = ""
     dify_api_key: str = ""
+    dify_api_key_secret_name: str = "dify_api_key"
     dify_spec_workflow_id: str = ""
     dify_impact_workflow_id: str = ""
 

@@ -22,10 +22,25 @@ class DifyWorkflowProvider(LocalWorkflowProvider):
 
     name = "dify"
 
+    def __init__(
+        self,
+        *,
+        api_key: str | None = None,
+        credential_source: str = "settings",
+        credential_project_id: int | None = None,
+        api_key_secret_name: str | None = None,
+    ) -> None:
+        super().__init__()
+        self._api_key_override = api_key
+        self._credential_source = credential_source
+        self._credential_project_id = credential_project_id
+        self._api_key_secret_name = api_key_secret_name
+
     async def generate_spec(self, demand: DemandItem) -> SpecDraft:
-        self._require_workflow(settings.dify_spec_workflow_id, "Dify spec workflow")
+        workflow_id = self._spec_workflow_id()
+        self._require_workflow(workflow_id, "Dify spec workflow")
         outputs = await self._run_workflow(
-            workflow_id=settings.dify_spec_workflow_id,
+            workflow_id=workflow_id,
             inputs={
                 "demand_id": demand.id,
                 "raw_input": demand.raw_input,
@@ -44,8 +59,9 @@ class DifyWorkflowProvider(LocalWorkflowProvider):
             open_questions=self._string_list(outputs, "open_questions", required=False),
             provider_metadata={
                 "provider": self.name,
-                "workflow_id": settings.dify_spec_workflow_id,
+                "workflow_id": workflow_id,
                 "source": "dify_workflow",
+                **self._credential_metadata(),
             },
         )
 
@@ -55,9 +71,10 @@ class DifyWorkflowProvider(LocalWorkflowProvider):
         spec: SpecCard | None,
         repo_context: RepoContext | None,
     ) -> ImpactAnalysisDraft:
-        self._require_workflow(settings.dify_impact_workflow_id, "Dify impact workflow")
+        workflow_id = self._impact_workflow_id()
+        self._require_workflow(workflow_id, "Dify impact workflow")
         outputs = await self._run_workflow(
-            workflow_id=settings.dify_impact_workflow_id,
+            workflow_id=workflow_id,
             inputs={
                 "demand_id": demand.id,
                 "raw_input": demand.raw_input,
@@ -75,16 +92,17 @@ class DifyWorkflowProvider(LocalWorkflowProvider):
             confidence_score=self._confidence(outputs.get("confidence_score")),
             provider_metadata={
                 "provider": self.name,
-                "workflow_id": settings.dify_impact_workflow_id,
+                "workflow_id": workflow_id,
                 "source": "dify_workflow",
                 "spec_card_id": spec.id if spec else None,
                 "repo_context_id": repo_context.id if repo_context else None,
+                **self._credential_metadata(),
             },
         )
 
     async def _run_workflow(self, *, workflow_id: str, inputs: dict[str, Any]) -> dict[str, Any]:
         self._require_base_config()
-        url = f"{settings.dify_api_base_url.rstrip('/')}/v1/workflows/run"
+        url = f"{self._api_base_url().rstrip('/')}/v1/workflows/run"
         payload = {
             "inputs": {
                 **inputs,
@@ -97,7 +115,7 @@ class DifyWorkflowProvider(LocalWorkflowProvider):
             async with httpx.AsyncClient(timeout=120) as client:
                 response = await client.post(
                     url,
-                    headers={"Authorization": f"Bearer {settings.dify_api_key}"},
+                    headers={"Authorization": f"Bearer {self._api_key()}"},
                     json=payload,
                 )
                 response.raise_for_status()
@@ -112,9 +130,9 @@ class DifyWorkflowProvider(LocalWorkflowProvider):
 
     def _require_base_config(self) -> None:
         missing = []
-        if not settings.dify_api_base_url:
+        if not self._api_base_url():
             missing.append("DIFY_API_BASE_URL")
-        if not settings.dify_api_key:
+        if not self._api_key():
             missing.append("DIFY_API_KEY")
         if missing:
             raise AIServiceException(f"Dify provider is missing configuration: {', '.join(missing)}")
@@ -123,6 +141,26 @@ class DifyWorkflowProvider(LocalWorkflowProvider):
         self._require_base_config()
         if not workflow_id:
             raise AIServiceException(f"{label} is not configured")
+
+    def _api_base_url(self) -> str:
+        return settings.dify_api_base_url.strip()
+
+    def _api_key(self) -> str:
+        return (self._api_key_override or settings.dify_api_key).strip()
+
+    def _spec_workflow_id(self) -> str:
+        return settings.dify_spec_workflow_id.strip()
+
+    def _impact_workflow_id(self) -> str:
+        return settings.dify_impact_workflow_id.strip()
+
+    def _credential_metadata(self) -> dict[str, Any]:
+        metadata: dict[str, Any] = {"credential_source": self._credential_source}
+        if self._credential_project_id is not None:
+            metadata["credential_project_id"] = self._credential_project_id
+        if self._api_key_secret_name:
+            metadata["api_key_secret_name"] = self._api_key_secret_name
+        return metadata
 
     def _required_str(self, outputs: dict[str, Any], key: str) -> str:
         value = outputs.get(key)

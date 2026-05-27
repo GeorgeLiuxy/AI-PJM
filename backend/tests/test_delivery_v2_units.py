@@ -4,6 +4,7 @@ import pytest
 
 from app.core.config import settings
 from app.core.exceptions import AIServiceException
+from app.modules.auth.repository import auth_repository
 from app.modules.delivery.executors.local_checks import WorktreeChecksExecutor
 from app.modules.delivery.enums import CodingTaskStatus, DeliveryRiskLevel, GateStatus, SpecStatus
 from app.modules.delivery.gates import gate_engine
@@ -11,7 +12,9 @@ from app.modules.delivery.models import DemandItem, RepoContext
 from app.modules.delivery.providers.dify import DifyWorkflowProvider
 from app.modules.delivery.providers.factory import get_workflow_provider
 from app.modules.delivery.providers.local import LocalWorkflowProvider
-from app.modules.delivery.service import delivery_service
+from app.modules.delivery.repository import delivery_repository
+from app.modules.delivery.service import DeliveryService, delivery_service
+from app.modules.secrets.service import secret_store_service
 
 
 def test_delivery_v2_low_risk_auto_approval_rule():
@@ -90,6 +93,86 @@ def test_delivery_v2_dify_provider_requires_base_config(monkeypatch):
 
     with pytest.raises(AIServiceException, match="DIFY_API_BASE_URL"):
         DifyWorkflowProvider()._require_base_config()
+
+
+def test_delivery_v2_dify_provider_accepts_injected_api_key(monkeypatch):
+    monkeypatch.setattr(settings, "dify_api_base_url", "http://dify.local")
+    monkeypatch.setattr(settings, "dify_api_key", "")
+
+    provider = DifyWorkflowProvider(
+        api_key="project-dify-key",
+        credential_source="secret_store",
+        credential_project_id=123,
+        api_key_secret_name="dify_api_key",
+    )
+
+    provider._require_base_config()
+    assert provider._api_key() == "project-dify-key"
+    assert provider._credential_metadata() == {
+        "credential_source": "secret_store",
+        "credential_project_id": 123,
+        "api_key_secret_name": "dify_api_key",
+    }
+
+
+@pytest.mark.asyncio
+async def test_delivery_service_resolves_project_dify_api_key_from_secret_store(
+    db_session,
+    monkeypatch,
+):
+    monkeypatch.setattr(settings, "secret_store_master_key", "test-secret-master-key")
+    monkeypatch.setattr(settings, "dify_api_base_url", "http://dify.local")
+    monkeypatch.setattr(settings, "dify_api_key", "")
+    monkeypatch.setattr(settings, "dify_api_key_secret_name", "dify_api_key")
+    monkeypatch.setattr(settings, "dify_spec_workflow_id", "spec-flow")
+    project = await auth_repository.create_project(
+        db_session,
+        key="dify-secret-project",
+        name="Dify Secret Project",
+    )
+    demand = await delivery_repository.create_demand(
+        db_session,
+        raw_input="Add a status badge to the delivery dashboard.",
+        source_type="new_requirement",
+        title="Add status badge",
+        project_id=project.id,
+    )
+    await secret_store_service.create_secret(
+        db_session,
+        project_id=project.id,
+        name="dify_api_key",
+        provider="dify",
+        value="project-dify-key",
+        actor_ref="test",
+    )
+    captured: dict[str, object] = {}
+
+    async def fake_run_workflow(self, workflow_id, inputs):
+        captured["workflow_id"] = workflow_id
+        captured["api_key"] = self._api_key()
+        captured["credential_metadata"] = self._credential_metadata()
+        return {
+            "title": "Add status badge",
+            "user_story": "As an operator, I can see execution status.",
+            "scope": "Delivery dashboard status display.",
+            "acceptance_criteria": ["Status badge is visible."],
+            "constraints": ["Do not expose secrets."],
+            "risks": ["Low UI risk."],
+            "open_questions": [],
+        }
+
+    monkeypatch.setattr(DifyWorkflowProvider, "_run_workflow", fake_run_workflow)
+
+    spec = await DeliveryService(provider=DifyWorkflowProvider()).generate_spec(db_session, demand.id)
+
+    assert spec.title == "Add status badge"
+    assert captured["workflow_id"] == "spec-flow"
+    assert captured["api_key"] == "project-dify-key"
+    assert captured["credential_metadata"] == {
+        "credential_source": "secret_store",
+        "credential_project_id": project.id,
+        "api_key_secret_name": "dify_api_key",
+    }
 
 
 @pytest.mark.asyncio

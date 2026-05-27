@@ -506,8 +506,24 @@ Dify is not enabled by default. To test the provider boundary, configure:
 $env:AI_WORKFLOW_PROVIDER="dify"
 $env:DIFY_API_BASE_URL="https://<your-dify-host>"
 $env:DIFY_API_KEY="<workflow-api-key>"
+$env:DIFY_API_KEY_SECRET_NAME="dify_api_key"
 $env:DIFY_SPEC_WORKFLOW_ID="<spec-workflow-id>"
 $env:DIFY_IMPACT_WORKFLOW_ID="<impact-workflow-id>"
+```
+
+For project-scoped credentials, store a project secret with:
+
+```text
+name = dify_api_key
+provider = dify
+value = <workflow-api-key>
+```
+
+The Dify Provider resolves credentials in this order:
+
+```text
+project SecretStore value named by DIFY_API_KEY_SECRET_NAME
+-> global DIFY_API_KEY
 ```
 
 Expected Dify workflow outputs for Spec:
@@ -568,7 +584,7 @@ Run:
 
 ```powershell
 cd backend
-python -m pytest tests/test_auth.py -q
+python -m pytest tests/test_auth.py tests/test_delivery_v2_units.py -q
 ```
 
 Expected behavior:
@@ -578,6 +594,7 @@ Expected behavior:
 - API responses include `value_mask`, but never include the plaintext secret value.
 - Project-scoped users cannot list or rotate secrets outside their project.
 - Secret creation and rotation create audit events.
+- Dify Provider can resolve `dify_api_key` from project SecretStore without returning the key to the frontend.
 
 Manual local configuration:
 

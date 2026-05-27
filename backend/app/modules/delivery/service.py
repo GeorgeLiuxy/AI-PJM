@@ -37,7 +37,9 @@ from app.modules.delivery.models import (
 )
 from app.modules.delivery.merge_requests import get_merge_request_client
 from app.modules.delivery.providers import WorkflowProvider, get_workflow_provider
+from app.modules.delivery.providers.dify import DifyWorkflowProvider
 from app.modules.delivery.repository import delivery_repository
+from app.modules.secrets.service import secret_store_service
 
 
 class DeliveryService:
@@ -56,6 +58,31 @@ class DeliveryService:
         if self._provider is None:
             self._provider = get_workflow_provider()
         return self._provider
+
+    async def _provider_for_demand(self, db: AsyncSession, demand: DemandItem) -> WorkflowProvider:
+        provider = self.provider
+        if not isinstance(provider, DifyWorkflowProvider) or demand.project_id is None:
+            return provider
+
+        secret_name = settings.dify_api_key_secret_name.strip()
+        if not secret_name:
+            return provider
+
+        try:
+            api_key = await secret_store_service.resolve_secret_by_name(
+                db,
+                project_id=demand.project_id,
+                name=secret_name,
+            )
+        except NotFoundException:
+            return provider
+
+        return DifyWorkflowProvider(
+            api_key=api_key,
+            credential_source="secret_store",
+            credential_project_id=demand.project_id,
+            api_key_secret_name=secret_name,
+        )
 
     async def create_demand(
         self,
@@ -285,7 +312,8 @@ class DeliveryService:
             confidence_score=confidence_score,
             auto_approve_low_risk=auto_approve_low_risk,
         )
-        draft = await self.provider.generate_spec(demand)
+        provider = await self._provider_for_demand(db, demand)
+        draft = await provider.generate_spec(demand)
 
         spec = await delivery_repository.create_spec_card(
             db=db,
@@ -400,7 +428,8 @@ class DeliveryService:
 
         spec = await delivery_repository.get_latest_spec_card(db, demand_id)
         repo_context = await self._resolve_repo_context(db, demand_id, repo_context_id)
-        draft = await self.provider.analyze_impact(demand, spec, repo_context)
+        provider = await self._provider_for_demand(db, demand)
+        draft = await provider.analyze_impact(demand, spec, repo_context)
         status = (
             ImpactAnalysisStatus.MANUAL_REVIEW
             if draft.risk_level in {DeliveryRiskLevel.L2, DeliveryRiskLevel.L3}
@@ -412,7 +441,7 @@ class DeliveryService:
             demand_id=demand.id,
             repo_context_id=repo_context.id if repo_context else None,
             status=status,
-            provider=self.provider.name,
+            provider=provider.name,
             summary=draft.summary,
             impacted_areas=draft.impacted_areas,
             affected_files=draft.affected_files,
