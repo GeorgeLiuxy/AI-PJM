@@ -75,6 +75,40 @@ async function fetchAPI<T>(endpoint: string, options?: RequestInit): Promise<Api
   return response.json();
 }
 
+async function fetchText(endpoint: string, options?: RequestInit): Promise<string> {
+  const url = `${API_BASE_URL}${endpoint}`;
+  const headers = new Headers(options?.headers);
+  const token = getAuthToken();
+  if (token) {
+    headers.set('Authorization', `Bearer ${token}`);
+  }
+
+  const response = await fetch(url, {
+    ...options,
+    headers,
+  });
+
+  if (!response.ok) {
+    if (response.status === 401) {
+      setAuthToken(null);
+    }
+    throw new Error(response.statusText || `接口请求失败：${response.status}`);
+  }
+
+  return response.text();
+}
+
+function buildQuery(params: Record<string, unknown>) {
+  const searchParams = new URLSearchParams();
+  Object.entries(params).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== '') {
+      searchParams.set(key, String(value));
+    }
+  });
+  const query = searchParams.toString();
+  return query ? `?${query}` : '';
+}
+
 export const authApi = {
   me: () => fetchAPI<AuthUser>('/api/v2/auth/me'),
   login: (params: { username: string; password: string }) => {
@@ -178,17 +212,29 @@ export const deliveryApi = {
     entity_type?: string;
     entity_id?: number;
     action?: string;
+    actor_user_id?: number;
+    actor_ref?: string;
+    created_from?: string;
+    created_to?: string;
+    query?: string;
     limit?: number;
     offset?: number;
   } = {}) => {
-    const searchParams = new URLSearchParams();
-    Object.entries(params).forEach(([key, value]) => {
-      if (value !== undefined && value !== null && value !== '') {
-        searchParams.set(key, String(value));
-      }
-    });
-    const query = searchParams.toString();
-    return fetchAPI<DeliveryAuditEvent[]>(`/api/v2/audit/events${query ? `?${query}` : ''}`);
+    return fetchAPI<DeliveryAuditEvent[]>(`/api/v2/audit/events${buildQuery(params)}`);
+  },
+  exportAuditEvents: (params: {
+    project_id?: number;
+    entity_type?: string;
+    entity_id?: number;
+    action?: string;
+    actor_user_id?: number;
+    actor_ref?: string;
+    created_from?: string;
+    created_to?: string;
+    query?: string;
+    limit?: number;
+  } = {}) => {
+    return fetchText(`/api/v2/audit/events/export${buildQuery(params)}`);
   },
   listDemands: (params: { limit?: number; offset?: number } = {}) => {
     const searchParams = new URLSearchParams();

@@ -1,8 +1,9 @@
 """Audit event data access."""
 
+from datetime import datetime
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.audit.models import AuditEvent
@@ -47,6 +48,11 @@ class AuditRepository:
         entity_type: str | None = None,
         entity_id: int | None = None,
         action: str | None = None,
+        actor_user_id: int | None = None,
+        actor_ref: str | None = None,
+        created_from: datetime | None = None,
+        created_to: datetime | None = None,
+        query_text: str | None = None,
         limit: int = 50,
         offset: int = 0,
     ) -> list[AuditEvent]:
@@ -63,9 +69,26 @@ class AuditRepository:
             query = query.where(AuditEvent.entity_id == entity_id)
         if action:
             query = query.where(AuditEvent.action == action)
+        if actor_user_id is not None:
+            query = query.where(AuditEvent.actor_user_id == actor_user_id)
+        if actor_ref:
+            query = query.where(AuditEvent.actor_ref.ilike(f"%{actor_ref}%"))
+        if created_from is not None:
+            query = query.where(AuditEvent.created_at >= created_from)
+        if created_to is not None:
+            query = query.where(AuditEvent.created_at <= created_to)
+        if query_text:
+            pattern = f"%{query_text}%"
+            query = query.where(
+                or_(
+                    AuditEvent.summary.ilike(pattern),
+                    AuditEvent.action.ilike(pattern),
+                    AuditEvent.entity_type.ilike(pattern),
+                    AuditEvent.actor_ref.ilike(pattern),
+                )
+            )
         result = await db.execute(query.offset(offset).limit(limit))
         return list(result.scalars().all())
 
 
 audit_repository = AuditRepository()
-

@@ -355,6 +355,24 @@ async def test_delivery_actions_create_project_scoped_audit_events(client, db_se
     assert event_payload[0]["entity_id"] == demand_id
     assert event_payload[0]["actor_ref"] == "alpha_auditor"
 
+    filtered_events = await client.get(
+        "/api/v2/audit/events?actor_ref=alpha&entity_type=demand&query=Audit",
+        headers={"Authorization": f"Bearer {alpha_token}"},
+    )
+    assert filtered_events.status_code == 200
+    filtered_payload = filtered_events.json()["data"]
+    assert len(filtered_payload) == 1
+    assert filtered_payload[0]["entity_id"] == demand_id
+
+    exported_events = await client.get(
+        "/api/v2/audit/events/export?action=delivery.demand_created",
+        headers={"Authorization": f"Bearer {alpha_token}"},
+    )
+    assert exported_events.status_code == 200
+    assert "text/csv" in exported_events.headers["content-type"]
+    assert "alpha_auditor" in exported_events.text
+    assert "delivery.demand_created" in exported_events.text
+
     beta_events = await client.get(
         "/api/v2/audit/events",
         headers={"Authorization": f"Bearer {beta_token}"},

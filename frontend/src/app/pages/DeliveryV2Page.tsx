@@ -6,6 +6,7 @@ import {
   CheckCircle2,
   ClipboardList,
   Code2,
+  Download,
   ExternalLink,
   FileCheck2,
   FileText,
@@ -15,6 +16,7 @@ import {
   Play,
   RefreshCw,
   RotateCcw,
+  Search,
   Settings2,
   ShieldCheck,
   Terminal,
@@ -55,6 +57,15 @@ type DeliveryResult = {
   verificationRecord?: DeliveryVerificationRecord;
 };
 
+type AuditFilterState = {
+  query: string;
+  actor_ref: string;
+  action: string;
+  entity_type: string;
+  created_from: string;
+  created_to: string;
+};
+
 type CheckEvidence = {
   command: string;
   status: string;
@@ -89,7 +100,34 @@ const tabs: Array<{ key: TabKey; label: string; icon: typeof Activity }> = [
   { key: 'audit', label: '审计', icon: ShieldCheck },
 ];
 
+const auditActionOptions = [
+  'delivery.demand_created',
+  'delivery.manual_approval_recorded',
+  'delivery.merge_request_created',
+  'delivery.merge_request_review_recorded',
+  'delivery.test_deployment_created',
+  'delivery.verification_recorded',
+  'auth.project_created',
+  'auth.user_created',
+  'auth.user_updated',
+  'auth.user_password_reset',
+  'auth.user_membership_saved',
+  'auth.user_membership_removed',
+  'secret.created',
+  'secret.rotated',
+];
+
+const auditEntityOptions = ['demand', 'merge_request', 'deployment', 'verification', 'project', 'user', 'secret'];
+
 const initialSteps = Object.fromEntries(stepMeta.map((step) => [step.key, 'idle'])) as Record<StepKey, StepState>;
+const initialAuditFilters: AuditFilterState = {
+  query: '',
+  actor_ref: '',
+  action: '',
+  entity_type: '',
+  created_from: '',
+  created_to: '',
+};
 
 export default function DeliveryV2Page() {
   const { user } = useOutletContext<AppOutletContext>();
@@ -112,6 +150,7 @@ export default function DeliveryV2Page() {
   const [activeTab, setActiveTab] = useState<TabKey>('summary');
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [approvalNote, setApprovalNote] = useState('');
+  const [auditFilters, setAuditFilters] = useState<AuditFilterState>(initialAuditFilters);
 
   const busy = running || recovering || detailLoading;
   const defaultProjectId = user?.projects[0]?.id;
@@ -224,13 +263,41 @@ export default function DeliveryV2Page() {
     }
   };
 
-  const loadAuditEvents = async () => {
+  const auditQueryParams = (filters: AuditFilterState = auditFilters) => ({
+    limit: 50,
+    query: filters.query.trim() || undefined,
+    actor_ref: filters.actor_ref.trim() || undefined,
+    action: filters.action || undefined,
+    entity_type: filters.entity_type || undefined,
+    created_from: toApiDateTime(filters.created_from),
+    created_to: toApiDateTime(filters.created_to),
+  });
+
+  const loadAuditEvents = async (filters: AuditFilterState = auditFilters) => {
     setAuditLoading(true);
     try {
-      const events = (await deliveryApi.listAuditEvents({ limit: 50 })).data;
+      const events = (await deliveryApi.listAuditEvents(auditQueryParams(filters))).data;
       setAuditEvents(events);
     } catch (err) {
       const message = err instanceof Error ? err.message : '加载审计记录失败';
+      setError(localizeText(message));
+    } finally {
+      setAuditLoading(false);
+    }
+  };
+
+  const resetAuditFilters = async () => {
+    setAuditFilters(initialAuditFilters);
+    await loadAuditEvents(initialAuditFilters);
+  };
+
+  const exportAuditEvents = async () => {
+    setAuditLoading(true);
+    try {
+      const csv = await deliveryApi.exportAuditEvents({ ...auditQueryParams(auditFilters), limit: 1000 });
+      downloadTextFile(csv, `audit-events-${new Date().toISOString().slice(0, 10)}.csv`, 'text/csv;charset=utf-8');
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '导出审计记录失败';
       setError(localizeText(message));
     } finally {
       setAuditLoading(false);
@@ -857,7 +924,17 @@ export default function DeliveryV2Page() {
               {activeTab === 'taskPackage' && <TaskPackageTab result={result} />}
               {activeTab === 'evidence' && <EvidenceTab result={result} />}
               {activeTab === 'queue' && <QueueTab items={queueItems} loading={queueLoading} />}
-              {activeTab === 'audit' && <AuditTab events={auditEvents} loading={auditLoading} />}
+              {activeTab === 'audit' && (
+                <AuditTab
+                  events={auditEvents}
+                  loading={auditLoading}
+                  filters={auditFilters}
+                  onFiltersChange={setAuditFilters}
+                  onApply={() => void loadAuditEvents(auditFilters)}
+                  onReset={() => void resetAuditFilters()}
+                  onExport={() => void exportAuditEvents()}
+                />
+              )}
             </div>
           </section>
         </div>
@@ -1409,12 +1486,113 @@ function QueueTab({ items, loading }: { items: DeliveryExecutionQueueItem[]; loa
   );
 }
 
-function AuditTab({ events, loading }: { events: DeliveryAuditEvent[]; loading: boolean }) {
+function AuditTab({
+  events,
+  loading,
+  filters,
+  onFiltersChange,
+  onApply,
+  onReset,
+  onExport,
+}: {
+  events: DeliveryAuditEvent[];
+  loading: boolean;
+  filters: AuditFilterState;
+  onFiltersChange: (value: AuditFilterState) => void;
+  onApply: () => void;
+  onReset: () => void;
+  onExport: () => void;
+}) {
+  const updateFilter = (key: keyof AuditFilterState, value: string) => {
+    onFiltersChange({ ...filters, [key]: value });
+  };
+
   return (
     <div className="overflow-hidden rounded border border-slate-200">
       <div className="flex items-center justify-between gap-2 border-b border-slate-200 px-3 py-2">
         <div className="text-sm font-medium text-slate-900">审计记录</div>
-        <StatusBadge value={loading ? 'loading' : `${events.length} 条`} />
+        <div className="flex items-center gap-2">
+          <StatusBadge value={loading ? 'loading' : `${events.length} 条`} />
+          <button
+            type="button"
+            onClick={onExport}
+            disabled={loading || events.length === 0}
+            className="inline-flex h-8 items-center gap-1.5 rounded border border-slate-200 bg-white px-2.5 text-sm text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <Download className="h-4 w-4" />
+            导出
+          </button>
+        </div>
+      </div>
+      <div className="grid gap-2 border-b border-slate-200 bg-slate-50 px-3 py-2 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)_160px_150px_190px_190px_auto]">
+        <input
+          value={filters.query}
+          onChange={(event) => updateFilter('query', event.target.value)}
+          placeholder="关键词"
+          className="h-8 rounded border border-slate-200 bg-white px-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+        />
+        <input
+          value={filters.actor_ref}
+          onChange={(event) => updateFilter('actor_ref', event.target.value)}
+          placeholder="操作者"
+          className="h-8 rounded border border-slate-200 bg-white px-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+        />
+        <select
+          value={filters.action}
+          onChange={(event) => updateFilter('action', event.target.value)}
+          className="h-8 rounded border border-slate-200 bg-white px-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+        >
+          <option value="">全部动作</option>
+          {auditActionOptions.map((action) => (
+            <option key={action} value={action}>
+              {formatAuditAction(action)}
+            </option>
+          ))}
+        </select>
+        <select
+          value={filters.entity_type}
+          onChange={(event) => updateFilter('entity_type', event.target.value)}
+          className="h-8 rounded border border-slate-200 bg-white px-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+        >
+          <option value="">全部对象</option>
+          {auditEntityOptions.map((entityType) => (
+            <option key={entityType} value={entityType}>
+              {formatAuditEntity(entityType)}
+            </option>
+          ))}
+        </select>
+        <input
+          value={filters.created_from}
+          onChange={(event) => updateFilter('created_from', event.target.value)}
+          type="datetime-local"
+          className="h-8 rounded border border-slate-200 bg-white px-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+        />
+        <input
+          value={filters.created_to}
+          onChange={(event) => updateFilter('created_to', event.target.value)}
+          type="datetime-local"
+          className="h-8 rounded border border-slate-200 bg-white px-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+        />
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={onApply}
+            disabled={loading}
+            className="inline-flex h-8 items-center gap-1.5 rounded bg-blue-600 px-3 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+          >
+            <Search className="h-4 w-4" />
+            筛选
+          </button>
+          <button
+            type="button"
+            onClick={onReset}
+            disabled={loading}
+            className="inline-flex h-8 items-center gap-1.5 rounded border border-slate-200 bg-white px-3 text-sm text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <RotateCcw className="h-4 w-4" />
+            重置
+          </button>
+        </div>
       </div>
       <div className="max-h-[520px] overflow-auto">
         <table className="w-full table-fixed text-left text-sm">
@@ -1592,6 +1770,29 @@ function splitLines(value: string): string[] {
     .split(/\r?\n|,/)
     .map((item) => item.trim())
     .filter(Boolean);
+}
+
+function toApiDateTime(value: string): string | undefined {
+  if (!value) {
+    return undefined;
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return undefined;
+  }
+  return date.toISOString();
+}
+
+function downloadTextFile(content: string, filename: string, mimeType: string) {
+  const blob = new Blob([content], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
 }
 
 function hydrateDemandDetail(detail: DeliveryDemandDetail): DeliveryResult {
@@ -1928,6 +2129,12 @@ function formatAuditAction(value: string): string {
     'delivery.verification_recorded': '记录验收',
     'auth.project_created': '创建项目',
     'auth.user_created': '创建用户',
+    'auth.user_updated': '更新用户',
+    'auth.user_password_reset': '重置密码',
+    'auth.user_membership_saved': '保存项目角色',
+    'auth.user_membership_removed': '移除项目角色',
+    'secret.created': '创建密钥',
+    'secret.rotated': '轮换密钥',
   };
 
   return labels[value] || value;
@@ -1941,6 +2148,7 @@ function formatAuditEntity(entityType: string, entityId?: number | null): string
     verification: '验收',
     project: '项目',
     user: '用户',
+    secret: '密钥',
   };
   const label = labels[entityType] || entityType;
   return entityId ? `${label} #${entityId}` : label;
