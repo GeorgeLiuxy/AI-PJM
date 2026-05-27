@@ -264,3 +264,136 @@ async def test_delivery_actions_create_project_scoped_audit_events(client, db_se
         headers={"Authorization": f"Bearer {alpha_token}"},
     )
     assert forbidden_project_events.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_admin_can_create_and_list_masked_project_secret(
+    client,
+    db_session,
+    auth_enabled,
+    monkeypatch,
+):
+    monkeypatch.setattr(settings, "secret_store_master_key", "test-secret-master-key")
+    _, project = await _create_user_with_project(
+        db_session,
+        username="secret_admin",
+        role="admin",
+        project_key="secret-project",
+        project_name="Secret Project",
+        project_role="owner",
+    )
+    token = await _login(client, "secret_admin")
+
+    created = await client.post(
+        "/api/v2/secrets",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "project_id": project.id,
+            "name": "dify_api_key",
+            "provider": "dify",
+            "value": "sk-test-secret-value",
+            "description": "Dify workflow key",
+        },
+    )
+
+    assert created.status_code == 201
+    payload = created.json()["data"]
+    assert payload["name"] == "dify_api_key"
+    assert payload["provider"] == "dify"
+    assert payload["value_mask"] == "****alue"
+    assert "sk-test-secret-value" not in created.text
+
+    listed = await client.get(
+        f"/api/v2/secrets?project_id={project.id}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert listed.status_code == 200
+    assert listed.json()["data"][0]["value_mask"] == "****alue"
+    assert "sk-test-secret-value" not in listed.text
+
+    audit = await client.get(
+        "/api/v2/audit/events?action=secret.created",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert audit.status_code == 200
+    assert audit.json()["data"][0]["entity_type"] == "secret"
+
+
+@pytest.mark.asyncio
+async def test_secret_store_requires_master_key(client, db_session, auth_enabled, monkeypatch):
+    monkeypatch.setattr(settings, "secret_store_master_key", "")
+    _, project = await _create_user_with_project(
+        db_session,
+        username="no_secret_key_admin",
+        role="admin",
+        project_key="missing-key-project",
+        project_name="Missing Key Project",
+        project_role="owner",
+    )
+    token = await _login(client, "no_secret_key_admin")
+
+    response = await client.post(
+        "/api/v2/secrets",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "project_id": project.id,
+            "name": "gitlab_token",
+            "provider": "gitlab",
+            "value": "token-value",
+        },
+    )
+
+    assert response.status_code == 400
+    assert "SECRET_STORE_MASTER_KEY" in response.json()["message"]
+
+
+@pytest.mark.asyncio
+async def test_project_secret_access_is_project_scoped(
+    client,
+    db_session,
+    auth_enabled,
+    monkeypatch,
+):
+    monkeypatch.setattr(settings, "secret_store_master_key", "test-secret-master-key")
+    _, alpha = await _create_user_with_project(
+        db_session,
+        username="alpha_secret_admin",
+        role="admin",
+        project_key="alpha-secret",
+        project_name="Alpha Secret",
+        project_role="owner",
+    )
+    _, beta = await _create_user_with_project(
+        db_session,
+        username="beta_secret_operator",
+        project_key="beta-secret",
+        project_name="Beta Secret",
+    )
+    alpha_token = await _login(client, "alpha_secret_admin")
+    beta_token = await _login(client, "beta_secret_operator")
+
+    created = await client.post(
+        "/api/v2/secrets",
+        headers={"Authorization": f"Bearer {alpha_token}"},
+        json={
+            "project_id": alpha.id,
+            "name": "openai_api_key",
+            "provider": "openai",
+            "value": "openai-secret",
+        },
+    )
+    assert created.status_code == 201
+    secret_id = created.json()["data"]["id"]
+
+    beta_list = await client.get(
+        f"/api/v2/secrets?project_id={alpha.id}",
+        headers={"Authorization": f"Bearer {beta_token}"},
+    )
+    assert beta_list.status_code == 403
+
+    beta_rotate = await client.post(
+        f"/api/v2/secrets/{secret_id}/rotate",
+        headers={"Authorization": f"Bearer {beta_token}"},
+        json={"value": "new-value"},
+    )
+    assert beta_rotate.status_code == 403

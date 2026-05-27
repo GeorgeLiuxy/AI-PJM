@@ -20,6 +20,7 @@ import type {
   DeliveryRepoContext,
   DeliverySpecCard,
   DeliveryVerificationRecord,
+  SecretRecord,
 } from '../types';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8010';
@@ -105,6 +106,35 @@ export const authApi = {
     project_role?: string;
   }) => {
     return fetchAPI<AuthManagedUser>('/api/v2/auth/users', {
+      method: 'POST',
+      body: JSON.stringify(params),
+    });
+  },
+  listSecrets: (params: { project_id?: number; provider?: string } = {}) => {
+    const searchParams = new URLSearchParams();
+    if (params.project_id !== undefined) {
+      searchParams.set('project_id', String(params.project_id));
+    }
+    if (params.provider) {
+      searchParams.set('provider', params.provider);
+    }
+    const query = searchParams.toString();
+    return fetchAPI<SecretRecord[]>(`/api/v2/secrets${query ? `?${query}` : ''}`);
+  },
+  createSecret: (params: {
+    project_id: number;
+    name: string;
+    provider: string;
+    value: string;
+    description?: string | null;
+  }) => {
+    return fetchAPI<SecretRecord>('/api/v2/secrets', {
+      method: 'POST',
+      body: JSON.stringify(params),
+    });
+  },
+  rotateSecret: (secretId: number, params: { value: string; description?: string | null }) => {
+    return fetchAPI<SecretRecord>(`/api/v2/secrets/${secretId}/rotate`, {
       method: 'POST',
       body: JSON.stringify(params),
     });

@@ -37,6 +37,10 @@ class Settings(BaseSettings):
     auth_bootstrap_project_key: str = "default"
     auth_bootstrap_project_name: str = "Default Project"
 
+    # Secret store
+    secret_store_master_key: str = ""
+    secret_store_key_id: str = "local"
+
     # Delivery execution
     workspace_root: str = ""
     execution_worktree_root: str = ""

@@ -60,8 +60,9 @@ def import_all_models() -> None:
     from app.modules.audit import models as _audit_models
     from app.modules.auth import models as _auth_models
     from app.modules.delivery import models as _delivery_models
+    from app.modules.secrets import models as _secret_models
 
-    _ = (_audit_models, _auth_models, _delivery_models)
+    _ = (_audit_models, _auth_models, _delivery_models, _secret_models)
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:

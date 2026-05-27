@@ -86,6 +86,8 @@ dist-ssr/
 *.key
 *.pem
 secrets/
+!backend/app/modules/secrets/
+!backend/app/modules/secrets/**
 credentials/
 
 # ====================

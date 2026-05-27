@@ -1,17 +1,20 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react';
-import { Loader2, Plus, RefreshCw, ShieldCheck, UserPlus } from 'lucide-react';
+import { KeyRound, Loader2, Plus, RefreshCw, ShieldCheck, UserPlus } from 'lucide-react';
 import { authApi } from '../lib/api';
-import type { AuthManagedUser, AuthProject } from '../types';
+import type { AuthManagedUser, AuthProject, SecretRecord } from '../types';
 
 const globalRoles = ['admin', 'operator', 'reviewer', 'viewer'];
 const projectRoles = ['owner', 'operator', 'reviewer', 'viewer'];
+const secretProviders = ['dify', 'gitlab', 'openai', 'codex', 'custom'];
 
 export default function AdminAccessPage() {
   const [projects, setProjects] = useState<AuthProject[]>([]);
   const [users, setUsers] = useState<AuthManagedUser[]>([]);
+  const [secrets, setSecrets] = useState<SecretRecord[]>([]);
   const [loading, setLoading] = useState(false);
   const [savingProject, setSavingProject] = useState(false);
   const [savingUser, setSavingUser] = useState(false);
+  const [savingSecret, setSavingSecret] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [projectForm, setProjectForm] = useState({
@@ -29,22 +32,40 @@ export default function AdminAccessPage() {
     project_id: '',
     project_role: 'operator',
   });
+  const [secretForm, setSecretForm] = useState({
+    project_id: '',
+    name: '',
+    provider: 'dify',
+    value: '',
+    description: '',
+  });
 
   const firstProjectId = useMemo(() => projects[0]?.id, [projects]);
+  const projectNameById = useMemo(() => {
+    return new Map(projects.map((project) => [project.id, project.name]));
+  }, [projects]);
 
   const loadAccessData = async () => {
     setLoading(true);
     setError(null);
     try {
-      const [projectResponse, userResponse] = await Promise.all([
+      const [projectResponse, userResponse, secretResponse] = await Promise.all([
         authApi.listProjects(),
         authApi.listUsers(),
+        authApi.listSecrets(),
       ]);
+      const projectIds = new Set(projectResponse.data.map((project) => String(project.id)));
+      const defaultProjectId = projectResponse.data[0]?.id ? String(projectResponse.data[0].id) : '';
       setProjects(projectResponse.data);
       setUsers(userResponse.data);
+      setSecrets(secretResponse.data);
       setUserForm((current) => ({
         ...current,
-        project_id: current.project_id || (projectResponse.data[0]?.id ? String(projectResponse.data[0].id) : ''),
+        project_id: current.project_id && projectIds.has(current.project_id) ? current.project_id : defaultProjectId,
+      }));
+      setSecretForm((current) => ({
+        ...current,
+        project_id: current.project_id && projectIds.has(current.project_id) ? current.project_id : defaultProjectId,
       }));
     } catch (err) {
       const message = err instanceof Error ? err.message : '加载权限配置失败';
@@ -113,6 +134,35 @@ export default function AdminAccessPage() {
     }
   };
 
+  const submitSecret = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setSavingSecret(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const secret = (await authApi.createSecret({
+        project_id: Number(secretForm.project_id || firstProjectId),
+        name: secretForm.name.trim(),
+        provider: secretForm.provider.trim(),
+        value: secretForm.value,
+        description: secretForm.description.trim() || null,
+      })).data;
+      setSecretForm((current) => ({
+        ...current,
+        name: '',
+        value: '',
+        description: '',
+      }));
+      setNotice(`密钥已保存：${secret.name}`);
+      await loadAccessData();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '保存密钥失败';
+      setError(message);
+    } finally {
+      setSavingSecret(false);
+    }
+  };
+
   return (
     <main className="mx-auto max-w-[1400px] px-4 py-4">
       <section className="mb-3 rounded border border-slate-200 bg-white">
@@ -122,7 +172,7 @@ export default function AdminAccessPage() {
               <ShieldCheck className="h-4 w-4" />
               权限管理
             </div>
-            <h1 className="mt-1 text-lg font-semibold text-slate-950">项目、用户和角色</h1>
+            <h1 className="mt-1 text-lg font-semibold text-slate-950">项目、用户、角色和密钥</h1>
           </div>
           <button
             type="button"
@@ -140,7 +190,7 @@ export default function AdminAccessPage() {
             {notice ? <div className="rounded bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{notice}</div> : null}
           </div>
         )}
-        <div className="grid gap-3 p-4 lg:grid-cols-2">
+        <div className="grid gap-3 p-4 xl:grid-cols-3">
           <ProjectForm
             value={projectForm}
             saving={savingProject}
@@ -154,12 +204,22 @@ export default function AdminAccessPage() {
             onChange={setUserForm}
             onSubmit={submitUser}
           />
+          <SecretForm
+            value={secretForm}
+            projects={projects}
+            saving={savingSecret}
+            onChange={setSecretForm}
+            onSubmit={submitSecret}
+          />
         </div>
       </section>
 
       <section className="grid gap-3 xl:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)]">
         <ProjectTable projects={projects} loading={loading} />
         <UserTable users={users} loading={loading} />
+        <div className="xl:col-span-2">
+          <SecretTable secrets={secrets} projectNameById={projectNameById} loading={loading} />
+        </div>
       </section>
     </main>
   );
@@ -267,6 +327,69 @@ function UserForm({
   );
 }
 
+function SecretForm({
+  value,
+  projects,
+  saving,
+  onChange,
+  onSubmit,
+}: {
+  value: SecretFormValue;
+  projects: AuthProject[];
+  saving: boolean;
+  onChange: (value: SecretFormValue) => void;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+}) {
+  return (
+    <form onSubmit={onSubmit} className="rounded border border-slate-200 bg-slate-50 p-3">
+      <div className="mb-3 flex items-center gap-2 text-sm font-medium text-slate-900">
+        <KeyRound className="h-4 w-4 text-blue-600" />
+        保存项目密钥
+      </div>
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-1 2xl:grid-cols-2">
+        <SelectInput
+          label="项目"
+          value={value.project_id}
+          options={projects.map((project) => ({ label: project.name, value: String(project.id) }))}
+          onChange={(project_id) => onChange({ ...value, project_id })}
+        />
+        <SelectInput
+          label="类型"
+          value={value.provider}
+          options={secretProviders}
+          onChange={(provider) => onChange({ ...value, provider })}
+          formatter={formatProviderLabel}
+        />
+        <TextInput
+          label="密钥名称"
+          value={value.name}
+          onChange={(name) => onChange({ ...value, name })}
+          required
+        />
+        <TextInput
+          label="密钥值"
+          value={value.value}
+          onChange={(secretValue) => onChange({ ...value, value: secretValue })}
+          type="password"
+          required
+        />
+        <div className="md:col-span-2 xl:col-span-1 2xl:col-span-2">
+          <TextInput
+            label="说明"
+            value={value.description}
+            onChange={(description) => onChange({ ...value, description })}
+          />
+        </div>
+      </div>
+      <SubmitButton
+        label="保存密钥"
+        saving={saving}
+        disabled={!value.project_id || !value.name.trim() || !value.provider.trim() || !value.value.trim()}
+      />
+    </form>
+  );
+}
+
 type UserFormValue = {
   username: string;
   password: string;
@@ -275,6 +398,14 @@ type UserFormValue = {
   role: string;
   project_id: string;
   project_role: string;
+};
+
+type SecretFormValue = {
+  project_id: string;
+  name: string;
+  provider: string;
+  value: string;
+  description: string;
 };
 
 function TextInput({
@@ -309,11 +440,13 @@ function SelectInput({
   value,
   options,
   onChange,
+  formatter = formatRoleLabel,
 }: {
   label: string;
   value: string;
   options: Array<string | { label: string; value: string }>;
   onChange: (value: string) => void;
+  formatter?: (value: string) => string;
 }) {
   return (
     <label className="block text-sm font-medium text-slate-700">
@@ -329,7 +462,7 @@ function SelectInput({
           const optionValue = typeof option === 'string' ? option : option.value;
           return (
             <option key={optionValue} value={optionValue}>
-              {formatRoleLabel(labelValue)}
+              {formatter(labelValue)}
             </option>
           );
         })}
@@ -436,6 +569,61 @@ function UserTable({ users, loading }: { users: AuthManagedUser[]; loading: bool
   );
 }
 
+function SecretTable({
+  secrets,
+  projectNameById,
+  loading,
+}: {
+  secrets: SecretRecord[];
+  projectNameById: Map<number, string>;
+  loading: boolean;
+}) {
+  return (
+    <div className="overflow-hidden rounded border border-slate-200 bg-white">
+      <TableHeader title="项目密钥" count={secrets.length} loading={loading} />
+      <div className="max-h-[420px] overflow-auto">
+        <table className="w-full min-w-[860px] table-fixed text-left text-sm">
+          <thead className="bg-slate-50 text-xs font-medium uppercase text-slate-500">
+            <tr>
+              <th className="w-[18%] px-3 py-2">项目</th>
+              <th className="w-[18%] px-3 py-2">名称</th>
+              <th className="w-[14%] px-3 py-2">类型</th>
+              <th className="w-[18%] px-3 py-2">掩码</th>
+              <th className="w-[14%] px-3 py-2">状态</th>
+              <th className="w-[18%] px-3 py-2">更新时间</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {secrets.length > 0 ? (
+              secrets.map((secret) => (
+                <tr key={secret.id}>
+                  <td className="break-words px-3 py-2 text-slate-700">
+                    {projectNameById.get(secret.project_id) || `#${secret.project_id}`}
+                  </td>
+                  <td className="break-words px-3 py-2">
+                    <div className="font-medium text-slate-900">{secret.name}</div>
+                    {secret.description ? <div className="text-xs text-slate-500">{secret.description}</div> : null}
+                  </td>
+                  <td className="px-3 py-2">
+                    <Badge>{formatProviderLabel(secret.provider)}</Badge>
+                  </td>
+                  <td className="break-words px-3 py-2 font-mono text-xs text-slate-700">{secret.value_mask}</td>
+                  <td className="px-3 py-2">
+                    <Badge>{formatStatus(secret.status)}</Badge>
+                  </td>
+                  <td className="px-3 py-2 text-xs text-slate-600">{formatDate(secret.updated_at)}</td>
+                </tr>
+              ))
+            ) : (
+              <EmptyRow colSpan={6} loading={loading} label="暂无项目密钥" />
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 function TableHeader({ title, count, loading }: { title: string; count: number; loading: boolean }) {
   return (
     <div className="flex items-center justify-between gap-2 border-b border-slate-200 px-3 py-2">
@@ -474,6 +662,17 @@ function formatRoleLabel(value: string) {
   return labels[value] || value;
 }
 
+function formatProviderLabel(value: string) {
+  const labels: Record<string, string> = {
+    dify: 'Dify',
+    gitlab: 'GitLab',
+    openai: 'OpenAI',
+    codex: 'Codex',
+    custom: '自定义',
+  };
+  return labels[value] || value;
+}
+
 function formatStatus(value: string) {
   const labels: Record<string, string> = {
     active: '启用',
@@ -493,4 +692,3 @@ function formatDate(value?: string | null) {
     minute: '2-digit',
   }).format(new Date(value));
 }
-

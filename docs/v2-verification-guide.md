@@ -560,7 +560,44 @@ Expected behavior:
 - Admin users can list projects and users.
 - The access management page can load project and user data without `failed to fetch`.
 
-## 14. Slice-level Acceptance Criteria
+## 14. SecretStore Verification
+
+SecretStore writes are disabled until a server-side master key is configured.
+
+Run:
+
+```powershell
+cd backend
+python -m pytest tests/test_auth.py -q
+```
+
+Expected behavior:
+
+- Creating a project secret without `SECRET_STORE_MASTER_KEY` returns `400`.
+- Admin users can create and list project secrets after the master key is configured.
+- API responses include `value_mask`, but never include the plaintext secret value.
+- Project-scoped users cannot list or rotate secrets outside their project.
+- Secret creation and rotation create audit events.
+
+Manual local configuration:
+
+```powershell
+cd backend
+$env:AUTH_ENABLED="true"
+$env:AUTH_BOOTSTRAP_ADMIN_PASSWORD="change-me-before-production"
+$env:SECRET_STORE_MASTER_KEY="replace-with-a-long-random-secret"
+```
+
+After startup, open the access management page and verify:
+
+```text
+项目密钥 section is visible.
+Saving a secret succeeds when the master key is set.
+The secret table shows only masked values, for example ****alue.
+Plaintext secret values never appear after save or refresh.
+```
+
+## 15. Slice-level Acceptance Criteria
 
 ### Slice 0: Baseline
 
@@ -646,7 +683,7 @@ To be added:
 - OpenAI provider.
 - Retry and fallback policy for transient provider failures.
 
-## 15. Regression Checklist
+## 16. Regression Checklist
 
 Before every larger change:
 

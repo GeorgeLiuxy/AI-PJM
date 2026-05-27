@@ -168,6 +168,22 @@ export interface DeliveryAuditEvent {
   created_at: string;
 }
 
+export interface SecretRecord {
+  id: number;
+  project_id: number;
+  name: string;
+  provider: string;
+  description: string | null;
+  key_id: string;
+  value_mask: string;
+  status: string;
+  created_by_user_id: number | null;
+  updated_by_user_id: number | null;
+  last_used_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface DeliveryMergeRequestRecord {
   id: number;
   coding_task_id: number;
