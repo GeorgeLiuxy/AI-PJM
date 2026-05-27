@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.responses import success_response
 from app.core.db import get_db
+from app.modules.audit.repository import audit_repository
 from app.modules.auth.dependencies import get_current_principal, require_capability
 from app.modules.auth.repository import auth_repository
 from app.modules.auth.schemas import (
@@ -57,6 +58,17 @@ async def create_project(
         repository_root=request.repository_root,
         default_branch=request.default_branch,
     )
+    await audit_repository.create_event(
+        db,
+        action="auth.project_created",
+        entity_type="project",
+        entity_id=project.id,
+        project_id=project.id,
+        actor_user_id=principal.user_id,
+        actor_ref=principal.username,
+        summary=f"Project created: {project.name}",
+        metadata={"key": project.key, "default_branch": project.default_branch},
+    )
     await db.commit()
     return success_response(
         data=AuthProjectResponse(
@@ -87,6 +99,22 @@ async def create_local_user(
         project_id=request.project_id,
         project_role=request.project_role,
     )
+    await audit_repository.create_event(
+        db,
+        action="auth.user_created",
+        entity_type="user",
+        entity_id=user.id,
+        project_id=request.project_id,
+        actor_user_id=principal.user_id,
+        actor_ref=principal.username,
+        summary=f"Local user created: {user.username}",
+        metadata={
+            "role": user.role,
+            "project_id": request.project_id,
+            "project_role": request.project_role,
+        },
+    )
+    await db.commit()
     return success_response(
         data=AuthUserCreatedResponse(
             id=user.id,
@@ -119,4 +147,3 @@ def _principal_response(principal: AuthPrincipal) -> AuthUserResponse:
             for project in principal.projects
         ],
     )
-

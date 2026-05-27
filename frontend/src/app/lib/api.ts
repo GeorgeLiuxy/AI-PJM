@@ -6,6 +6,7 @@ import type {
   ApiResponse,
   AuthLoginResponse,
   AuthUser,
+  DeliveryAuditEvent,
   DeliveryCodingTask,
   DeliveryDemand,
   DeliveryDemandDetail,
@@ -82,6 +83,23 @@ export const authApi = {
 };
 
 export const deliveryApi = {
+  listAuditEvents: (params: {
+    project_id?: number;
+    entity_type?: string;
+    entity_id?: number;
+    action?: string;
+    limit?: number;
+    offset?: number;
+  } = {}) => {
+    const searchParams = new URLSearchParams();
+    Object.entries(params).forEach(([key, value]) => {
+      if (value !== undefined && value !== null && value !== '') {
+        searchParams.set(key, String(value));
+      }
+    });
+    const query = searchParams.toString();
+    return fetchAPI<DeliveryAuditEvent[]>(`/api/v2/audit/events${query ? `?${query}` : ''}`);
+  },
   listDemands: (params: { limit?: number; offset?: number } = {}) => {
     const searchParams = new URLSearchParams();
     if (params.limit !== undefined) {

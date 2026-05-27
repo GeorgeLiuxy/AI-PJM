@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.db import utc_now
 from app.core.exceptions import BadRequestException, NotFoundException
+from app.modules.audit.repository import audit_repository
 from app.modules.delivery.enums import (
     CodingTaskStatus,
     DeliveryRiskLevel,
@@ -66,6 +67,7 @@ class DeliveryService:
         context_payload: dict | None = None,
         project_id: int | None = None,
         created_by_user_id: int | None = None,
+        actor_ref: str | None = None,
     ) -> DemandItem:
         demand = await delivery_repository.create_demand(
             db=db,
@@ -76,6 +78,20 @@ class DeliveryService:
             context_payload=context_payload,
             project_id=project_id,
             created_by_user_id=created_by_user_id,
+        )
+        await audit_repository.create_event(
+            db,
+            action="delivery.demand_created",
+            entity_type="demand",
+            entity_id=demand.id,
+            project_id=demand.project_id,
+            actor_user_id=created_by_user_id,
+            actor_ref=actor_ref or requester_ref or "system",
+            summary=f"Demand created: {demand.title}",
+            metadata={
+                "source_type": demand.source_type,
+                "requester_ref": demand.requester_ref,
+            },
         )
         await db.commit()
         return demand
@@ -173,6 +189,7 @@ class DeliveryService:
         approved: bool,
         approver_ref: str | None = None,
         note: str | None = None,
+        actor_user_id: int | None = None,
     ) -> DemandItem:
         demand = await delivery_repository.get_demand_detail(db, demand_id)
         if not demand:
@@ -234,6 +251,17 @@ class DeliveryService:
             if latest_task and latest_task.status in {CodingTaskStatus.DRAFT, CodingTaskStatus.READY}:
                 await delivery_repository.update_coding_task_status(db, latest_task, CodingTaskStatus.BLOCKED)
 
+        await audit_repository.create_event(
+            db,
+            action="delivery.manual_approval_recorded",
+            entity_type="demand",
+            entity_id=demand.id,
+            project_id=demand.project_id,
+            actor_user_id=actor_user_id,
+            actor_ref=approver_ref or "system",
+            summary="Manual approval accepted." if approved else "Manual approval rejected.",
+            metadata=evidence,
+        )
         await db.commit()
         loaded_demand = await delivery_repository.get_demand_detail(db, demand_id)
         if not loaded_demand:
@@ -639,10 +667,15 @@ class DeliveryService:
         target_branch: str | None = None,
         title: str | None = None,
         url: str | None = None,
+        actor_user_id: int | None = None,
+        actor_ref: str | None = None,
     ) -> MergeRequestRecord:
         task = await delivery_repository.get_coding_task(db, coding_task_id)
         if not task:
             raise NotFoundException(f"Coding task {coding_task_id} not found")
+        demand = await delivery_repository.get_demand(db, task.demand_id)
+        if not demand:
+            raise NotFoundException(f"Demand {task.demand_id} not found")
         if task.status != CodingTaskStatus.COMPLETED:
             raise BadRequestException("A completed coding task is required before creating a merge request")
 
@@ -699,6 +732,24 @@ class DeliveryService:
                 url=f"local://merge-requests/{record.id}",
             )
 
+        await audit_repository.create_event(
+            db,
+            action="delivery.merge_request_created",
+            entity_type="merge_request",
+            entity_id=record.id,
+            project_id=demand.project_id,
+            actor_user_id=actor_user_id,
+            actor_ref=actor_ref or "system",
+            summary=f"Merge request record created: {record.title}",
+            metadata={
+                "coding_task_id": task.id,
+                "execution_run_id": run.id,
+                "provider": record.provider,
+                "source_branch": record.source_branch,
+                "target_branch": record.target_branch,
+                "url": record.url,
+            },
+        )
         await db.commit()
         loaded_record = await delivery_repository.get_merge_request_record(db, record.id)
         if not loaded_record:
@@ -713,6 +764,8 @@ class DeliveryService:
         review_summary: str | None = None,
         review_comments: list[dict] | None = None,
         blocking_issues: list[str] | None = None,
+        actor_user_id: int | None = None,
+        actor_ref: str | None = None,
     ) -> MergeRequestRecord:
         record = await delivery_repository.get_merge_request_record(db, merge_request_id)
         if not record:
@@ -768,6 +821,21 @@ class DeliveryService:
             },
         )
 
+        await audit_repository.create_event(
+            db,
+            action="delivery.merge_request_review_recorded",
+            entity_type="merge_request",
+            entity_id=record.id,
+            project_id=demand.project_id,
+            actor_user_id=actor_user_id,
+            actor_ref=actor_ref or "system",
+            summary=review_summary or f"Merge request review recorded: {final_review_status_value}",
+            metadata={
+                "review_status": final_review_status_value,
+                "blocking_issues": blockers,
+                "review_comment_count": len(comments),
+            },
+        )
         await db.commit()
         loaded_record = await delivery_repository.get_merge_request_record(db, record.id)
         if not loaded_record:
@@ -781,6 +849,8 @@ class DeliveryService:
         provider: str = "local",
         environment: str = "test",
         url: str | None = None,
+        actor_user_id: int | None = None,
+        actor_ref: str | None = None,
     ) -> DeployRecord:
         merge_request = await delivery_repository.get_merge_request_record(db, merge_request_id)
         if not merge_request:
@@ -833,6 +903,23 @@ class DeliveryService:
                 "url": deploy_record.url,
             },
         )
+        await audit_repository.create_event(
+            db,
+            action="delivery.test_deployment_created",
+            entity_type="deployment",
+            entity_id=deploy_record.id,
+            project_id=demand.project_id,
+            actor_user_id=actor_user_id,
+            actor_ref=actor_ref or "system",
+            summary=f"Test deployment record created: {deploy_record.environment}",
+            metadata={
+                "merge_request_id": merge_request.id,
+                "coding_task_id": task.id,
+                "provider": deploy_record.provider,
+                "environment": deploy_record.environment,
+                "url": deploy_record.url,
+            },
+        )
         await db.commit()
 
         loaded_record = await delivery_repository.get_deploy_record(db, deploy_record.id)
@@ -848,6 +935,7 @@ class DeliveryService:
         verifier_ref: str | None = None,
         summary: str | None = None,
         evidence_links: list[str] | None = None,
+        actor_user_id: int | None = None,
     ) -> VerificationRecord:
         deploy_record = await delivery_repository.get_deploy_record(db, deploy_record_id)
         if not deploy_record:
@@ -889,6 +977,21 @@ class DeliveryService:
                 "verification_record_id": verification.id,
                 "deploy_record_id": deploy_record.id,
                 "status": status_value,
+            },
+        )
+        await audit_repository.create_event(
+            db,
+            action="delivery.verification_recorded",
+            entity_type="verification",
+            entity_id=verification.id,
+            project_id=demand.project_id,
+            actor_user_id=actor_user_id,
+            actor_ref=verifier_ref or "system",
+            summary=summary or f"Verification recorded: {status_value}",
+            metadata={
+                "deploy_record_id": deploy_record.id,
+                "status": status_value,
+                "evidence_links": evidence_links or [],
             },
         )
         await db.commit()

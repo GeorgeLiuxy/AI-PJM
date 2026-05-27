@@ -165,3 +165,53 @@ async def test_viewer_can_read_but_cannot_create_demand(client, db_session, auth
     )
     assert create_response.status_code == 403
 
+
+@pytest.mark.asyncio
+async def test_delivery_actions_create_project_scoped_audit_events(client, db_session, auth_enabled):
+    _, alpha = await _create_user_with_project(
+        db_session,
+        username="alpha_auditor",
+        project_key="audit-alpha",
+        project_name="Audit Alpha",
+    )
+    _, beta = await _create_user_with_project(
+        db_session,
+        username="beta_auditor",
+        project_key="audit-beta",
+        project_name="Audit Beta",
+    )
+    alpha_token = await _login(client, "alpha_auditor")
+    beta_token = await _login(client, "beta_auditor")
+
+    created = await client.post(
+        "/api/v2/demands",
+        headers={"Authorization": f"Bearer {alpha_token}"},
+        json={"raw_input": "Audit this demand.", "project_id": alpha.id},
+    )
+    assert created.status_code == 201
+    demand_id = created.json()["data"]["id"]
+
+    alpha_events = await client.get(
+        "/api/v2/audit/events",
+        headers={"Authorization": f"Bearer {alpha_token}"},
+    )
+    assert alpha_events.status_code == 200
+    event_payload = alpha_events.json()["data"]
+    assert event_payload[0]["action"] == "delivery.demand_created"
+    assert event_payload[0]["project_id"] == alpha.id
+    assert event_payload[0]["entity_type"] == "demand"
+    assert event_payload[0]["entity_id"] == demand_id
+    assert event_payload[0]["actor_ref"] == "alpha_auditor"
+
+    beta_events = await client.get(
+        "/api/v2/audit/events",
+        headers={"Authorization": f"Bearer {beta_token}"},
+    )
+    assert beta_events.status_code == 200
+    assert beta_events.json()["data"] == []
+
+    forbidden_project_events = await client.get(
+        f"/api/v2/audit/events?project_id={beta.id}",
+        headers={"Authorization": f"Bearer {alpha_token}"},
+    )
+    assert forbidden_project_events.status_code == 403

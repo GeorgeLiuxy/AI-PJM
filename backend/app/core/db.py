@@ -57,10 +57,11 @@ class Base(DeclarativeBase):
 def import_all_models() -> None:
     """Import all SQLAlchemy models so metadata is complete."""
 
+    from app.modules.audit import models as _audit_models
     from app.modules.auth import models as _auth_models
     from app.modules.delivery import models as _delivery_models
 
-    _ = (_auth_models, _delivery_models)
+    _ = (_audit_models, _auth_models, _delivery_models)
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:

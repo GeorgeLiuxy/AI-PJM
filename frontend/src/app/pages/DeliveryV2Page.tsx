@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import { deliveryApi } from '../lib/api';
 import type {
+  DeliveryAuditEvent,
   DeliveryCodingTask,
   DeliveryDemand,
   DeliveryDemandDetail,
@@ -36,7 +37,7 @@ import type {
 
 type StepKey = 'demand' | 'spec' | 'repo' | 'impact' | 'task' | 'run' | 'mr' | 'deploy' | 'verify';
 type StepState = 'idle' | 'running' | 'done' | 'failed';
-type TabKey = 'summary' | 'spec' | 'execution' | 'taskPackage' | 'evidence' | 'queue';
+type TabKey = 'summary' | 'spec' | 'execution' | 'taskPackage' | 'evidence' | 'queue' | 'audit';
 
 type DeliveryResult = {
   demand?: DeliveryDemand;
@@ -82,6 +83,7 @@ const tabs: Array<{ key: TabKey; label: string; icon: typeof Activity }> = [
   { key: 'taskPackage', label: '任务包', icon: Code2 },
   { key: 'evidence', label: '证据', icon: FileCheck2 },
   { key: 'queue', label: '队列', icon: ClipboardList },
+  { key: 'audit', label: '审计', icon: ShieldCheck },
 ];
 
 const initialSteps = Object.fromEntries(stepMeta.map((step) => [step.key, 'idle'])) as Record<StepKey, StepState>;
@@ -92,9 +94,11 @@ export default function DeliveryV2Page() {
   const [requiredChecks, setRequiredChecks] = useState('npm run build');
   const [demands, setDemands] = useState<DeliveryDemand[]>([]);
   const [queueItems, setQueueItems] = useState<DeliveryExecutionQueueItem[]>([]);
+  const [auditEvents, setAuditEvents] = useState<DeliveryAuditEvent[]>([]);
   const [selectedDemandId, setSelectedDemandId] = useState<number | null>(null);
   const [listLoading, setListLoading] = useState(false);
   const [queueLoading, setQueueLoading] = useState(false);
+  const [auditLoading, setAuditLoading] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
   const [steps, setSteps] = useState<Record<StepKey, StepState>>(initialSteps);
   const [result, setResult] = useState<DeliveryResult>({});
@@ -198,9 +202,23 @@ export default function DeliveryV2Page() {
     }
   };
 
+  const loadAuditEvents = async () => {
+    setAuditLoading(true);
+    try {
+      const events = (await deliveryApi.listAuditEvents({ limit: 50 })).data;
+      setAuditEvents(events);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '加载审计记录失败';
+      setError(localizeText(message));
+    } finally {
+      setAuditLoading(false);
+    }
+  };
+
   useEffect(() => {
     void loadDemandList();
     void loadExecutionQueue();
+    void loadAuditEvents();
     // The initial load intentionally runs once; user actions refresh the list explicitly.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -310,6 +328,7 @@ export default function DeliveryV2Page() {
   const refreshCurrent = async () => {
     await loadDemandList(selectedDemandId ?? result.demand?.id, activeTab);
     await loadExecutionQueue();
+    await loadAuditEvents();
   };
 
   const continueWorkflow = async () => {
@@ -815,6 +834,7 @@ export default function DeliveryV2Page() {
               {activeTab === 'taskPackage' && <TaskPackageTab result={result} />}
               {activeTab === 'evidence' && <EvidenceTab result={result} />}
               {activeTab === 'queue' && <QueueTab items={queueItems} loading={queueLoading} />}
+              {activeTab === 'audit' && <AuditTab events={auditEvents} loading={auditLoading} />}
             </div>
           </section>
         </div>
@@ -1362,6 +1382,55 @@ function QueueTab({ items, loading }: { items: DeliveryExecutionQueueItem[]; loa
   );
 }
 
+function AuditTab({ events, loading }: { events: DeliveryAuditEvent[]; loading: boolean }) {
+  return (
+    <div className="overflow-hidden rounded border border-slate-200">
+      <div className="flex items-center justify-between gap-2 border-b border-slate-200 px-3 py-2">
+        <div className="text-sm font-medium text-slate-900">审计记录</div>
+        <StatusBadge value={loading ? 'loading' : `${events.length} 条`} />
+      </div>
+      <div className="max-h-[520px] overflow-auto">
+        <table className="w-full table-fixed text-left text-sm">
+          <thead className="bg-slate-50 text-xs font-medium uppercase text-slate-500">
+            <tr>
+              <th className="w-[17%] px-3 py-2">时间</th>
+              <th className="w-[16%] px-3 py-2">操作者</th>
+              <th className="w-[20%] px-3 py-2">动作</th>
+              <th className="w-[17%] px-3 py-2">对象</th>
+              <th className="w-[30%] px-3 py-2">摘要</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {events.length > 0 ? (
+              events.map((event) => (
+                <tr key={event.id}>
+                  <td className="px-3 py-2 text-xs text-slate-600">{formatDateTime(event.created_at)}</td>
+                  <td className="break-words px-3 py-2 text-slate-700">{event.actor_ref}</td>
+                  <td className="break-words px-3 py-2">
+                    <StatusBadge value={formatAuditAction(event.action)} />
+                  </td>
+                  <td className="break-words px-3 py-2 text-slate-700">
+                    {formatAuditEntity(event.entity_type, event.entity_id)}
+                  </td>
+                  <td className="break-words px-3 py-2 text-slate-700">
+                    <div className="line-clamp-2">{localizeText(event.summary)}</div>
+                  </td>
+                </tr>
+              ))
+            ) : (
+              <tr>
+                <td className="px-3 py-6 text-sm text-slate-400" colSpan={5}>
+                  {loading ? '正在加载审计记录' : '暂无审计记录'}
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 function StageBlock({ label, status, time }: { label: string; status?: string | null; time?: string | null }) {
   return (
     <div className="rounded border border-slate-200 bg-slate-50 px-3 py-2">
@@ -1820,6 +1889,34 @@ function formatLogLevel(value?: string | null): string {
   };
 
   return logLevelLabels[String(value || 'info')] || String(value || '信息');
+}
+
+function formatAuditAction(value: string): string {
+  const labels: Record<string, string> = {
+    'delivery.demand_created': '创建需求',
+    'delivery.manual_approval_recorded': '人工审批',
+    'delivery.merge_request_created': '创建 MR',
+    'delivery.merge_request_review_recorded': '记录评审',
+    'delivery.test_deployment_created': '测试部署',
+    'delivery.verification_recorded': '记录验收',
+    'auth.project_created': '创建项目',
+    'auth.user_created': '创建用户',
+  };
+
+  return labels[value] || value;
+}
+
+function formatAuditEntity(entityType: string, entityId?: number | null): string {
+  const labels: Record<string, string> = {
+    demand: '需求',
+    merge_request: 'MR',
+    deployment: '部署',
+    verification: '验收',
+    project: '项目',
+    user: '用户',
+  };
+  const label = labels[entityType] || entityType;
+  return entityId ? `${label} #${entityId}` : label;
 }
 
 function localizeText(value: string): string {

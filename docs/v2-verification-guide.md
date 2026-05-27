@@ -555,6 +555,8 @@ Expected behavior:
 - A logged-in operator can create delivery work only inside accessible projects.
 - Project members cannot read or operate another project's delivery records.
 - Viewer role can read accessible work but cannot create new demand items.
+- Key human or sensitive actions create project-scoped audit events.
+- Project members cannot read audit events from another project.
 
 ## 14. Slice-level Acceptance Criteria
 

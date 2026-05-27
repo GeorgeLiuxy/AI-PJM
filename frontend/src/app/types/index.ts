@@ -145,6 +145,19 @@ export interface DeliveryExecutionQueueItem extends DeliveryExecutionRun {
   risk_level: 'L0' | 'L1' | 'L2' | 'L3' | null;
 }
 
+export interface DeliveryAuditEvent {
+  id: number;
+  project_id: number | null;
+  actor_user_id: number | null;
+  actor_ref: string;
+  action: string;
+  entity_type: string;
+  entity_id: number | null;
+  summary: string;
+  metadata_json: Record<string, unknown> | null;
+  created_at: string;
+}
+
 export interface DeliveryMergeRequestRecord {
   id: number;
   coding_task_id: number;

@@ -78,6 +78,7 @@ async def create_demand(
         context_payload=request.context_payload,
         project_id=project_id,
         created_by_user_id=principal.user_id,
+        actor_ref=principal.username,
     )
     return success_response(
         data=DemandResponse.model_validate(demand).model_dump(),
@@ -112,8 +113,9 @@ async def record_manual_approval(
         db=db,
         demand_id=demand_id,
         approved=request.approved,
-        approver_ref=request.approver_ref,
+        approver_ref=request.approver_ref or principal.username,
         note=request.note,
+        actor_user_id=principal.user_id,
     )
     return success_response(
         data=DemandDetailResponse.model_validate(demand).model_dump(),
@@ -317,6 +319,8 @@ async def create_merge_request_record(
         target_branch=payload.target_branch,
         title=payload.title,
         url=payload.url,
+        actor_user_id=principal.user_id,
+        actor_ref=principal.username,
     )
     return success_response(
         data=MergeRequestRecordResponse.model_validate(record).model_dump(),
@@ -413,6 +417,8 @@ async def record_merge_request_review(
         review_summary=request.review_summary,
         review_comments=request.review_comments,
         blocking_issues=request.blocking_issues,
+        actor_user_id=principal.user_id,
+        actor_ref=principal.username,
     )
     return success_response(
         data=MergeRequestRecordResponse.model_validate(record).model_dump(),
@@ -435,6 +441,8 @@ async def create_deploy_record(
         provider=payload.provider,
         environment=payload.environment,
         url=payload.url,
+        actor_user_id=principal.user_id,
+        actor_ref=principal.username,
     )
     return success_response(
         data=DeployRecordResponse.model_validate(record).model_dump(),
@@ -469,9 +477,10 @@ async def record_verification(
         db=db,
         deploy_record_id=deploy_record_id,
         status=request.status,
-        verifier_ref=request.verifier_ref,
+        verifier_ref=request.verifier_ref or principal.username,
         summary=request.summary,
         evidence_links=request.evidence_links,
+        actor_user_id=principal.user_id,
     )
     return success_response(
         data=VerificationRecordResponse.model_validate(record).model_dump(),
