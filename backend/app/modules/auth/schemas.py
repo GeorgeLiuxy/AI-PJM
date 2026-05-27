@@ -66,6 +66,28 @@ class AuthLocalUserCreateRequest(BaseModel):
     project_role: str = Field(default="operator", max_length=50)
 
 
+class AuthUserUpdateRequest(BaseModel):
+    """Update managed local user attributes."""
+
+    display_name: Optional[str] = Field(default=None, min_length=1, max_length=200)
+    email: Optional[str] = Field(default=None, max_length=320)
+    role: Optional[str] = Field(default=None, max_length=50)
+    status: Optional[str] = Field(default=None, max_length=50)
+
+
+class AuthUserPasswordResetRequest(BaseModel):
+    """Reset a local user's password."""
+
+    password: str = Field(..., min_length=8, max_length=200)
+
+
+class AuthProjectMemberUpsertRequest(BaseModel):
+    """Create or update a user's project role."""
+
+    project_id: int
+    role: str = Field(default="operator", max_length=50)
+
+
 class AuthUserCreatedResponse(AuthUserResponse):
     """Created user response."""
 

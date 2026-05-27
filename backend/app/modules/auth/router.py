@@ -12,11 +12,14 @@ from app.modules.auth.schemas import (
     AuthLocalUserCreateRequest,
     AuthLoginRequest,
     AuthLoginResponse,
+    AuthProjectMemberUpsertRequest,
     AuthProjectCreateRequest,
     AuthProjectResponse,
     AuthUserCreatedResponse,
     AuthUserListItemResponse,
+    AuthUserPasswordResetRequest,
     AuthUserResponse,
+    AuthUserUpdateRequest,
 )
 from app.modules.auth.service import AuthPrincipal, auth_service
 
@@ -182,6 +185,124 @@ async def create_local_user(
         ).model_dump(),
         message="User created",
         code=201,
+    )
+
+
+@router.patch("/users/{user_id}", response_model=dict)
+async def update_local_user(
+    user_id: int,
+    request: AuthUserUpdateRequest,
+    db: AsyncSession = Depends(get_db),
+    principal: AuthPrincipal = Depends(get_current_principal),
+):
+    require_capability(principal, "admin")
+    changes = request.model_dump(exclude_unset=True)
+    user = await auth_service.update_local_user(db=db, user_id=user_id, **changes)
+    await audit_repository.create_event(
+        db,
+        action="auth.user_updated",
+        entity_type="user",
+        entity_id=user.id,
+        project_id=None,
+        actor_user_id=principal.user_id,
+        actor_ref=principal.username,
+        summary=f"Local user updated: {user.username}",
+        metadata={"changed_fields": sorted(changes.keys())},
+    )
+    await db.commit()
+    loaded_user = await auth_repository.get_user_by_id(db, user.id)
+    return success_response(
+        data=_managed_user_response(loaded_user or user).model_dump(),
+        message="User updated",
+    )
+
+
+@router.post("/users/{user_id}/password", response_model=dict)
+async def reset_local_user_password(
+    user_id: int,
+    request: AuthUserPasswordResetRequest,
+    db: AsyncSession = Depends(get_db),
+    principal: AuthPrincipal = Depends(get_current_principal),
+):
+    require_capability(principal, "admin")
+    user = await auth_service.reset_local_user_password(db=db, user_id=user_id, password=request.password)
+    await audit_repository.create_event(
+        db,
+        action="auth.user_password_reset",
+        entity_type="user",
+        entity_id=user.id,
+        project_id=None,
+        actor_user_id=principal.user_id,
+        actor_ref=principal.username,
+        summary=f"Local user password reset: {user.username}",
+        metadata={},
+    )
+    await db.commit()
+    loaded_user = await auth_repository.get_user_by_id(db, user.id)
+    return success_response(
+        data=_managed_user_response(loaded_user or user).model_dump(),
+        message="Password reset",
+    )
+
+
+@router.put("/users/{user_id}/memberships", response_model=dict)
+async def upsert_user_project_membership(
+    user_id: int,
+    request: AuthProjectMemberUpsertRequest,
+    db: AsyncSession = Depends(get_db),
+    principal: AuthPrincipal = Depends(get_current_principal),
+):
+    require_capability(principal, "admin")
+    user = await auth_service.upsert_project_member(
+        db=db,
+        user_id=user_id,
+        project_id=request.project_id,
+        role=request.role,
+    )
+    await audit_repository.create_event(
+        db,
+        action="auth.project_member_upserted",
+        entity_type="user",
+        entity_id=user.id,
+        project_id=request.project_id,
+        actor_user_id=principal.user_id,
+        actor_ref=principal.username,
+        summary=f"Project membership updated: {user.username}",
+        metadata={"project_id": request.project_id, "project_role": request.role},
+    )
+    await db.commit()
+    loaded_user = await auth_repository.get_user_by_id(db, user.id)
+    return success_response(
+        data=_managed_user_response(loaded_user or user).model_dump(),
+        message="Project membership updated",
+    )
+
+
+@router.delete("/users/{user_id}/memberships/{project_id}", response_model=dict)
+async def remove_user_project_membership(
+    user_id: int,
+    project_id: int,
+    db: AsyncSession = Depends(get_db),
+    principal: AuthPrincipal = Depends(get_current_principal),
+):
+    require_capability(principal, "admin")
+    user = await auth_service.remove_project_member(db=db, user_id=user_id, project_id=project_id)
+    await audit_repository.create_event(
+        db,
+        action="auth.project_member_removed",
+        entity_type="user",
+        entity_id=user.id,
+        project_id=project_id,
+        actor_user_id=principal.user_id,
+        actor_ref=principal.username,
+        summary=f"Project membership removed: {user.username}",
+        metadata={"project_id": project_id},
+    )
+    await db.commit()
+    loaded_user = await auth_repository.get_user_by_id(db, user.id)
+    return success_response(
+        data=_managed_user_response(loaded_user or user).model_dump(),
+        message="Project membership removed",
     )
 
 

@@ -1,11 +1,12 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react';
-import { KeyRound, Loader2, Plus, RefreshCw, ShieldCheck, UserPlus } from 'lucide-react';
+import { KeyRound, Loader2, Plus, RefreshCw, ShieldCheck, Trash2, UserCog, UserPlus } from 'lucide-react';
 import { authApi } from '../lib/api';
 import type { AuthManagedUser, AuthProject, SecretRecord } from '../types';
 
 const globalRoles = ['admin', 'operator', 'reviewer', 'viewer'];
 const projectRoles = ['owner', 'operator', 'reviewer', 'viewer'];
 const secretProviders = ['dify', 'gitlab', 'openai', 'codex', 'custom'];
+const userStatuses = ['active', 'disabled'];
 
 export default function AdminAccessPage() {
   const [projects, setProjects] = useState<AuthProject[]>([]);
@@ -15,6 +16,7 @@ export default function AdminAccessPage() {
   const [savingProject, setSavingProject] = useState(false);
   const [savingUser, setSavingUser] = useState(false);
   const [savingSecret, setSavingSecret] = useState(false);
+  const [savingAccessAction, setSavingAccessAction] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [projectForm, setProjectForm] = useState({
@@ -38,6 +40,16 @@ export default function AdminAccessPage() {
     provider: 'dify',
     value: '',
     description: '',
+  });
+  const [maintenanceForm, setMaintenanceForm] = useState<MaintenanceFormValue>({
+    user_id: '',
+    display_name: '',
+    email: '',
+    role: 'operator',
+    status: 'active',
+    password: '',
+    project_id: '',
+    project_role: 'operator',
   });
 
   const firstProjectId = useMemo(() => projects[0]?.id, [projects]);
@@ -67,6 +79,29 @@ export default function AdminAccessPage() {
         ...current,
         project_id: current.project_id && projectIds.has(current.project_id) ? current.project_id : defaultProjectId,
       }));
+      setMaintenanceForm((current) => {
+        const selectedUser = userResponse.data.find((user) => String(user.id) === current.user_id) || userResponse.data[0];
+        if (!selectedUser) {
+          return { ...current, user_id: '', project_id: defaultProjectId };
+        }
+        const selectedMembership =
+          selectedUser.projects.find((project) => String(project.id) === current.project_id) || selectedUser.projects[0];
+        return {
+          ...current,
+          user_id: String(selectedUser.id || ''),
+          display_name: selectedUser.display_name,
+          email: selectedUser.email || '',
+          role: selectedUser.role,
+          status: selectedUser.status,
+          project_id: selectedMembership?.id
+            ? String(selectedMembership.id)
+            : current.project_id && projectIds.has(current.project_id)
+              ? current.project_id
+              : defaultProjectId,
+          project_role: selectedMembership?.role || current.project_role || 'operator',
+          password: '',
+        };
+      });
     } catch (err) {
       const message = err instanceof Error ? err.message : '加载权限配置失败';
       setError(message);
@@ -163,6 +198,114 @@ export default function AdminAccessPage() {
     }
   };
 
+  const selectManagedUser = (userId: string) => {
+    const selectedUser = users.find((user) => String(user.id) === userId);
+    if (!selectedUser) {
+      setMaintenanceForm((current) => ({ ...current, user_id: userId }));
+      return;
+    }
+    const selectedMembership = selectedUser.projects[0];
+    setMaintenanceForm((current) => ({
+      ...current,
+      user_id: String(selectedUser.id || ''),
+      display_name: selectedUser.display_name,
+      email: selectedUser.email || '',
+      role: selectedUser.role,
+      status: selectedUser.status,
+      project_id: selectedMembership?.id ? String(selectedMembership.id) : projects[0]?.id ? String(projects[0].id) : '',
+      project_role: selectedMembership?.role || 'operator',
+      password: '',
+    }));
+  };
+
+  const submitUserUpdate = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!maintenanceForm.user_id) {
+      return;
+    }
+    setSavingAccessAction('update-user');
+    setError(null);
+    setNotice(null);
+    try {
+      const user = (await authApi.updateUser(Number(maintenanceForm.user_id), {
+        display_name: maintenanceForm.display_name.trim(),
+        email: maintenanceForm.email.trim() || null,
+        role: maintenanceForm.role,
+        status: maintenanceForm.status,
+      })).data;
+      setNotice(`用户已更新：${user.username}`);
+      await loadAccessData();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '更新用户失败';
+      setError(message);
+    } finally {
+      setSavingAccessAction(null);
+    }
+  };
+
+  const resetManagedUserPassword = async () => {
+    if (!maintenanceForm.user_id || maintenanceForm.password.length < 8) {
+      return;
+    }
+    setSavingAccessAction('reset-password');
+    setError(null);
+    setNotice(null);
+    try {
+      const user = (await authApi.resetUserPassword(Number(maintenanceForm.user_id), {
+        password: maintenanceForm.password,
+      })).data;
+      setMaintenanceForm((current) => ({ ...current, password: '' }));
+      setNotice(`密码已重置：${user.username}`);
+      await loadAccessData();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '重置密码失败';
+      setError(message);
+    } finally {
+      setSavingAccessAction(null);
+    }
+  };
+
+  const saveManagedUserMembership = async () => {
+    if (!maintenanceForm.user_id || !maintenanceForm.project_id) {
+      return;
+    }
+    setSavingAccessAction('save-membership');
+    setError(null);
+    setNotice(null);
+    try {
+      const user = (await authApi.upsertUserMembership(Number(maintenanceForm.user_id), {
+        project_id: Number(maintenanceForm.project_id),
+        role: maintenanceForm.project_role,
+      })).data;
+      setNotice(`项目角色已保存：${user.username}`);
+      await loadAccessData();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '保存项目角色失败';
+      setError(message);
+    } finally {
+      setSavingAccessAction(null);
+    }
+  };
+
+  const removeManagedUserMembership = async () => {
+    if (!maintenanceForm.user_id || !maintenanceForm.project_id) {
+      return;
+    }
+    setSavingAccessAction('remove-membership');
+    setError(null);
+    setNotice(null);
+    try {
+      const user = (await authApi.removeUserMembership(Number(maintenanceForm.user_id), Number(maintenanceForm.project_id))).data;
+      setNotice(`项目角色已移除：${user.username}`);
+      await loadAccessData();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '移除项目角色失败';
+      setError(message);
+    } finally {
+      setSavingAccessAction(null);
+    }
+  };
+
   return (
     <main className="mx-auto max-w-[1400px] px-4 py-4">
       <section className="mb-3 rounded border border-slate-200 bg-white">
@@ -190,7 +333,7 @@ export default function AdminAccessPage() {
             {notice ? <div className="rounded bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{notice}</div> : null}
           </div>
         )}
-        <div className="grid gap-3 p-4 xl:grid-cols-3">
+        <div className="grid gap-3 p-4 xl:grid-cols-2 2xl:grid-cols-4">
           <ProjectForm
             value={projectForm}
             saving={savingProject}
@@ -210,6 +353,18 @@ export default function AdminAccessPage() {
             saving={savingSecret}
             onChange={setSecretForm}
             onSubmit={submitSecret}
+          />
+          <UserMaintenanceForm
+            value={maintenanceForm}
+            users={users}
+            projects={projects}
+            savingAction={savingAccessAction}
+            onChange={setMaintenanceForm}
+            onSelectUser={selectManagedUser}
+            onSubmitUser={submitUserUpdate}
+            onResetPassword={resetManagedUserPassword}
+            onSaveMembership={saveManagedUserMembership}
+            onRemoveMembership={removeManagedUserMembership}
           />
         </div>
       </section>
@@ -390,6 +545,127 @@ function SecretForm({
   );
 }
 
+function UserMaintenanceForm({
+  value,
+  users,
+  projects,
+  savingAction,
+  onChange,
+  onSelectUser,
+  onSubmitUser,
+  onResetPassword,
+  onSaveMembership,
+  onRemoveMembership,
+}: {
+  value: MaintenanceFormValue;
+  users: AuthManagedUser[];
+  projects: AuthProject[];
+  savingAction: string | null;
+  onChange: (value: MaintenanceFormValue) => void;
+  onSelectUser: (userId: string) => void;
+  onSubmitUser: (event: FormEvent<HTMLFormElement>) => void;
+  onResetPassword: () => void;
+  onSaveMembership: () => void;
+  onRemoveMembership: () => void;
+}) {
+  const selectedUser = users.find((user) => String(user.id) === value.user_id);
+  const hasSelectedMembership = Boolean(
+    selectedUser?.projects.some((project) => String(project.id) === value.project_id),
+  );
+  return (
+    <form onSubmit={onSubmitUser} className="rounded border border-slate-200 bg-slate-50 p-3">
+      <div className="mb-3 flex items-center gap-2 text-sm font-medium text-slate-900">
+        <UserCog className="h-4 w-4 text-blue-600" />
+        维护用户权限
+      </div>
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-1 2xl:grid-cols-2">
+        <SelectInput
+          label="用户"
+          value={value.user_id}
+          options={users.map((user) => ({
+            label: `${user.display_name} / ${user.username}`,
+            value: String(user.id || ''),
+          }))}
+          onChange={onSelectUser}
+          formatter={identityLabel}
+        />
+        <SelectInput
+          label="状态"
+          value={value.status}
+          options={userStatuses}
+          onChange={(status) => onChange({ ...value, status })}
+          formatter={formatStatus}
+        />
+        <TextInput
+          label="显示名称"
+          value={value.display_name}
+          onChange={(display_name) => onChange({ ...value, display_name })}
+          required
+        />
+        <TextInput label="邮箱" value={value.email} onChange={(email) => onChange({ ...value, email })} />
+        <SelectInput
+          label="全局角色"
+          value={value.role}
+          options={globalRoles}
+          onChange={(role) => onChange({ ...value, role })}
+        />
+        <TextInput
+          label="新密码"
+          value={value.password}
+          onChange={(password) => onChange({ ...value, password })}
+          type="password"
+        />
+        <SelectInput
+          label="项目"
+          value={value.project_id}
+          options={projects.map((project) => ({ label: project.name, value: String(project.id) }))}
+          onChange={(project_id) => {
+            const existingRole = selectedUser?.projects.find((project) => String(project.id) === project_id)?.role;
+            onChange({ ...value, project_id, project_role: existingRole || value.project_role });
+          }}
+          formatter={identityLabel}
+        />
+        <SelectInput
+          label="项目角色"
+          value={value.project_role}
+          options={projectRoles}
+          onChange={(project_role) => onChange({ ...value, project_role })}
+        />
+      </div>
+      <div className="mt-3 flex flex-wrap gap-2">
+        <ActionButton
+          label="更新用户"
+          saving={savingAction === 'update-user'}
+          disabled={!value.user_id || !value.display_name.trim()}
+        />
+        <ActionButton
+          label="重置密码"
+          type="button"
+          saving={savingAction === 'reset-password'}
+          disabled={!value.user_id || value.password.length < 8}
+          onClick={onResetPassword}
+        />
+        <ActionButton
+          label="保存项目角色"
+          type="button"
+          saving={savingAction === 'save-membership'}
+          disabled={!value.user_id || !value.project_id}
+          onClick={onSaveMembership}
+        />
+        <button
+          type="button"
+          disabled={!value.user_id || !value.project_id || !hasSelectedMembership || savingAction === 'remove-membership'}
+          onClick={onRemoveMembership}
+          className="inline-flex h-9 items-center gap-2 rounded border border-red-200 bg-white px-3 text-sm font-medium text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:border-slate-200 disabled:text-slate-300"
+        >
+          {savingAction === 'remove-membership' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+          移除项目角色
+        </button>
+      </div>
+    </form>
+  );
+}
+
 type UserFormValue = {
   username: string;
   password: string;
@@ -406,6 +682,17 @@ type SecretFormValue = {
   provider: string;
   value: string;
   description: string;
+};
+
+type MaintenanceFormValue = {
+  user_id: string;
+  display_name: string;
+  email: string;
+  role: string;
+  status: string;
+  password: string;
+  project_id: string;
+  project_role: string;
 };
 
 function TextInput({
@@ -477,6 +764,32 @@ function SubmitButton({ label, saving, disabled }: { label: string; saving: bool
       type="submit"
       disabled={saving || disabled}
       className="mt-3 inline-flex h-9 items-center gap-2 rounded bg-blue-600 px-3 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+    >
+      {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+      {label}
+    </button>
+  );
+}
+
+function ActionButton({
+  label,
+  saving,
+  disabled,
+  type = 'submit',
+  onClick,
+}: {
+  label: string;
+  saving: boolean;
+  disabled: boolean;
+  type?: 'submit' | 'button';
+  onClick?: () => void;
+}) {
+  return (
+    <button
+      type={type}
+      disabled={saving || disabled}
+      onClick={onClick}
+      className="inline-flex h-9 items-center gap-2 rounded bg-blue-600 px-3 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-slate-300"
     >
       {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
       {label}
@@ -671,6 +984,10 @@ function formatProviderLabel(value: string) {
     custom: '自定义',
   };
   return labels[value] || value;
+}
+
+function identityLabel(value: string) {
+  return value;
 }
 
 function formatStatus(value: string) {

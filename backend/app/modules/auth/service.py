@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.exceptions import BadRequestException, UnauthorizedException
+from app.core.exceptions import BadRequestException, NotFoundException, UnauthorizedException
 from app.modules.auth.models import AuthUser
 from app.modules.auth.repository import auth_repository
 from app.modules.auth.security import (
@@ -19,6 +19,7 @@ from app.modules.auth.security import (
 
 GLOBAL_ROLES = {"admin", "operator", "reviewer", "viewer"}
 PROJECT_ROLES = {"owner", "operator", "reviewer", "viewer"}
+USER_STATUSES = {"active", "disabled"}
 
 READ_ROLES = {"admin", "operator", "reviewer", "viewer", "owner"}
 OPERATE_ROLES = {"admin", "operator", "owner"}
@@ -148,6 +149,79 @@ class AuthService:
             await auth_repository.create_project_member(db, user.id, project_id, role=project_role)
         await db.commit()
         return user
+
+    async def update_local_user(
+        self,
+        db: AsyncSession,
+        user_id: int,
+        *,
+        display_name: str | None = None,
+        email: str | None = None,
+        role: str | None = None,
+        status: str | None = None,
+    ) -> AuthUser:
+        user = await auth_repository.get_user_by_id(db, user_id)
+        if not user:
+            raise NotFoundException(f"User {user_id} not found")
+
+        values = {}
+        if display_name is not None:
+            normalized_display_name = display_name.strip()
+            if not normalized_display_name:
+                raise BadRequestException("Display name is required")
+            values["display_name"] = normalized_display_name
+        if email is not None:
+            values["email"] = email.strip() or None
+        if role is not None:
+            values["role"] = self._validate_role(role, GLOBAL_ROLES, "role")
+        if status is not None:
+            values["status"] = self._validate_role(status, USER_STATUSES, "status")
+        if not values:
+            raise BadRequestException("No user changes provided")
+
+        await auth_repository.update_user(db, user, **values)
+        return user
+
+    async def reset_local_user_password(self, db: AsyncSession, user_id: int, password: str) -> AuthUser:
+        user = await auth_repository.get_user_by_id(db, user_id)
+        if not user:
+            raise NotFoundException(f"User {user_id} not found")
+        await auth_repository.update_user(db, user, password_hash=hash_password(password))
+        return user
+
+    async def upsert_project_member(
+        self,
+        db: AsyncSession,
+        *,
+        user_id: int,
+        project_id: int,
+        role: str,
+    ) -> AuthUser:
+        user = await auth_repository.get_user_by_id(db, user_id)
+        if not user:
+            raise NotFoundException(f"User {user_id} not found")
+        project = await auth_repository.get_project(db, project_id)
+        if not project:
+            raise NotFoundException(f"Project {project_id} not found")
+        project_role = self._validate_role(role, PROJECT_ROLES, "project_role")
+        await auth_repository.upsert_project_member(db, user_id=user_id, project_id=project_id, role=project_role)
+        loaded_user = await auth_repository.get_user_by_id(db, user_id)
+        if not loaded_user:
+            raise NotFoundException(f"User {user_id} not found")
+        return loaded_user
+
+    async def remove_project_member(self, db: AsyncSession, *, user_id: int, project_id: int) -> AuthUser:
+        user = await auth_repository.get_user_by_id(db, user_id)
+        if not user:
+            raise NotFoundException(f"User {user_id} not found")
+        member = await auth_repository.get_project_member(db, user_id=user_id, project_id=project_id)
+        if not member:
+            raise NotFoundException(f"Project membership for user {user_id} and project {project_id} not found")
+        await auth_repository.delete_project_member(db, member)
+        loaded_user = await auth_repository.get_user_by_id(db, user_id)
+        if not loaded_user:
+            raise NotFoundException(f"User {user_id} not found")
+        return loaded_user
 
     async def validate_token(self, db: AsyncSession, raw_token: str) -> AuthPrincipal:
         token = await auth_repository.get_api_token_by_hash(db, hash_api_token(raw_token))

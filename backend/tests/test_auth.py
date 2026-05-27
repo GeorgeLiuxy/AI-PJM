@@ -216,6 +216,109 @@ async def test_non_admin_cannot_list_managed_users(client, db_session, auth_enab
 
 
 @pytest.mark.asyncio
+async def test_admin_can_update_user_reset_password_and_manage_membership(client, db_session, auth_enabled):
+    await _create_user_with_project(
+        db_session,
+        username="access_admin",
+        role="admin",
+        project_key="access-admin-project",
+        project_name="Access Admin Project",
+        project_role="owner",
+    )
+    managed_user = await auth_repository.create_user(
+        db=db_session,
+        username="managed_operator",
+        display_name="Managed Operator",
+        email="managed@example.com",
+        password_hash=hash_password("old-password"),
+        role="operator",
+    )
+    project = await auth_repository.create_project(
+        db_session,
+        key="managed-project",
+        name="Managed Project",
+    )
+    await db_session.commit()
+    token = await _login(client, "access_admin")
+
+    updated = await client.patch(
+        f"/api/v2/auth/users/{managed_user.id}",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "display_name": "Managed Reviewer",
+            "email": "reviewer@example.com",
+            "role": "reviewer",
+            "status": "active",
+        },
+    )
+    assert updated.status_code == 200
+    updated_data = updated.json()["data"]
+    assert updated_data["display_name"] == "Managed Reviewer"
+    assert updated_data["email"] == "reviewer@example.com"
+    assert updated_data["role"] == "reviewer"
+
+    membership = await client.put(
+        f"/api/v2/auth/users/{managed_user.id}/memberships",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"project_id": project.id, "role": "owner"},
+    )
+    assert membership.status_code == 200
+    membership_data = membership.json()["data"]
+    assert membership_data["projects"][0]["id"] == project.id
+    assert membership_data["projects"][0]["role"] == "owner"
+
+    reset = await client.post(
+        f"/api/v2/auth/users/{managed_user.id}/password",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"password": "new-password"},
+    )
+    assert reset.status_code == 200
+    old_login = await client.post(
+        "/api/v2/auth/login",
+        json={"username": "managed_operator", "password": "old-password"},
+    )
+    assert old_login.status_code == 401
+    new_login = await client.post(
+        "/api/v2/auth/login",
+        json={"username": "managed_operator", "password": "new-password"},
+    )
+    assert new_login.status_code == 200
+
+    removed = await client.delete(
+        f"/api/v2/auth/users/{managed_user.id}/memberships/{project.id}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert removed.status_code == 200
+    assert removed.json()["data"]["projects"] == []
+
+    audit = await client.get(
+        "/api/v2/audit/events?action=auth.user_updated",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert audit.status_code == 200
+    assert audit.json()["data"][0]["entity_type"] == "user"
+
+
+@pytest.mark.asyncio
+async def test_non_admin_cannot_manage_users(client, db_session, auth_enabled):
+    operator, _ = await _create_user_with_project(
+        db_session,
+        username="access_operator",
+        project_key="access-operator-project",
+        project_name="Access Operator Project",
+    )
+    token = await _login(client, "access_operator")
+
+    response = await client.patch(
+        f"/api/v2/auth/users/{operator.id}",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"role": "admin"},
+    )
+
+    assert response.status_code == 403
+
+
+@pytest.mark.asyncio
 async def test_delivery_actions_create_project_scoped_audit_events(client, db_session, auth_enabled):
     _, alpha = await _create_user_with_project(
         db_session,

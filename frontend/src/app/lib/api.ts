@@ -110,6 +110,37 @@ export const authApi = {
       body: JSON.stringify(params),
     });
   },
+  updateUser: (
+    userId: number,
+    params: {
+      display_name?: string;
+      email?: string | null;
+      role?: string;
+      status?: string;
+    },
+  ) => {
+    return fetchAPI<AuthManagedUser>(`/api/v2/auth/users/${userId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(params),
+    });
+  },
+  resetUserPassword: (userId: number, params: { password: string }) => {
+    return fetchAPI<AuthManagedUser>(`/api/v2/auth/users/${userId}/password`, {
+      method: 'POST',
+      body: JSON.stringify(params),
+    });
+  },
+  upsertUserMembership: (userId: number, params: { project_id: number; role: string }) => {
+    return fetchAPI<AuthManagedUser>(`/api/v2/auth/users/${userId}/memberships`, {
+      method: 'PUT',
+      body: JSON.stringify(params),
+    });
+  },
+  removeUserMembership: (userId: number, projectId: number) => {
+    return fetchAPI<AuthManagedUser>(`/api/v2/auth/users/${userId}/memberships/${projectId}`, {
+      method: 'DELETE',
+    });
+  },
   listSecrets: (params: { project_id?: number; provider?: string } = {}) => {
     const searchParams = new URLSearchParams();
     if (params.project_id !== undefined) {

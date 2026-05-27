@@ -574,6 +574,8 @@ Expected behavior:
 - Key human or sensitive actions create project-scoped audit events.
 - Project members cannot read audit events from another project.
 - Admin users can list projects and users.
+- Admin users can update local users, reset passwords, and maintain project roles.
+- Non-admin users cannot manage users or project membership.
 - The access management page can load project and user data without `failed to fetch`.
 
 ## 14. SecretStore Verification

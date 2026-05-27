@@ -44,6 +44,7 @@ class AuthRepository:
             select(AuthUser)
             .options(selectinload(AuthUser.memberships).selectinload(AuthProjectMember.project))
             .where(AuthUser.username == username)
+            .execution_options(populate_existing=True)
         )
         return result.scalar_one_or_none()
 
@@ -52,8 +53,15 @@ class AuthRepository:
             select(AuthUser)
             .options(selectinload(AuthUser.memberships).selectinload(AuthProjectMember.project))
             .where(AuthUser.id == user_id)
+            .execution_options(populate_existing=True)
         )
         return result.scalar_one_or_none()
+
+    async def update_user(self, db: AsyncSession, user: AuthUser, **values) -> AuthUser:
+        for key, value in values.items():
+            setattr(user, key, value)
+        await db.flush()
+        return user
 
     async def create_project(
         self,
@@ -132,6 +140,38 @@ class AuthRepository:
         db.add(member)
         await db.flush()
         return member
+
+    async def get_project_member(
+        self,
+        db: AsyncSession,
+        user_id: int,
+        project_id: int,
+    ) -> Optional[AuthProjectMember]:
+        result = await db.execute(
+            select(AuthProjectMember).where(
+                AuthProjectMember.user_id == user_id,
+                AuthProjectMember.project_id == project_id,
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def upsert_project_member(
+        self,
+        db: AsyncSession,
+        user_id: int,
+        project_id: int,
+        role: str,
+    ) -> AuthProjectMember:
+        member = await self.get_project_member(db, user_id, project_id)
+        if member:
+            member.role = role
+            await db.flush()
+            return member
+        return await self.create_project_member(db, user_id, project_id, role=role)
+
+    async def delete_project_member(self, db: AsyncSession, member: AuthProjectMember) -> None:
+        await db.delete(member)
+        await db.flush()
 
     async def create_api_token(
         self,
