@@ -370,6 +370,41 @@ async def test_delivery_actions_create_project_scoped_audit_events(client, db_se
 
 
 @pytest.mark.asyncio
+async def test_manual_approval_records_structured_actor(client, db_session, auth_enabled):
+    user, project = await _create_user_with_project(
+        db_session,
+        username="approval_admin",
+        role="admin",
+        project_key="approval-alpha",
+        project_name="Approval Alpha",
+        project_role="owner",
+    )
+    token = await _login(client, "approval_admin")
+
+    created = await client.post(
+        "/api/v2/demands",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"raw_input": "Approve a controlled execution.", "project_id": project.id},
+    )
+    assert created.status_code == 201
+    demand_id = created.json()["data"]["id"]
+
+    approved = await client.post(
+        f"/api/v2/demands/{demand_id}/manual-approval",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"approved": True, "note": "Approved by the current authenticated user."},
+    )
+
+    assert approved.status_code == 200
+    payload = approved.json()["data"]
+    assert payload["manual_approval_status"] == "approved"
+    assert payload["manual_approval_user_id"] == user.id
+    assert payload["manual_approval_ref"] == "approval_admin"
+    assert payload["manual_approval_note"] == "Approved by the current authenticated user."
+    assert payload["manual_approval_at"]
+
+
+@pytest.mark.asyncio
 async def test_admin_can_create_and_list_masked_project_secret(
     client,
     db_session,

@@ -225,10 +225,19 @@ class DeliveryService:
         latest_spec = self._latest_by_created_at(demand.spec_cards)
         latest_task = self._latest_by_created_at(demand.coding_tasks)
         risk_level = demand.risk_level
+        approval_ref = approver_ref or "system"
+        approval_time = utc_now()
+        demand.manual_approval_status = "approved" if approved else "rejected"
+        demand.manual_approval_user_id = actor_user_id
+        demand.manual_approval_ref = approval_ref
+        demand.manual_approval_note = note
+        demand.manual_approval_at = approval_time
         evidence = {
             "approval_type": "manual",
             "approved": approved,
-            "approver_ref": approver_ref,
+            "approver_ref": approval_ref,
+            "approver_user_id": actor_user_id,
+            "approved_at": approval_time.isoformat(),
             "note": note,
             "risk_level": risk_level,
             "spec_card_id": latest_spec.id if latest_spec else None,
@@ -285,7 +294,7 @@ class DeliveryService:
             entity_id=demand.id,
             project_id=demand.project_id,
             actor_user_id=actor_user_id,
-            actor_ref=approver_ref or "system",
+            actor_ref=approval_ref,
             summary="Manual approval accepted." if approved else "Manual approval rejected.",
             metadata=evidence,
         )
@@ -737,6 +746,8 @@ class DeliveryService:
             "commit_sha": run.commit_sha,
             "source_branch": source_branch,
             "target_branch": resolved_target_branch,
+            "created_by_user_id": actor_user_id,
+            "created_by_ref": actor_ref or "system",
             "provider_evidence": draft.evidence,
         }
         record = await delivery_repository.create_merge_request_record(
@@ -752,6 +763,8 @@ class DeliveryService:
             external_id=draft.external_id,
             url=draft.url,
             evidence_json=evidence,
+            created_by_user_id=actor_user_id,
+            created_by_ref=actor_ref or "system",
         )
         if draft.provider == "local" and not record.url:
             await delivery_repository.update_merge_request_record(
@@ -817,12 +830,17 @@ class DeliveryService:
         )
         final_status_value = self._enum_or_str(final_status)
         comments = review_comments or []
+        reviewed_at = utc_now()
+        reviewer_ref = actor_ref or "system"
         evidence = {
             **(record.evidence_json or {}),
             "review_status": final_review_status_value,
             "review_summary": review_summary,
             "review_comments": comments,
             "blocking_issues": blockers,
+            "reviewed_by_user_id": actor_user_id,
+            "reviewed_by_ref": reviewer_ref,
+            "reviewed_at": reviewed_at.isoformat(),
         }
         await delivery_repository.update_merge_request_record(
             db,
@@ -832,6 +850,9 @@ class DeliveryService:
             review_summary=review_summary,
             review_comments_json=comments,
             evidence_json=evidence,
+            reviewed_by_user_id=actor_user_id,
+            reviewed_by_ref=reviewer_ref,
+            reviewed_at=reviewed_at,
         )
         await delivery_repository.create_gate_check(
             db=db,
@@ -901,6 +922,8 @@ class DeliveryService:
             "coding_task_id": task.id,
             "environment": environment,
             "provider": provider,
+            "created_by_user_id": actor_user_id,
+            "created_by_ref": actor_ref or "system",
         }
         deploy_record = await delivery_repository.create_deploy_record(
             db=db,
@@ -911,6 +934,8 @@ class DeliveryService:
             environment=environment,
             url=url,
             evidence_json=evidence,
+            created_by_user_id=actor_user_id,
+            created_by_ref=actor_ref or "system",
         )
         if provider == "local" and not deploy_record.url:
             await delivery_repository.update_deploy_record(
@@ -982,6 +1007,7 @@ class DeliveryService:
             db=db,
             deploy_record_id=deploy_record.id,
             status=status_value,
+            verifier_user_id=actor_user_id,
             verifier_ref=verifier_ref,
             summary=summary,
             evidence_links=evidence_links,

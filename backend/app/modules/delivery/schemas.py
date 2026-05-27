@@ -48,6 +48,11 @@ class DemandResponse(BaseModel):
     risk_level: Optional[DeliveryRiskLevel] = None
     confidence_score: Optional[float] = None
     context_payload: Optional[dict[str, Any]] = None
+    manual_approval_status: Optional[str] = None
+    manual_approval_user_id: Optional[int] = None
+    manual_approval_ref: Optional[str] = None
+    manual_approval_note: Optional[str] = None
+    manual_approval_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
 
@@ -299,6 +304,11 @@ class MergeRequestRecordResponse(BaseModel):
     review_summary: Optional[str] = None
     review_comments_json: list[dict[str, Any]]
     evidence_json: Optional[dict[str, Any]] = None
+    created_by_user_id: Optional[int] = None
+    created_by_ref: Optional[str] = None
+    reviewed_by_user_id: Optional[int] = None
+    reviewed_by_ref: Optional[str] = None
+    reviewed_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
     deploy_records: list["DeployRecordResponse"] = Field(default_factory=list)
@@ -313,6 +323,7 @@ class VerificationRecordResponse(BaseModel):
     id: int
     deploy_record_id: int
     status: VerificationStatus
+    verifier_user_id: Optional[int] = None
     verifier_ref: Optional[str] = None
     summary: Optional[str] = None
     evidence_links_json: list[str]
@@ -335,6 +346,8 @@ class DeployRecordResponse(BaseModel):
     environment: str
     url: Optional[str] = None
     evidence_json: Optional[dict[str, Any]] = None
+    created_by_user_id: Optional[int] = None
+    created_by_ref: Optional[str] = None
     created_at: datetime
     updated_at: datetime
     verification_records: list[VerificationRecordResponse] = Field(default_factory=list)

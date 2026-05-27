@@ -52,6 +52,11 @@ export interface DeliveryDemand {
   risk_level: 'L0' | 'L1' | 'L2' | 'L3' | null;
   confidence_score: number | null;
   context_payload: Record<string, unknown> | null;
+  manual_approval_status?: string | null;
+  manual_approval_user_id?: number | null;
+  manual_approval_ref?: string | null;
+  manual_approval_note?: string | null;
+  manual_approval_at?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -199,6 +204,11 @@ export interface DeliveryMergeRequestRecord {
   review_summary: string | null;
   review_comments_json: Array<Record<string, unknown>>;
   evidence_json: Record<string, unknown> | null;
+  created_by_user_id?: number | null;
+  created_by_ref?: string | null;
+  reviewed_by_user_id?: number | null;
+  reviewed_by_ref?: string | null;
+  reviewed_at?: string | null;
   created_at: string;
   updated_at: string;
   deploy_records?: DeliveryDeployRecord[];
@@ -208,6 +218,7 @@ export interface DeliveryVerificationRecord {
   id: number;
   deploy_record_id: number;
   status: 'passed' | 'failed';
+  verifier_user_id?: number | null;
   verifier_ref: string | null;
   summary: string | null;
   evidence_links_json: string[];
@@ -225,6 +236,8 @@ export interface DeliveryDeployRecord {
   environment: string;
   url: string | null;
   evidence_json: Record<string, unknown> | null;
+  created_by_user_id?: number | null;
+  created_by_ref?: string | null;
   created_at: string;
   updated_at: string;
   verification_records?: DeliveryVerificationRecord[];

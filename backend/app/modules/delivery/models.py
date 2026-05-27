@@ -53,6 +53,15 @@ class DemandItem(Base):
     risk_level: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     confidence_score: Mapped[Optional[float]] = mapped_column(nullable=True)
     context_payload: Mapped[Optional[dict[str, Any]]] = mapped_column(DB_JSON, nullable=True)
+    manual_approval_status: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    manual_approval_user_id: Mapped[Optional[int]] = mapped_column(
+        DB_BIGINT,
+        ForeignKey("auth_users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    manual_approval_ref: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    manual_approval_note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    manual_approval_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -90,6 +99,8 @@ class DemandItem(Base):
     __table_args__ = (
         Index("ix_delivery_demand_items_project_id", "project_id"),
         Index("ix_delivery_demand_items_created_by_user_id", "created_by_user_id"),
+        Index("ix_delivery_demand_items_manual_approval_user_id", "manual_approval_user_id"),
+        Index("ix_delivery_demand_items_manual_approval_status", "manual_approval_status"),
         Index("ix_delivery_demand_items_status", "status"),
         Index("ix_delivery_demand_items_risk_level", "risk_level"),
         Index("ix_delivery_demand_items_created_at", "created_at"),
@@ -394,6 +405,19 @@ class MergeRequestRecord(Base):
     review_summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     review_comments_json: Mapped[list[dict[str, Any]]] = mapped_column(DB_JSON, nullable=False, default=list)
     evidence_json: Mapped[Optional[dict[str, Any]]] = mapped_column(DB_JSON, nullable=True)
+    created_by_user_id: Mapped[Optional[int]] = mapped_column(
+        DB_BIGINT,
+        ForeignKey("auth_users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    created_by_ref: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    reviewed_by_user_id: Mapped[Optional[int]] = mapped_column(
+        DB_BIGINT,
+        ForeignKey("auth_users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    reviewed_by_ref: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    reviewed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -415,6 +439,8 @@ class MergeRequestRecord(Base):
         Index("ix_delivery_merge_request_records_execution_run_id", "execution_run_id"),
         Index("ix_delivery_merge_request_records_status", "status"),
         Index("ix_delivery_merge_request_records_review_status", "review_status"),
+        Index("ix_delivery_merge_request_records_created_by_user_id", "created_by_user_id"),
+        Index("ix_delivery_merge_request_records_reviewed_by_user_id", "reviewed_by_user_id"),
     )
 
 
@@ -439,6 +465,12 @@ class DeployRecord(Base):
     environment: Mapped[str] = mapped_column(String(100), nullable=False, default="test")
     url: Mapped[Optional[str]] = mapped_column(String(1000), nullable=True)
     evidence_json: Mapped[Optional[dict[str, Any]]] = mapped_column(DB_JSON, nullable=True)
+    created_by_user_id: Mapped[Optional[int]] = mapped_column(
+        DB_BIGINT,
+        ForeignKey("auth_users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    created_by_ref: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -458,6 +490,7 @@ class DeployRecord(Base):
         Index("ix_delivery_deploy_records_merge_request_id", "merge_request_id"),
         Index("ix_delivery_deploy_records_coding_task_id", "coding_task_id"),
         Index("ix_delivery_deploy_records_status", "status"),
+        Index("ix_delivery_deploy_records_created_by_user_id", "created_by_user_id"),
     )
 
 
@@ -473,6 +506,11 @@ class VerificationRecord(Base):
         nullable=False,
     )
     status: Mapped[str] = mapped_column(String(50), nullable=False, default=VerificationStatus.PASSED)
+    verifier_user_id: Mapped[Optional[int]] = mapped_column(
+        DB_BIGINT,
+        ForeignKey("auth_users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     verifier_ref: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
     summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     evidence_links_json: Mapped[list[str]] = mapped_column(DB_JSON, nullable=False, default=list)
@@ -490,4 +528,5 @@ class VerificationRecord(Base):
     __table_args__ = (
         Index("ix_delivery_verification_records_deploy_record_id", "deploy_record_id"),
         Index("ix_delivery_verification_records_status", "status"),
+        Index("ix_delivery_verification_records_verifier_user_id", "verifier_user_id"),
     )

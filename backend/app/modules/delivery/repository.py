@@ -476,6 +476,8 @@ class DeliveryRepository:
         review_summary: str | None = None,
         review_comments: list[dict] | None = None,
         evidence_json: dict | None = None,
+        created_by_user_id: int | None = None,
+        created_by_ref: str | None = None,
     ) -> MergeRequestRecord:
         record = MergeRequestRecord(
             coding_task_id=coding_task_id,
@@ -491,6 +493,8 @@ class DeliveryRepository:
             review_summary=review_summary,
             review_comments_json=review_comments or [],
             evidence_json=evidence_json,
+            created_by_user_id=created_by_user_id,
+            created_by_ref=created_by_ref,
         )
         db.add(record)
         await db.flush()
@@ -506,6 +510,8 @@ class DeliveryRepository:
         environment: str,
         url: str | None = None,
         evidence_json: dict | None = None,
+        created_by_user_id: int | None = None,
+        created_by_ref: str | None = None,
     ) -> DeployRecord:
         record = DeployRecord(
             merge_request_id=merge_request_id,
@@ -515,6 +521,8 @@ class DeliveryRepository:
             environment=environment,
             url=url,
             evidence_json=evidence_json,
+            created_by_user_id=created_by_user_id,
+            created_by_ref=created_by_ref,
         )
         db.add(record)
         await db.flush()
@@ -525,6 +533,7 @@ class DeliveryRepository:
         db: AsyncSession,
         deploy_record_id: int,
         status: str,
+        verifier_user_id: int | None = None,
         verifier_ref: str | None = None,
         summary: str | None = None,
         evidence_links: list[str] | None = None,
@@ -533,6 +542,7 @@ class DeliveryRepository:
         record = VerificationRecord(
             deploy_record_id=deploy_record_id,
             status=status,
+            verifier_user_id=verifier_user_id,
             verifier_ref=verifier_ref,
             summary=summary,
             evidence_links_json=evidence_links or [],

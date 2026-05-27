@@ -97,14 +97,21 @@ async def init_db() -> None:
 async def _ensure_sqlite_schema_compat(conn) -> None:
     """Apply additive SQLite dev-schema fixes for existing local databases."""
 
-    result = await conn.exec_driver_sql("PRAGMA table_info(delivery_demand_items)")
-    columns = {row[1] for row in result.fetchall()}
-    if "project_id" not in columns:
+    demand_columns = await _sqlite_columns(conn, "delivery_demand_items")
+    if "project_id" not in demand_columns:
         await conn.exec_driver_sql("ALTER TABLE delivery_demand_items ADD COLUMN project_id INTEGER")
-    if "created_by_user_id" not in columns:
-        await conn.exec_driver_sql(
-            "ALTER TABLE delivery_demand_items ADD COLUMN created_by_user_id INTEGER"
-        )
+    if "created_by_user_id" not in demand_columns:
+        await conn.exec_driver_sql("ALTER TABLE delivery_demand_items ADD COLUMN created_by_user_id INTEGER")
+    if "manual_approval_status" not in demand_columns:
+        await conn.exec_driver_sql("ALTER TABLE delivery_demand_items ADD COLUMN manual_approval_status VARCHAR(50)")
+    if "manual_approval_user_id" not in demand_columns:
+        await conn.exec_driver_sql("ALTER TABLE delivery_demand_items ADD COLUMN manual_approval_user_id INTEGER")
+    if "manual_approval_ref" not in demand_columns:
+        await conn.exec_driver_sql("ALTER TABLE delivery_demand_items ADD COLUMN manual_approval_ref VARCHAR(200)")
+    if "manual_approval_note" not in demand_columns:
+        await conn.exec_driver_sql("ALTER TABLE delivery_demand_items ADD COLUMN manual_approval_note TEXT")
+    if "manual_approval_at" not in demand_columns:
+        await conn.exec_driver_sql("ALTER TABLE delivery_demand_items ADD COLUMN manual_approval_at DATETIME")
     await conn.exec_driver_sql(
         "CREATE INDEX IF NOT EXISTS ix_delivery_demand_items_project_id "
         "ON delivery_demand_items (project_id)"
@@ -113,6 +120,59 @@ async def _ensure_sqlite_schema_compat(conn) -> None:
         "CREATE INDEX IF NOT EXISTS ix_delivery_demand_items_created_by_user_id "
         "ON delivery_demand_items (created_by_user_id)"
     )
+    await conn.exec_driver_sql(
+        "CREATE INDEX IF NOT EXISTS ix_delivery_demand_items_manual_approval_user_id "
+        "ON delivery_demand_items (manual_approval_user_id)"
+    )
+    await conn.exec_driver_sql(
+        "CREATE INDEX IF NOT EXISTS ix_delivery_demand_items_manual_approval_status "
+        "ON delivery_demand_items (manual_approval_status)"
+    )
+
+    merge_request_columns = await _sqlite_columns(conn, "delivery_merge_request_records")
+    if merge_request_columns:
+        if "created_by_user_id" not in merge_request_columns:
+            await conn.exec_driver_sql("ALTER TABLE delivery_merge_request_records ADD COLUMN created_by_user_id INTEGER")
+        if "created_by_ref" not in merge_request_columns:
+            await conn.exec_driver_sql("ALTER TABLE delivery_merge_request_records ADD COLUMN created_by_ref VARCHAR(200)")
+        if "reviewed_by_user_id" not in merge_request_columns:
+            await conn.exec_driver_sql("ALTER TABLE delivery_merge_request_records ADD COLUMN reviewed_by_user_id INTEGER")
+        if "reviewed_by_ref" not in merge_request_columns:
+            await conn.exec_driver_sql("ALTER TABLE delivery_merge_request_records ADD COLUMN reviewed_by_ref VARCHAR(200)")
+        if "reviewed_at" not in merge_request_columns:
+            await conn.exec_driver_sql("ALTER TABLE delivery_merge_request_records ADD COLUMN reviewed_at DATETIME")
+        await conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS ix_delivery_merge_request_records_created_by_user_id "
+            "ON delivery_merge_request_records (created_by_user_id)"
+        )
+        await conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS ix_delivery_merge_request_records_reviewed_by_user_id "
+            "ON delivery_merge_request_records (reviewed_by_user_id)"
+        )
+
+    deploy_columns = await _sqlite_columns(conn, "delivery_deploy_records")
+    if deploy_columns:
+        if "created_by_user_id" not in deploy_columns:
+            await conn.exec_driver_sql("ALTER TABLE delivery_deploy_records ADD COLUMN created_by_user_id INTEGER")
+        if "created_by_ref" not in deploy_columns:
+            await conn.exec_driver_sql("ALTER TABLE delivery_deploy_records ADD COLUMN created_by_ref VARCHAR(200)")
+        await conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS ix_delivery_deploy_records_created_by_user_id "
+            "ON delivery_deploy_records (created_by_user_id)"
+        )
+
+    verification_columns = await _sqlite_columns(conn, "delivery_verification_records")
+    if verification_columns and "verifier_user_id" not in verification_columns:
+        await conn.exec_driver_sql("ALTER TABLE delivery_verification_records ADD COLUMN verifier_user_id INTEGER")
+        await conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS ix_delivery_verification_records_verifier_user_id "
+            "ON delivery_verification_records (verifier_user_id)"
+        )
+
+
+async def _sqlite_columns(conn, table_name: str) -> set[str]:
+    result = await conn.exec_driver_sql(f"PRAGMA table_info({table_name})")
+    return {row[1] for row in result.fetchall()}
 
 
 def utc_now() -> datetime:

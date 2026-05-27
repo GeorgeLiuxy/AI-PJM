@@ -141,12 +141,18 @@ async def create_review_passed_merge_request(client, generated_worktrees) -> tup
     )
     assert mr_response.status_code == 201
     mr_data = mr_response.json()["data"]
+    assert mr_data["created_by_ref"] == "local_operator"
+    assert mr_data["created_by_user_id"] is None
     review_response = await client.post(
         f"/api/v2/merge-requests/{mr_data['id']}/review",
         json={"review_status": "passed", "review_summary": "Local review passed."},
     )
     assert review_response.status_code == 200
-    return task_data, run_data, review_response.json()["data"]
+    review_data = review_response.json()["data"]
+    assert review_data["reviewed_by_ref"] == "local_operator"
+    assert review_data["reviewed_by_user_id"] is None
+    assert review_data["reviewed_at"]
+    return task_data, run_data, review_data
 
 
 @pytest.mark.asyncio
@@ -366,6 +372,8 @@ async def test_delivery_v2_creates_deployment_after_review_passes(client, genera
     assert deploy_data["status"] == "deployed"
     assert deploy_data["environment"] == "test"
     assert deploy_data["url"] == f"local://deployments/{deploy_data['id']}"
+    assert deploy_data["created_by_ref"] == "local_operator"
+    assert deploy_data["created_by_user_id"] is None
 
     detail_response = await client.get(f"/api/v2/demands/{task_data['demand_id']}")
     assert detail_response.status_code == 200
@@ -414,6 +422,8 @@ async def test_delivery_v2_records_verification_gate(client, generated_worktrees
     verification_data = verification_response.json()["data"]
     assert verification_data["deploy_record_id"] == deploy_data["id"]
     assert verification_data["status"] == "passed"
+    assert verification_data["verifier_ref"] == "local_operator"
+    assert verification_data["verifier_user_id"] is None
 
     detail_response = await client.get(f"/api/v2/demands/{task_data['demand_id']}")
     assert detail_response.status_code == 200
@@ -1011,6 +1021,11 @@ async def test_delivery_v2_auto_repair_blocks_high_risk_tasks(client, generated_
         },
     )
     assert approval_response.status_code == 200
+    approval_data = approval_response.json()["data"]
+    assert approval_data["manual_approval_status"] == "approved"
+    assert approval_data["manual_approval_ref"] == "tester"
+    assert approval_data["manual_approval_user_id"] is None
+    assert approval_data["manual_approval_at"]
 
     run_response = await client.post(
         f"/api/v2/coding-tasks/{task_data['id']}/runs",
@@ -1085,6 +1100,10 @@ async def test_delivery_v2_high_risk_requires_manual_review(client, generated_wo
     )
     assert approval_response.status_code == 200
     approved_detail = approval_response.json()["data"]
+    assert approved_detail["manual_approval_status"] == "approved"
+    assert approved_detail["manual_approval_ref"] == "tester"
+    assert approved_detail["manual_approval_user_id"] is None
+    assert approved_detail["manual_approval_at"]
     assert approved_detail["spec_cards"][0]["status"] == "approved"
     assert approved_detail["coding_tasks"][0]["status"] == "ready"
     assert any(
