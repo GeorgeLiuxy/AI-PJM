@@ -1,6 +1,6 @@
 # AI PJM
 
-AI PJM 是一个 AI 辅助工程交付编排平台。它不是通用项目管理工具，也不是替代 Codex 的编码器；它负责把业务输入转成可审计、可验证、可协作的工程交付链路。
+AI PJM 是一个 AI 辅助工程交付编排平台。它不是通用项目管理工具，不是企业治理平台，也不是替代 Codex 的编码器；它负责把业务输入转成可审计、可验证、可协作的工程交付链路。
 
 当前主流程：
 
@@ -48,10 +48,10 @@ AI PJM 是一个 AI 辅助工程交付编排平台。它不是通用项目管理
 - 真实本地代码上下文收集和任务范围推断已有首版，仍待增强语义匹配和历史需求读取。
 - OpenAI Provider 尚未实现；Dify Provider 仍需生产联调、质量评估、降级策略和监控。
 - Codex CLI 首版已可用，但仍需继续做自动修复闭环、性能优化和生产化运维配置。本机 WindowsApps 下的 `codex.exe` 仍会返回 `Access is denied`，当前使用全局 npm 版 `@openai/codex`。
-- 当前 MR/PR、测试环境部署和验收是本地记录闭环；真实 GitLab/GitHub 创建、远端评审拉取、真实部署 Provider 仍待实现。
-- 认证授权和项目权限已有本地首版，仍需补齐企业 SSO、业务角色细化和审计报表聚合。
-- 密钥管理已有本地加密存储、健康检查和执行证据脱敏首版，Dify API Key 已可按项目读取；仍需接入 Vault/KMS、集中轮换策略和更多外部 Provider 消费。
-- PostgreSQL、数据库迁移、后台 Worker、审计报表和监控仍待实现。
+- 当前 MR/PR、测试环境部署和验收是本地记录闭环；真实 GitLab/GitHub 创建、远端评审拉取、真实部署 Provider 仍待实现，这是近期主线。
+- 认证授权和项目权限保留最小角色模型；企业 SSO、复杂业务角色和审计报表平台化不作为近期主线。
+- 密钥管理已有本地加密存储、健康检查和执行证据脱敏首版，Dify API Key 已可按项目读取；近期重点是让 GitLab/OpenAI/部署 Provider 按项目消费凭证。
+- PostgreSQL、数据库迁移、后台 Worker 和最小可观测性仍待实现。
 - 默认子 Agent 评审、多仓库编排、自动生产发布暂不做。
 
 后续功能执行顺序以 [v2-execution-roadmap.md](docs/v2-execution-roadmap.md) 为准；生产级落地以 [production-readiness-plan.md](docs/production-readiness-plan.md) 为准。
@@ -160,5 +160,6 @@ Get-ChildItem .runtime\codex-prompts -Force -ErrorAction SilentlyContinue
 - 生产化能力先对齐 [production-readiness-plan.md](docs/production-readiness-plan.md) 的阶段顺序和上线门槛。
 - 修改状态机、门禁、执行器前必须补测试。
 - Provider 只能返回结构化草稿，不直接推进数据库状态。
-- 平台负责状态、门禁、审计、权限、证据。
+- 平台负责状态、门禁、最小权限、密钥、审计和证据。
 - AI/Codex 负责生成候选方案和在受限工作区执行任务。
+- 低风险任务尽量自动流转，高风险任务保留人工确认。
