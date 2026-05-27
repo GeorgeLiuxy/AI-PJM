@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useOutletContext } from 'react-router';
 import {
   Activity,
   AlertTriangle,
@@ -20,6 +21,7 @@ import {
   Wrench,
 } from 'lucide-react';
 import { deliveryApi } from '../lib/api';
+import { canOperate, canReview } from '../lib/permissions';
 import type {
   DeliveryAuditEvent,
   DeliveryCodingTask,
@@ -34,6 +36,7 @@ import type {
   DeliverySpecCard,
   DeliveryVerificationRecord,
 } from '../types';
+import type { AppOutletContext } from '../Root';
 
 type StepKey = 'demand' | 'spec' | 'repo' | 'impact' | 'task' | 'run' | 'mr' | 'deploy' | 'verify';
 type StepState = 'idle' | 'running' | 'done' | 'failed';
@@ -89,6 +92,7 @@ const tabs: Array<{ key: TabKey; label: string; icon: typeof Activity }> = [
 const initialSteps = Object.fromEntries(stepMeta.map((step) => [step.key, 'idle'])) as Record<StepKey, StepState>;
 
 export default function DeliveryV2Page() {
+  const { user } = useOutletContext<AppOutletContext>();
   const [rawInput, setRawInput] = useState(defaultInput);
   const [allowedPaths, setAllowedPaths] = useState('');
   const [requiredChecks, setRequiredChecks] = useState('npm run build');
@@ -110,14 +114,27 @@ export default function DeliveryV2Page() {
   const [approvalNote, setApprovalNote] = useState('');
 
   const busy = running || recovering || detailLoading;
-  const canRun = useMemo(() => rawInput.trim().length > 0 && !busy, [rawInput, busy]);
+  const defaultProjectId = user?.projects[0]?.id;
+  const activeProjectId = result.demand?.project_id ?? defaultProjectId;
+  const canOperateCurrent = canOperate(user, activeProjectId);
+  const canReviewCurrent = canReview(user, activeProjectId);
+  const canStartDelivery =
+    canOperate(user, defaultProjectId) && (!user?.auth_enabled || user.role === 'admin' || defaultProjectId !== undefined);
+  const canRun = useMemo(() => rawInput.trim().length > 0 && !busy && canStartDelivery, [rawInput, busy, canStartDelivery]);
   const checks = useMemo(() => extractCheckEvidence(result.run), [result.run]);
   const passedChecks = checks.filter((check) => check.status === 'passed').length;
   const outcome = result.run?.status || result.task?.status || result.spec?.status || result.demand?.status || 'idle';
   const manualApprovalRequired = needsManualApproval(result);
-  const canContinue = Boolean(result.demand && hasResumableWork(result) && !manualApprovalRequired && !busy);
+  const canContinue = Boolean(
+    result.demand && hasResumableWork(result) && !manualApprovalRequired && !busy && canOperateCurrent,
+  );
   const canRetryChecks = Boolean(
-    result.task && result.task.status !== 'running' && result.task.status !== 'draft' && !manualApprovalRequired && !busy,
+    result.task &&
+      result.task.status !== 'running' &&
+      result.task.status !== 'draft' &&
+      !manualApprovalRequired &&
+      !busy &&
+      canOperateCurrent,
   );
   const canAutoRepairChecks = Boolean(
     canRetryChecks && result.run?.status === 'failed' && hasFailedCheckEvidence(result.run) && !isHighRiskResult(result),
@@ -127,28 +144,33 @@ export default function DeliveryV2Page() {
       result.run?.status === 'succeeded' &&
       !result.mergeRequest &&
       !manualApprovalRequired &&
-      !busy,
+      !busy &&
+      canOperateCurrent,
   );
   const canMarkReviewPassed = Boolean(
     result.mergeRequest &&
       result.mergeRequest.review_status !== 'passed' &&
       result.mergeRequest.status !== 'closed' &&
-      !busy,
+      !busy &&
+      canReviewCurrent,
   );
   const canCreateDeployment = Boolean(
     result.mergeRequest &&
       result.mergeRequest.review_status === 'passed' &&
       !result.deployRecord &&
       !manualApprovalRequired &&
-      !busy,
+      !busy &&
+      canOperateCurrent,
   );
   const canRecordVerification = Boolean(
     result.deployRecord &&
       result.deployRecord.status === 'deployed' &&
       !result.verificationRecord &&
       !manualApprovalRequired &&
-      !busy,
+      !busy &&
+      canReviewCurrent,
   );
+  const canSubmitManualApproval = Boolean(result.demand && !busy && canReviewCurrent);
 
   const setStep = (key: StepKey, state: StepState) => {
     setSteps((current) => ({ ...current, [key]: state }));
@@ -594,7 +616,7 @@ export default function DeliveryV2Page() {
   };
 
   const submitManualApproval = async (approved: boolean) => {
-    if (!result.demand || busy) {
+    if (!result.demand || !canSubmitManualApproval) {
       return;
     }
 
@@ -796,6 +818,7 @@ export default function DeliveryV2Page() {
                   result={result}
                   note={approvalNote}
                   busy={busy}
+                  canApprove={canSubmitManualApproval}
                   onNoteChange={setApprovalNote}
                   onApprove={() => void submitManualApproval(true)}
                   onReject={() => void submitManualApproval(false)}
@@ -1008,6 +1031,7 @@ function ManualApprovalPanel({
   result,
   note,
   busy,
+  canApprove,
   onNoteChange,
   onApprove,
   onReject,
@@ -1015,6 +1039,7 @@ function ManualApprovalPanel({
   result: DeliveryResult;
   note: string;
   busy: boolean;
+  canApprove: boolean;
   onNoteChange: (value: string) => void;
   onApprove: () => void;
   onReject: () => void;
@@ -1035,14 +1060,16 @@ function ManualApprovalPanel({
         value={note}
         onChange={(event) => onNoteChange(event.target.value)}
         placeholder="审批说明、范围判断或拒绝原因"
+        disabled={!canApprove || busy}
         className="h-16 w-full resize-none rounded border border-amber-200 bg-white px-2 py-2 text-xs leading-5 text-slate-900 outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-100"
       />
+      {!canApprove ? <div className="mt-2 text-xs text-amber-800">当前账号没有审批权限。</div> : null}
 
       <div className="mt-2 flex flex-wrap items-center justify-end gap-2">
         <button
           type="button"
           onClick={onReject}
-          disabled={busy}
+          disabled={busy || !canApprove}
           className="inline-flex h-8 items-center rounded border border-amber-300 bg-white px-3 text-sm text-amber-800 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
         >
           拒绝
@@ -1050,7 +1077,7 @@ function ManualApprovalPanel({
         <button
           type="button"
           onClick={onApprove}
-          disabled={busy}
+          disabled={busy || !canApprove}
           className="inline-flex h-8 items-center rounded bg-amber-600 px-3 text-sm font-medium text-white hover:bg-amber-700 disabled:cursor-not-allowed disabled:bg-slate-300"
         >
           批准

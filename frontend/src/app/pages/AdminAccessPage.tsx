@@ -1,7 +1,10 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react';
+import { useOutletContext } from 'react-router';
 import { KeyRound, Loader2, Plus, RefreshCw, ShieldCheck, Trash2, UserCog, UserPlus } from 'lucide-react';
 import { authApi } from '../lib/api';
+import { canAdmin } from '../lib/permissions';
 import type { AuthManagedUser, AuthProject, SecretRecord } from '../types';
+import type { AppOutletContext } from '../Root';
 
 const globalRoles = ['admin', 'operator', 'reviewer', 'viewer'];
 const projectRoles = ['owner', 'operator', 'reviewer', 'viewer'];
@@ -9,6 +12,7 @@ const secretProviders = ['dify', 'gitlab', 'openai', 'codex', 'custom'];
 const userStatuses = ['active', 'disabled'];
 
 export default function AdminAccessPage() {
+  const { user } = useOutletContext<AppOutletContext>();
   const [projects, setProjects] = useState<AuthProject[]>([]);
   const [users, setUsers] = useState<AuthManagedUser[]>([]);
   const [secrets, setSecrets] = useState<SecretRecord[]>([]);
@@ -56,6 +60,7 @@ export default function AdminAccessPage() {
   const projectNameById = useMemo(() => {
     return new Map(projects.map((project) => [project.id, project.name]));
   }, [projects]);
+  const hasAdminAccess = canAdmin(user);
 
   const loadAccessData = async () => {
     setLoading(true);
@@ -111,8 +116,10 @@ export default function AdminAccessPage() {
   };
 
   useEffect(() => {
-    void loadAccessData();
-  }, []);
+    if (hasAdminAccess) {
+      void loadAccessData();
+    }
+  }, [hasAdminAccess]);
 
   const submitProject = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -305,6 +312,26 @@ export default function AdminAccessPage() {
       setSavingAccessAction(null);
     }
   };
+
+  if (!hasAdminAccess) {
+    return (
+      <main className="mx-auto max-w-[960px] px-4 py-6">
+        <section className="rounded border border-slate-200 bg-white p-5">
+          <div className="flex items-start gap-3">
+            <div className="flex h-9 w-9 items-center justify-center rounded bg-slate-100 text-slate-600">
+              <ShieldCheck className="h-5 w-5" />
+            </div>
+            <div>
+              <h1 className="text-base font-semibold text-slate-950">没有权限访问权限管理</h1>
+              <p className="mt-1 text-sm leading-6 text-slate-600">
+                当前账号不能维护项目、用户、角色和密钥。需要平台管理员账号执行该操作。
+              </p>
+            </div>
+          </div>
+        </section>
+      </main>
+    );
+  }
 
   return (
     <main className="mx-auto max-w-[1400px] px-4 py-4">

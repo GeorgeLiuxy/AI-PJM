@@ -2,12 +2,17 @@ import { FormEvent, useEffect, useState } from 'react';
 import { Link, Outlet, useLocation } from 'react-router';
 import { GitBranch, Loader2, LogOut, Sparkles, UserRound } from 'lucide-react';
 import { authApi, setAuthToken } from './lib/api';
+import { canAdmin } from './lib/permissions';
 import type { AuthUser } from './types';
 
 const navItems = [
   { to: '/', label: '交付工作台' },
-  { to: '/admin/access', label: '权限管理' },
+  { to: '/admin/access', label: '权限管理', adminOnly: true },
 ];
+
+export type AppOutletContext = {
+  user: AuthUser | null;
+};
 
 export default function Root() {
   const location = useLocation();
@@ -121,6 +126,8 @@ export default function Root() {
     );
   }
 
+  const outletContext: AppOutletContext = { user };
+
   return (
     <div className="min-h-screen bg-slate-50">
       <header className="border-b border-slate-200 bg-white">
@@ -136,7 +143,7 @@ export default function Root() {
               </div>
             </Link>
             <nav className="flex flex-wrap items-center gap-1">
-              {navItems.map((item) => {
+              {navItems.filter((item) => !item.adminOnly || canAdmin(user)).map((item) => {
                 const active = item.to === '/' ? location.pathname === '/' : location.pathname.startsWith(item.to);
                 return (
                   <Link
@@ -185,7 +192,7 @@ export default function Root() {
           </div>
         </div>
       </header>
-      <Outlet />
+      <Outlet context={outletContext} />
     </div>
   );
 }
