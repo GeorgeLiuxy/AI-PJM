@@ -182,6 +182,11 @@ export interface SecretRecord {
   key_id: string;
   value_mask: string;
   status: string;
+  metadata_json: Record<string, unknown> | null;
+  expires_at: string | null;
+  health_status: 'healthy' | 'expiring_soon' | 'expired' | 'invalid' | 'disabled' | 'unknown';
+  health_reason: string | null;
+  health_checked_at: string | null;
   created_by_user_id: number | null;
   updated_by_user_id: number | null;
   last_used_at: string | null;

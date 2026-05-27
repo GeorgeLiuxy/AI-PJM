@@ -44,6 +44,7 @@ export default function AdminAccessPage() {
     provider: 'dify',
     value: '',
     description: '',
+    expires_at: '',
   });
   const [maintenanceForm, setMaintenanceForm] = useState<MaintenanceFormValue>({
     user_id: '',
@@ -188,12 +189,14 @@ export default function AdminAccessPage() {
         provider: secretForm.provider.trim(),
         value: secretForm.value,
         description: secretForm.description.trim() || null,
+        expires_at: secretForm.expires_at ? new Date(secretForm.expires_at).toISOString() : null,
       })).data;
       setSecretForm((current) => ({
         ...current,
         name: '',
         value: '',
         description: '',
+        expires_at: '',
       }));
       setNotice(`密钥已保存：${secret.name}`);
       await loadAccessData();
@@ -202,6 +205,22 @@ export default function AdminAccessPage() {
       setError(message);
     } finally {
       setSavingSecret(false);
+    }
+  };
+
+  const checkSecretHealth = async (secret: SecretRecord) => {
+    setSavingAccessAction(`secret-health-${secret.id}`);
+    setError(null);
+    setNotice(null);
+    try {
+      const checked = (await authApi.checkSecretHealth(secret.id)).data;
+      setNotice(`密钥健康检查完成：${checked.name}，${formatSecretHealth(checked.health_status)}`);
+      await loadAccessData();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '密钥健康检查失败';
+      setError(message);
+    } finally {
+      setSavingAccessAction(null);
     }
   };
 
@@ -400,7 +419,13 @@ export default function AdminAccessPage() {
         <ProjectTable projects={projects} loading={loading} />
         <UserTable users={users} loading={loading} />
         <div className="xl:col-span-2">
-          <SecretTable secrets={secrets} projectNameById={projectNameById} loading={loading} />
+          <SecretTable
+            secrets={secrets}
+            projectNameById={projectNameById}
+            loading={loading}
+            savingAction={savingAccessAction}
+            onCheckHealth={checkSecretHealth}
+          />
         </div>
       </section>
     </main>
@@ -554,6 +579,12 @@ function SecretForm({
           onChange={(secretValue) => onChange({ ...value, value: secretValue })}
           type="password"
           required
+        />
+        <TextInput
+          label="过期时间"
+          value={value.expires_at}
+          onChange={(expires_at) => onChange({ ...value, expires_at })}
+          type="datetime-local"
         />
         <div className="md:col-span-2 xl:col-span-1 2xl:col-span-2">
           <TextInput
@@ -709,6 +740,7 @@ type SecretFormValue = {
   provider: string;
   value: string;
   description: string;
+  expires_at: string;
 };
 
 type MaintenanceFormValue = {
@@ -913,24 +945,30 @@ function SecretTable({
   secrets,
   projectNameById,
   loading,
+  savingAction,
+  onCheckHealth,
 }: {
   secrets: SecretRecord[];
   projectNameById: Map<number, string>;
   loading: boolean;
+  savingAction: string | null;
+  onCheckHealth: (secret: SecretRecord) => void;
 }) {
   return (
     <div className="overflow-hidden rounded border border-slate-200 bg-white">
       <TableHeader title="项目密钥" count={secrets.length} loading={loading} />
       <div className="max-h-[420px] overflow-auto">
-        <table className="w-full min-w-[860px] table-fixed text-left text-sm">
+        <table className="w-full min-w-[1040px] table-fixed text-left text-sm">
           <thead className="bg-slate-50 text-xs font-medium uppercase text-slate-500">
             <tr>
-              <th className="w-[18%] px-3 py-2">项目</th>
-              <th className="w-[18%] px-3 py-2">名称</th>
-              <th className="w-[14%] px-3 py-2">类型</th>
-              <th className="w-[18%] px-3 py-2">掩码</th>
-              <th className="w-[14%] px-3 py-2">状态</th>
-              <th className="w-[18%] px-3 py-2">更新时间</th>
+              <th className="w-[16%] px-3 py-2">项目</th>
+              <th className="w-[17%] px-3 py-2">名称</th>
+              <th className="w-[10%] px-3 py-2">类型</th>
+              <th className="w-[14%] px-3 py-2">掩码</th>
+              <th className="w-[13%] px-3 py-2">健康</th>
+              <th className="w-[14%] px-3 py-2">使用/过期</th>
+              <th className="w-[8%] px-3 py-2">状态</th>
+              <th className="w-[8%] px-3 py-2">操作</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
@@ -949,13 +987,33 @@ function SecretTable({
                   </td>
                   <td className="break-words px-3 py-2 font-mono text-xs text-slate-700">{secret.value_mask}</td>
                   <td className="px-3 py-2">
+                    <Badge>{formatSecretHealth(secret.health_status)}</Badge>
+                    {secret.health_reason ? <div className="mt-1 text-xs text-slate-500">{secret.health_reason}</div> : null}
+                  </td>
+                  <td className="px-3 py-2 text-xs text-slate-600">
+                    <div>最近：{formatDate(secret.last_used_at)}</div>
+                    <div>过期：{formatDate(secret.expires_at)}</div>
+                  </td>
+                  <td className="px-3 py-2">
                     <Badge>{formatStatus(secret.status)}</Badge>
                   </td>
-                  <td className="px-3 py-2 text-xs text-slate-600">{formatDate(secret.updated_at)}</td>
+                  <td className="px-3 py-2">
+                    <button
+                      type="button"
+                      onClick={() => onCheckHealth(secret)}
+                      disabled={savingAction === `secret-health-${secret.id}`}
+                      className="inline-flex h-8 items-center gap-1 rounded border border-slate-200 bg-white px-2 text-xs text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <RefreshCw
+                        className={`h-3.5 w-3.5 ${savingAction === `secret-health-${secret.id}` ? 'animate-spin' : ''}`}
+                      />
+                      检查
+                    </button>
+                  </td>
                 </tr>
               ))
             ) : (
-              <EmptyRow colSpan={6} loading={loading} label="暂无项目密钥" />
+              <EmptyRow colSpan={8} loading={loading} label="暂无项目密钥" />
             )}
           </tbody>
         </table>
@@ -1021,6 +1079,18 @@ function formatStatus(value: string) {
   const labels: Record<string, string> = {
     active: '启用',
     disabled: '停用',
+  };
+  return labels[value] || value;
+}
+
+function formatSecretHealth(value: string) {
+  const labels: Record<string, string> = {
+    healthy: '正常',
+    expiring_soon: '即将过期',
+    expired: '已过期',
+    invalid: '不可用',
+    disabled: '已停用',
+    unknown: '未检查',
   };
   return labels[value] || value;
 }

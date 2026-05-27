@@ -11,7 +11,6 @@ from app.modules.auth.service import AuthPrincipal
 from app.modules.secrets.repository import secret_repository
 from app.modules.secrets.schemas import (
     SecretCreateRequest,
-    SecretRecordResponse,
     SecretRotateRequest,
 )
 from app.modules.secrets.service import secret_store_service
@@ -39,7 +38,7 @@ async def list_secrets(
         offset=max(offset, 0),
     )
     return success_response(
-        data=[SecretRecordResponse.model_validate(record).model_dump() for record in records],
+        data=[secret_store_service.to_response(record).model_dump() for record in records],
         message="Success",
     )
 
@@ -58,11 +57,12 @@ async def create_secret(
         provider=request.provider,
         value=request.value,
         description=request.description,
+        expires_at=request.expires_at,
         actor_user_id=principal.user_id,
         actor_ref=principal.username,
     )
     return success_response(
-        data=SecretRecordResponse.model_validate(record).model_dump(),
+        data=secret_store_service.to_response(record).model_dump(),
         message="Secret created",
         code=201,
     )
@@ -84,10 +84,28 @@ async def rotate_secret(
         secret_id=secret_id,
         value=request.value,
         description=request.description,
+        expires_at=request.expires_at,
         actor_user_id=principal.user_id,
         actor_ref=principal.username,
     )
     return success_response(
-        data=SecretRecordResponse.model_validate(rotated).model_dump(),
+        data=secret_store_service.to_response(rotated).model_dump(),
         message="Secret rotated",
+    )
+
+
+@router.get("/{secret_id}/health", response_model=dict)
+async def check_secret_health(
+    secret_id: int,
+    db: AsyncSession = Depends(get_db),
+    principal: AuthPrincipal = Depends(get_current_principal),
+):
+    record = await secret_repository.get_secret(db, secret_id)
+    if not record:
+        raise NotFoundException(f"Secret {secret_id} not found")
+    require_capability(principal, "admin", record.project_id)
+    response = await secret_store_service.check_secret_health(db, secret_id)
+    return success_response(
+        data=response.model_dump(),
+        message="Secret health checked",
     )

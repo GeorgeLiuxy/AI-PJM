@@ -1,5 +1,7 @@
 """Auth and project access tests."""
 
+from datetime import datetime, timedelta, timezone
+
 import pytest
 
 from app.core.config import settings
@@ -473,6 +475,63 @@ async def test_admin_can_create_and_list_masked_project_secret(
     )
     assert audit.status_code == 200
     assert audit.json()["data"][0]["entity_type"] == "secret"
+
+
+@pytest.mark.asyncio
+async def test_admin_can_check_project_secret_health_without_plaintext(
+    client,
+    db_session,
+    auth_enabled,
+    monkeypatch,
+):
+    monkeypatch.setattr(settings, "secret_store_master_key", "test-secret-master-key")
+    _, project = await _create_user_with_project(
+        db_session,
+        username="secret_health_admin",
+        role="admin",
+        project_key="secret-health-project",
+        project_name="Secret Health Project",
+        project_role="owner",
+    )
+    token = await _login(client, "secret_health_admin")
+    expires_at = (datetime.now(timezone.utc) + timedelta(days=7)).isoformat()
+
+    created = await client.post(
+        "/api/v2/secrets",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "project_id": project.id,
+            "name": "gitlab_token",
+            "provider": "gitlab",
+            "value": "glpat-secret-health-value",
+            "description": "GitLab token",
+            "expires_at": expires_at,
+        },
+    )
+    assert created.status_code == 201
+    created_payload = created.json()["data"]
+    assert created_payload["health_status"] == "expiring_soon"
+    assert created_payload["expires_at"]
+    assert "glpat-secret-health-value" not in created.text
+
+    health = await client.get(
+        f"/api/v2/secrets/{created_payload['id']}/health",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert health.status_code == 200
+    health_payload = health.json()["data"]
+    assert health_payload["health_status"] == "expiring_soon"
+    assert health_payload["health_checked_at"]
+    assert "glpat-secret-health-value" not in health.text
+
+    monkeypatch.setattr(settings, "secret_store_master_key", "wrong-secret-master-key")
+    invalid_health = await client.get(
+        f"/api/v2/secrets/{created_payload['id']}/health",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert invalid_health.status_code == 200
+    assert invalid_health.json()["data"]["health_status"] == "invalid"
 
 
 @pytest.mark.asyncio

@@ -14,6 +14,7 @@ class SecretCreateRequest(BaseModel):
     provider: str = Field(..., min_length=1, max_length=100)
     value: str = Field(..., min_length=1, max_length=20000)
     description: Optional[str] = Field(default=None, max_length=500)
+    expires_at: Optional[datetime] = None
 
 
 class SecretRotateRequest(BaseModel):
@@ -21,6 +22,7 @@ class SecretRotateRequest(BaseModel):
 
     value: str = Field(..., min_length=1, max_length=20000)
     description: Optional[str] = Field(default=None, max_length=500)
+    expires_at: Optional[datetime] = None
 
 
 class SecretRecordResponse(BaseModel):
@@ -34,6 +36,11 @@ class SecretRecordResponse(BaseModel):
     key_id: str
     value_mask: str
     status: str
+    metadata_json: Optional[dict] = None
+    expires_at: Optional[datetime] = None
+    health_status: str = "unknown"
+    health_reason: Optional[str] = None
+    health_checked_at: Optional[datetime] = None
     created_by_user_id: Optional[int] = None
     updated_by_user_id: Optional[int] = None
     last_used_at: Optional[datetime] = None

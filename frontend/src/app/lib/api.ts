@@ -192,17 +192,21 @@ export const authApi = {
     provider: string;
     value: string;
     description?: string | null;
+    expires_at?: string | null;
   }) => {
     return fetchAPI<SecretRecord>('/api/v2/secrets', {
       method: 'POST',
       body: JSON.stringify(params),
     });
   },
-  rotateSecret: (secretId: number, params: { value: string; description?: string | null }) => {
+  rotateSecret: (secretId: number, params: { value: string; description?: string | null; expires_at?: string | null }) => {
     return fetchAPI<SecretRecord>(`/api/v2/secrets/${secretId}/rotate`, {
       method: 'POST',
       body: JSON.stringify(params),
     });
+  },
+  checkSecretHealth: (secretId: number) => {
+    return fetchAPI<SecretRecord>(`/api/v2/secrets/${secretId}/health`);
   },
 };
 
