@@ -2,6 +2,8 @@
 
 This document describes the user-facing interaction flow and the platform automation behind it.
 
+Production-readiness planning, security controls, rollout order, and hard launch gates are tracked in `docs/production-readiness-plan.md`.
+
 ## 1. Interaction Goal
 
 The user should not operate every internal step. The platform should keep moving automatically when risk and evidence allow it, and only stop for human input when a hard gate requires it.
@@ -175,12 +177,14 @@ Current operator console includes:
 - `Retry checks` for existing task checks.
 - Failed check output and failure details.
 
-### Future Enhancements (Not Implemented)
-- ⏳ Real Codex AI worker integration
-- ⏳ MR/PR creation automation
-- ⏳ Test deployment workflow
-- ⏳ Business verification flow
-- ⏳ Dify/OpenAI provider implementations
+### Future Enhancements (Not Production-Ready)
+- ⏳ Background worker and reliable queue for production execution
+- ⏳ Production-grade Codex runner configuration and operations
+- ⏳ Real GitLab/GitHub MR/PR creation and remote review polling
+- ⏳ Real test deployment provider
+- ⏳ Verification evidence hardening and archival
+- ⏳ OpenAI provider implementation
+- ⏳ Dify production hardening, evaluation, fallback, and monitoring
 
 Current API path:
 
@@ -218,18 +222,20 @@ Current automation:
 - For `executor_type = codex`, checks run inside a generated Git worktree and branch. Evidence records `workspace_root`, `original_workspace_root`, `branch_name`, and `commit_sha`.
 - When Codex command execution is enabled, evidence also records command status, prompt file path, exit code, stdout/stderr tails, and changed files.
 
-Not implemented yet:
+Not production-ready yet:
 
-- Production-ready Codex CLI or SDK command configuration.
-- Automated code-fix loop.
-- MR/PR creation.
-- Test deployment.
-- Verification workflow.
+- Production-ready Codex CLI or SDK command configuration and runner operations.
+- Background automatic worker for queued execution.
+- Real GitLab/GitHub MR/PR creation and remote review synchronization.
+- Real test deployment provider.
+- Verification evidence archival and audit hardening.
 
 Provider status:
 
-- `mock` provider is implemented and is the default.
-- Dify/OpenAI providers are represented by the provider boundary but are not implemented yet.
+- `local` provider is the default for real workspace scanning.
+- `mock` provider is implemented for deterministic fallback and tests.
+- `dify` provider boundary is implemented and can be enabled by configuration for structured Spec and impact drafts.
+- `openai` provider is pending.
 - Workflow providers return structured drafts only; platform state and gates are owned by the backend.
 
 ## 6. UI Flow Target

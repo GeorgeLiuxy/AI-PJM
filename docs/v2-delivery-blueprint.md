@@ -1,5 +1,7 @@
 # AI PJM v2 Delivery Blueprint
 
+Production-readiness planning, rollout gates, security, operations, and team adoption are tracked in `docs/production-readiness-plan.md`. This blueprint describes the product flow and domain boundary.
+
 ## 1. Product Positioning
 
 AI PJM v2 is an AI delivery orchestration platform.
@@ -141,5 +143,5 @@ Current boundaries:
 - Local required-check execution is implemented for safe commands such as `npm run build`, `pytest`, `python -m pytest`, and `python -m compileall`.
 - The `codex` executor path now prepares an isolated Git worktree and branch before running checks.
 - A configurable Codex command hook can run inside that worktree before checks when `EXECUTION_CODEX_ENABLED=true` and `EXECUTION_CODEX_COMMAND_TEMPLATE` is set.
-- Dify/OpenAI providers are not implemented yet.
-- Production-grade Codex command configuration, MR creation, deployment, and verification are separate follow-up slices.
+- Dify Provider boundary is implemented for structured Spec and impact drafts when configured; OpenAI Provider is still pending.
+- Local MR/PR, test deployment, and verification records are implemented. Real GitLab/GitHub creation, remote review polling, real deployment providers, and production-grade runner operations are tracked in `docs/production-readiness-plan.md`.

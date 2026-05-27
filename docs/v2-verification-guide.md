@@ -559,7 +559,7 @@ If required configuration or required output fields are missing, the provider mu
 - `repo_context_ready` gate is persisted.
 - ImpactAnalysis is stored with impacted areas, affected files, recommendations, risk level, and confidence score.
 - `impact_analyzed` gate is persisted.
-- Real repository scanners are not implemented yet; current behavior uses the mock workflow provider.
+- The default `local` provider scans the real workspace for repository structure, docs, configs, tests, dependency references, and demand-related candidate files.
 
 ### Slice 3: Codex Task
 
@@ -575,12 +575,13 @@ If required configuration or required output fields are missing, the provider mu
 - Optional Codex command hook can run inside the prepared worktree before checks.
 - Check command status, exit code, duration, stdout tail, and stderr tail are persisted as evidence.
 - Failed checks mark the task as `blocked`, record a failed `self_test_passed` gate, and can be retried as a new execution attempt.
+- Low-risk failed checks can enter a bounded automated repair attempt when policy allows.
 - High-risk execution remains blocked until manual approval evidence exists.
 
 To be added:
 
-- Production Codex CLI or SDK command is finalized for the target environment.
-- failed checks trigger automated code-fix loop when policy allows.
+- Production Codex CLI or SDK command and runner operations are finalized for the target environment.
+- Background worker dispatches queued execution outside HTTP request handling.
 
 ### Slice 5: Delivery
 

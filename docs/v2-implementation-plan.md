@@ -1,6 +1,6 @@
 # AI PJM v2 Implementation Plan
 
-后续执行顺序以 `docs/v2-execution-roadmap.md` 为准。本文保留切片实现状态，路线图负责约束下一步优先级、完成标准和暂不做事项。
+后续功能执行顺序以 `docs/v2-execution-roadmap.md` 为准。生产级落地、上线门槛、权限安全、运维和团队试点计划以 `docs/production-readiness-plan.md` 为准。本文保留切片实现状态，路线图负责约束下一步优先级、完成标准和暂不做事项。
 
 ## Slice 0: Baseline and Guardrails
 
@@ -43,7 +43,7 @@ AI / provider:
 
 - Default provider is `local`, which scans the current workspace for repository structure, docs, frontend/backend config, tests, and demand-related candidate files.
 - `mock` remains available for deterministic tests and fallback.
-- Keep provider interface ready for Dify or OpenAI workflows.
+- Keep provider interface ready for Dify or OpenAI workflows. Dify can be enabled by configuration; OpenAI remains pending.
 
 Gate:
 
@@ -54,7 +54,7 @@ Gate:
 
 Goal: attach project/repository/branch context and generate an implementation analysis.
 
-Status: local repository scanner implemented. Dify/OpenAI providers and deeper semantic analysis are still pending.
+Status: local repository scanner implemented. Dify provider boundary is implemented for structured Spec and impact drafts. OpenAI provider and deeper semantic analysis are still pending.
 
 Backend:
 
@@ -75,7 +75,7 @@ Gate:
 
 Goal: generate a Codex-ready task package.
 
-Status: framework implemented. It creates a task package but does not execute Codex yet.
+Status: framework implemented. It creates a task package and can feed execution runs. Codex command execution is available through the configurable executor path when enabled.
 
 Backend:
 
@@ -115,7 +115,7 @@ Worker:
 - call Codex CLI or SDK: configurable command hook implemented; concrete production command is pending
 - capture logs: implemented for workspace setup and required checks
 - run required checks: implemented
-- retry fix loop when allowed
+- retry fix loop when allowed: implemented for low-risk failed checks with bounded attempts
 
 Data:
 

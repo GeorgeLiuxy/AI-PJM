@@ -25,25 +25,30 @@ AI PJM 是一个 AI 辅助工程交付编排平台。它不是通用项目管理
 - SQLite 本地数据库。
 - 低风险自动审批、高风险人工审批。
 - Git worktree 隔离执行。
-- 必要检查执行、失败证据记录、重试入口。
+- 必要检查执行、失败证据记录、重试入口和低风险自动修复首版。
 - 可配置 Codex command hook，支持执行前预检和变更范围校验。
 - 真实 Codex CLI 首版接入：通过 npm 版 `@openai/codex` 在隔离 worktree 中执行。
+- 本地 MR/PR 记录、评审门禁、测试环境记录和验收记录。
+- 执行队列可见性和基础并发上限保护。
+- Dify Provider 边界首版，可通过配置接入 Spec/Impact workflow。
 - 中文化交付工作台页面。
 - 前后端启动/关闭脚本。
 
 尚未实现或未生产化：
 
 - 真实本地代码上下文收集和任务范围推断已有首版，仍待增强语义匹配和历史需求读取。
-- Dify/OpenAI Provider 尚未实现。
+- OpenAI Provider 尚未实现；Dify Provider 仍需生产联调、质量评估、降级策略和监控。
 - Codex CLI 首版已可用，但仍需继续做自动修复闭环、性能优化和生产化运维配置。本机 WindowsApps 下的 `codex.exe` 仍会返回 `Access is denied`，当前使用全局 npm 版 `@openai/codex`。
-- MR/PR 创建、远端评审拉取、测试环境部署、验收记录尚未完成。
-- 多任务队列、默认子 Agent 评审、多仓库编排暂不做。
+- 当前 MR/PR、测试环境部署和验收是本地记录闭环；真实 GitLab/GitHub 创建、远端评审拉取、真实部署 Provider 仍待实现。
+- 生产级认证授权、项目权限、密钥管理、PostgreSQL、数据库迁移、后台 Worker、审计和监控仍待实现。
+- 默认子 Agent 评审、多仓库编排、自动生产发布暂不做。
 
-后续执行顺序以 [v2-execution-roadmap.md](docs/v2-execution-roadmap.md) 为准。
+后续功能执行顺序以 [v2-execution-roadmap.md](docs/v2-execution-roadmap.md) 为准；生产级落地以 [production-readiness-plan.md](docs/production-readiness-plan.md) 为准。
 
 ## 关键文档
 
 - [V2 后续执行路线图](docs/v2-execution-roadmap.md)
+- [生产级落地计划](docs/production-readiness-plan.md)
 - [V2 交付蓝图](docs/v2-delivery-blueprint.md)
 - [V2 实现计划](docs/v2-implementation-plan.md)
 - [V2 交互流程](docs/v2-interaction-flow.md)
@@ -120,6 +125,7 @@ Get-ChildItem .runtime\codex-prompts -Force -ErrorAction SilentlyContinue
 ## 协作约束
 
 - 新功能先对齐 [v2-execution-roadmap.md](docs/v2-execution-roadmap.md) 的阶段顺序。
+- 生产化能力先对齐 [production-readiness-plan.md](docs/production-readiness-plan.md) 的阶段顺序和上线门槛。
 - 修改状态机、门禁、执行器前必须补测试。
 - Provider 只能返回结构化草稿，不直接推进数据库状态。
 - 平台负责状态、门禁、审计、权限、证据。
