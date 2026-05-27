@@ -8,9 +8,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.v2_router import v2_router
 from app.common.responses import HealthResponse
 from app.core.config import settings
-from app.core.db import init_db, is_sqlite_url
+from app.core.db import async_session_maker, init_db, is_sqlite_url
 from app.core.logging import setup_logging
 from app.core.exceptions import AppException
+from app.modules.auth.service import auth_service
 
 
 # Setup logging
@@ -25,6 +26,8 @@ async def lifespan(app: FastAPI):
     print(f"Environment: {settings.environment}")
     if is_sqlite_url(settings.database_url):
         await init_db()
+        async with async_session_maker() as session:
+            await auth_service.ensure_bootstrap_data(session)
         print("SQLite development database initialized")
     yield
     # Shutdown

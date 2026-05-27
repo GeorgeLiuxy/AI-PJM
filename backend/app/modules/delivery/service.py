@@ -64,6 +64,8 @@ class DeliveryService:
         title: str | None = None,
         requester_ref: str | None = None,
         context_payload: dict | None = None,
+        project_id: int | None = None,
+        created_by_user_id: int | None = None,
     ) -> DemandItem:
         demand = await delivery_repository.create_demand(
             db=db,
@@ -72,6 +74,8 @@ class DeliveryService:
             title=title or self._derive_title(raw_input),
             requester_ref=requester_ref,
             context_payload=context_payload,
+            project_id=project_id,
+            created_by_user_id=created_by_user_id,
         )
         await db.commit()
         return demand
@@ -87,11 +91,13 @@ class DeliveryService:
         db: AsyncSession,
         limit: int = 30,
         offset: int = 0,
+        project_ids: list[int] | None = None,
     ) -> list[DemandItem]:
         return await delivery_repository.list_demands(
             db=db,
             limit=min(max(limit, 1), 100),
             offset=max(offset, 0),
+            project_ids=project_ids,
         )
 
     async def get_spec_card(self, db: AsyncSession, spec_card_id: int) -> SpecCard:
@@ -130,12 +136,14 @@ class DeliveryService:
         statuses: list[str] | None = None,
         limit: int = 30,
         offset: int = 0,
+        project_ids: list[int] | None = None,
     ) -> list[ExecutionRun]:
         return await delivery_repository.list_execution_runs(
             db=db,
             statuses=statuses,
             limit=min(max(limit, 1), 100),
             offset=max(offset, 0),
+            project_ids=project_ids,
         )
 
     async def get_merge_request_record(

@@ -26,6 +26,7 @@ from app.modules.delivery.enums import (
 class DemandCreateRequest(BaseModel):
     """Create a demand item from raw business input."""
 
+    project_id: Optional[int] = None
     raw_input: str = Field(..., min_length=1, max_length=20000)
     source_type: str = Field(default="other", max_length=50)
     title: Optional[str] = Field(default=None, max_length=500)
@@ -37,6 +38,8 @@ class DemandResponse(BaseModel):
     """Demand item response."""
 
     id: int
+    project_id: Optional[int] = None
+    created_by_user_id: Optional[int] = None
     raw_input: str
     source_type: str
     title: Optional[str] = None

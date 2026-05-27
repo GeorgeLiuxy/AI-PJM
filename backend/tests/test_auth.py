@@ -1,0 +1,167 @@
+"""Auth and project access tests."""
+
+import pytest
+
+from app.core.config import settings
+from app.modules.auth.repository import auth_repository
+from app.modules.auth.security import hash_password
+
+
+@pytest.fixture()
+def auth_enabled(monkeypatch):
+    monkeypatch.setattr(settings, "auth_enabled", True)
+
+
+async def _create_user_with_project(
+    db_session,
+    *,
+    username: str,
+    password: str = "password123",
+    role: str = "operator",
+    project_key: str,
+    project_name: str,
+    project_role: str = "operator",
+):
+    user = await auth_repository.create_user(
+        db=db_session,
+        username=username,
+        display_name=username.title(),
+        password_hash=hash_password(password),
+        role=role,
+    )
+    project = await auth_repository.create_project(
+        db=db_session,
+        key=project_key,
+        name=project_name,
+    )
+    await auth_repository.create_project_member(
+        db=db_session,
+        user_id=user.id,
+        project_id=project.id,
+        role=project_role,
+    )
+    await db_session.commit()
+    return user, project
+
+
+async def _login(client, username: str, password: str = "password123") -> str:
+    response = await client.post(
+        "/api/v2/auth/login",
+        json={"username": username, "password": password},
+    )
+    assert response.status_code == 200
+    return response.json()["data"]["access_token"]
+
+
+@pytest.mark.asyncio
+async def test_auth_me_returns_local_principal_when_auth_disabled(client):
+    response = await client.get("/api/v2/auth/me")
+
+    assert response.status_code == 200
+    payload = response.json()["data"]
+    assert payload["auth_enabled"] is False
+    assert payload["role"] == "admin"
+
+
+@pytest.mark.asyncio
+async def test_delivery_requires_token_when_auth_enabled(client, auth_enabled):
+    response = await client.get("/api/v2/demands")
+
+    assert response.status_code == 401
+    assert response.json()["message"] == "Authentication required"
+
+
+@pytest.mark.asyncio
+async def test_operator_can_create_demand_in_own_project(client, db_session, auth_enabled):
+    _, project = await _create_user_with_project(
+        db_session,
+        username="operator",
+        project_key="alpha",
+        project_name="Alpha",
+    )
+    token = await _login(client, "operator")
+
+    response = await client.post(
+        "/api/v2/demands",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"raw_input": "Add a compact status badge.", "project_id": project.id},
+    )
+
+    assert response.status_code == 201
+    payload = response.json()["data"]
+    assert payload["project_id"] == project.id
+    assert payload["created_by_user_id"] is not None
+    assert payload["requester_ref"] == "operator"
+
+
+@pytest.mark.asyncio
+async def test_project_permissions_filter_delivery_records(client, db_session, auth_enabled):
+    _, alpha = await _create_user_with_project(
+        db_session,
+        username="alpha_user",
+        project_key="alpha",
+        project_name="Alpha",
+    )
+    _, beta = await _create_user_with_project(
+        db_session,
+        username="beta_user",
+        project_key="beta",
+        project_name="Beta",
+    )
+    alpha_token = await _login(client, "alpha_user")
+    beta_token = await _login(client, "beta_user")
+
+    created = await client.post(
+        "/api/v2/demands",
+        headers={"Authorization": f"Bearer {alpha_token}"},
+        json={"raw_input": "Alpha only change.", "project_id": alpha.id},
+    )
+    assert created.status_code == 201
+    demand_id = created.json()["data"]["id"]
+
+    list_response = await client.get(
+        "/api/v2/demands",
+        headers={"Authorization": f"Bearer {beta_token}"},
+    )
+    assert list_response.status_code == 200
+    assert list_response.json()["data"] == []
+
+    detail_response = await client.get(
+        f"/api/v2/demands/{demand_id}",
+        headers={"Authorization": f"Bearer {beta_token}"},
+    )
+    assert detail_response.status_code == 403
+
+    forbidden_create = await client.post(
+        "/api/v2/demands",
+        headers={"Authorization": f"Bearer {alpha_token}"},
+        json={"raw_input": "Cross project change.", "project_id": beta.id},
+    )
+    assert forbidden_create.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_viewer_can_read_but_cannot_create_demand(client, db_session, auth_enabled):
+    _, project = await _create_user_with_project(
+        db_session,
+        username="viewer",
+        role="viewer",
+        project_key="read",
+        project_name="Read Only",
+        project_role="viewer",
+    )
+    token = await _login(client, "viewer")
+
+    list_response = await client.get(
+        "/api/v2/demands",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert list_response.status_code == 200
+
+    create_response = await client.post(
+        "/api/v2/demands",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"raw_input": "Viewer should not write.", "project_id": project.id},
+    )
+    assert create_response.status_code == 403
+

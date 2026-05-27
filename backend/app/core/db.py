@@ -57,9 +57,10 @@ class Base(DeclarativeBase):
 def import_all_models() -> None:
     """Import all SQLAlchemy models so metadata is complete."""
 
+    from app.modules.auth import models as _auth_models
     from app.modules.delivery import models as _delivery_models
 
-    _ = (_delivery_models,)
+    _ = (_auth_models, _delivery_models)
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
@@ -87,6 +88,29 @@ async def init_db() -> None:
     import_all_models()
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        if is_sqlite_url(settings.database_url):
+            await _ensure_sqlite_schema_compat(conn)
+
+
+async def _ensure_sqlite_schema_compat(conn) -> None:
+    """Apply additive SQLite dev-schema fixes for existing local databases."""
+
+    result = await conn.exec_driver_sql("PRAGMA table_info(delivery_demand_items)")
+    columns = {row[1] for row in result.fetchall()}
+    if "project_id" not in columns:
+        await conn.exec_driver_sql("ALTER TABLE delivery_demand_items ADD COLUMN project_id INTEGER")
+    if "created_by_user_id" not in columns:
+        await conn.exec_driver_sql(
+            "ALTER TABLE delivery_demand_items ADD COLUMN created_by_user_id INTEGER"
+        )
+    await conn.exec_driver_sql(
+        "CREATE INDEX IF NOT EXISTS ix_delivery_demand_items_project_id "
+        "ON delivery_demand_items (project_id)"
+    )
+    await conn.exec_driver_sql(
+        "CREATE INDEX IF NOT EXISTS ix_delivery_demand_items_created_by_user_id "
+        "ON delivery_demand_items (created_by_user_id)"
+    )
 
 
 def utc_now() -> datetime:

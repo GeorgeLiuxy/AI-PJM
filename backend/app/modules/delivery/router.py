@@ -5,6 +5,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.responses import success_response
 from app.core.db import get_db
+from app.core.exceptions import BadRequestException, NotFoundException
+from app.modules.auth.dependencies import get_current_principal, require_capability
+from app.modules.auth.service import AuthPrincipal
+from app.modules.delivery.repository import delivery_repository
 from app.modules.delivery.schemas import (
     AutoRepairExecutionRequest,
     CodingTaskCreateRequest,
@@ -42,8 +46,15 @@ async def list_demands(
     limit: int = 30,
     offset: int = 0,
     db: AsyncSession = Depends(get_db),
+    principal: AuthPrincipal = Depends(get_current_principal),
 ):
-    demands = await delivery_service.list_demands(db, limit=limit, offset=offset)
+    require_capability(principal, "read")
+    demands = await delivery_service.list_demands(
+        db,
+        limit=limit,
+        offset=offset,
+        project_ids=principal.accessible_project_ids,
+    )
     return success_response(
         data=[DemandResponse.model_validate(demand).model_dump() for demand in demands],
         message="Success",
@@ -54,14 +65,19 @@ async def list_demands(
 async def create_demand(
     request: DemandCreateRequest,
     db: AsyncSession = Depends(get_db),
+    principal: AuthPrincipal = Depends(get_current_principal),
 ):
+    project_id = _resolve_create_project_id(principal, request.project_id)
+    require_capability(principal, "operate", project_id)
     demand = await delivery_service.create_demand(
         db=db,
         raw_input=request.raw_input,
         source_type=request.source_type,
         title=request.title,
-        requester_ref=request.requester_ref,
+        requester_ref=request.requester_ref or principal.username,
         context_payload=request.context_payload,
+        project_id=project_id,
+        created_by_user_id=principal.user_id,
     )
     return success_response(
         data=DemandResponse.model_validate(demand).model_dump(),
@@ -74,8 +90,10 @@ async def create_demand(
 async def get_demand(
     demand_id: int,
     db: AsyncSession = Depends(get_db),
+    principal: AuthPrincipal = Depends(get_current_principal),
 ):
     demand = await delivery_service.get_demand_detail(db, demand_id)
+    require_capability(principal, "read", demand.project_id)
     return success_response(
         data=DemandDetailResponse.model_validate(demand).model_dump(),
         message="Success",
@@ -87,7 +105,9 @@ async def record_manual_approval(
     demand_id: int,
     request: ManualApprovalRequest,
     db: AsyncSession = Depends(get_db),
+    principal: AuthPrincipal = Depends(get_current_principal),
 ):
+    await _require_demand_permission(db, demand_id, principal, "review")
     demand = await delivery_service.record_manual_approval(
         db=db,
         demand_id=demand_id,
@@ -106,7 +126,9 @@ async def generate_spec(
     demand_id: int,
     request: SpecGenerateRequest | None = None,
     db: AsyncSession = Depends(get_db),
+    principal: AuthPrincipal = Depends(get_current_principal),
 ):
+    await _require_demand_permission(db, demand_id, principal, "operate")
     payload = request or SpecGenerateRequest()
     spec = await delivery_service.generate_spec(
         db=db,
@@ -124,7 +146,9 @@ async def generate_spec(
 async def get_spec_card(
     spec_card_id: int,
     db: AsyncSession = Depends(get_db),
+    principal: AuthPrincipal = Depends(get_current_principal),
 ):
+    await _require_spec_permission(db, spec_card_id, principal, "read")
     spec = await delivery_service.get_spec_card(db, spec_card_id)
     return success_response(
         data=SpecCardResponse.model_validate(spec).model_dump(),
@@ -137,7 +161,9 @@ async def collect_repo_context(
     demand_id: int,
     request: RepoContextCreateRequest | None = None,
     db: AsyncSession = Depends(get_db),
+    principal: AuthPrincipal = Depends(get_current_principal),
 ):
+    await _require_demand_permission(db, demand_id, principal, "operate")
     payload = request or RepoContextCreateRequest()
     repo_context = await delivery_service.collect_repo_context(
         db=db,
@@ -155,7 +181,9 @@ async def collect_repo_context(
 async def get_repo_context(
     repo_context_id: int,
     db: AsyncSession = Depends(get_db),
+    principal: AuthPrincipal = Depends(get_current_principal),
 ):
+    await _require_repo_context_permission(db, repo_context_id, principal, "read")
     repo_context = await delivery_service.get_repo_context(db, repo_context_id)
     return success_response(
         data=RepoContextResponse.model_validate(repo_context).model_dump(),
@@ -168,7 +196,9 @@ async def analyze_impact(
     demand_id: int,
     request: ImpactAnalysisCreateRequest | None = None,
     db: AsyncSession = Depends(get_db),
+    principal: AuthPrincipal = Depends(get_current_principal),
 ):
+    await _require_demand_permission(db, demand_id, principal, "operate")
     payload = request or ImpactAnalysisCreateRequest()
     analysis = await delivery_service.analyze_impact(
         db=db,
@@ -186,7 +216,9 @@ async def analyze_impact(
 async def get_impact_analysis(
     impact_analysis_id: int,
     db: AsyncSession = Depends(get_db),
+    principal: AuthPrincipal = Depends(get_current_principal),
 ):
+    await _require_impact_permission(db, impact_analysis_id, principal, "read")
     analysis = await delivery_service.get_impact_analysis(db, impact_analysis_id)
     return success_response(
         data=ImpactAnalysisResponse.model_validate(analysis).model_dump(),
@@ -199,7 +231,9 @@ async def create_coding_task(
     spec_card_id: int,
     request: CodingTaskCreateRequest | None = None,
     db: AsyncSession = Depends(get_db),
+    principal: AuthPrincipal = Depends(get_current_principal),
 ):
+    await _require_spec_permission(db, spec_card_id, principal, "operate")
     payload = request or CodingTaskCreateRequest()
     task = await delivery_service.create_coding_task(
         db=db,
@@ -218,7 +252,9 @@ async def create_coding_task(
 async def get_coding_task(
     coding_task_id: int,
     db: AsyncSession = Depends(get_db),
+    principal: AuthPrincipal = Depends(get_current_principal),
 ):
+    await _require_coding_task_permission(db, coding_task_id, principal, "read")
     task = await delivery_service.get_coding_task(db, coding_task_id)
     return success_response(
         data=CodingTaskDetailResponse.model_validate(task).model_dump(),
@@ -230,7 +266,9 @@ async def get_coding_task(
 async def retry_coding_task_execution(
     coding_task_id: int,
     db: AsyncSession = Depends(get_db),
+    principal: AuthPrincipal = Depends(get_current_principal),
 ):
+    await _require_coding_task_permission(db, coding_task_id, principal, "operate")
     run = await delivery_service.retry_coding_task_execution(
         db=db,
         coding_task_id=coding_task_id,
@@ -246,7 +284,9 @@ async def auto_repair_coding_task_execution(
     coding_task_id: int,
     request: AutoRepairExecutionRequest | None = None,
     db: AsyncSession = Depends(get_db),
+    principal: AuthPrincipal = Depends(get_current_principal),
 ):
+    await _require_coding_task_permission(db, coding_task_id, principal, "operate")
     payload = request or AutoRepairExecutionRequest()
     runs = await delivery_service.auto_repair_coding_task_execution(
         db=db,
@@ -265,7 +305,9 @@ async def create_merge_request_record(
     coding_task_id: int,
     request: MergeRequestCreateRequest | None = None,
     db: AsyncSession = Depends(get_db),
+    principal: AuthPrincipal = Depends(get_current_principal),
 ):
+    await _require_coding_task_permission(db, coding_task_id, principal, "operate")
     payload = request or MergeRequestCreateRequest()
     record = await delivery_service.create_merge_request_record(
         db=db,
@@ -288,7 +330,9 @@ async def create_execution_run(
     coding_task_id: int,
     request: ExecutionRunCreateRequest | None = None,
     db: AsyncSession = Depends(get_db),
+    principal: AuthPrincipal = Depends(get_current_principal),
 ):
+    await _require_coding_task_permission(db, coding_task_id, principal, "operate")
     payload = request or ExecutionRunCreateRequest()
     run = await delivery_service.create_execution_run(
         db=db,
@@ -309,13 +353,16 @@ async def list_execution_runs(
     limit: int = 30,
     offset: int = 0,
     db: AsyncSession = Depends(get_db),
+    principal: AuthPrincipal = Depends(get_current_principal),
 ):
+    require_capability(principal, "read")
     status_filters = [item.strip() for item in statuses.split(",") if item.strip()] if statuses else None
     runs = await delivery_service.list_execution_runs(
         db=db,
         statuses=status_filters,
         limit=limit,
         offset=offset,
+        project_ids=principal.accessible_project_ids,
     )
     return success_response(
         data=[_execution_queue_item(run) for run in runs],
@@ -327,7 +374,9 @@ async def list_execution_runs(
 async def get_execution_run(
     execution_run_id: int,
     db: AsyncSession = Depends(get_db),
+    principal: AuthPrincipal = Depends(get_current_principal),
 ):
+    await _require_execution_run_permission(db, execution_run_id, principal, "read")
     run = await delivery_service.get_execution_run(db, execution_run_id)
     return success_response(
         data=ExecutionRunResponse.model_validate(run).model_dump(),
@@ -339,7 +388,9 @@ async def get_execution_run(
 async def get_merge_request_record(
     merge_request_id: int,
     db: AsyncSession = Depends(get_db),
+    principal: AuthPrincipal = Depends(get_current_principal),
 ):
+    await _require_merge_request_permission(db, merge_request_id, principal, "read")
     record = await delivery_service.get_merge_request_record(db, merge_request_id)
     return success_response(
         data=MergeRequestRecordResponse.model_validate(record).model_dump(),
@@ -352,7 +403,9 @@ async def record_merge_request_review(
     merge_request_id: int,
     request: MergeRequestReviewRequest,
     db: AsyncSession = Depends(get_db),
+    principal: AuthPrincipal = Depends(get_current_principal),
 ):
+    await _require_merge_request_permission(db, merge_request_id, principal, "review")
     record = await delivery_service.record_merge_request_review(
         db=db,
         merge_request_id=merge_request_id,
@@ -372,7 +425,9 @@ async def create_deploy_record(
     merge_request_id: int,
     request: DeployRecordCreateRequest | None = None,
     db: AsyncSession = Depends(get_db),
+    principal: AuthPrincipal = Depends(get_current_principal),
 ):
+    await _require_merge_request_permission(db, merge_request_id, principal, "operate")
     payload = request or DeployRecordCreateRequest()
     record = await delivery_service.create_deploy_record(
         db=db,
@@ -392,7 +447,9 @@ async def create_deploy_record(
 async def get_deploy_record(
     deploy_record_id: int,
     db: AsyncSession = Depends(get_db),
+    principal: AuthPrincipal = Depends(get_current_principal),
 ):
+    await _require_deploy_record_permission(db, deploy_record_id, principal, "read")
     record = await delivery_service.get_deploy_record(db, deploy_record_id)
     return success_response(
         data=DeployRecordResponse.model_validate(record).model_dump(),
@@ -405,7 +462,9 @@ async def record_verification(
     deploy_record_id: int,
     request: VerificationRecordCreateRequest,
     db: AsyncSession = Depends(get_db),
+    principal: AuthPrincipal = Depends(get_current_principal),
 ):
+    await _require_deploy_record_permission(db, deploy_record_id, principal, "review")
     record = await delivery_service.record_verification(
         db=db,
         deploy_record_id=deploy_record_id,
@@ -425,12 +484,127 @@ async def record_verification(
 async def dispatch_execution_run(
     execution_run_id: int,
     db: AsyncSession = Depends(get_db),
+    principal: AuthPrincipal = Depends(get_current_principal),
 ):
+    await _require_execution_run_permission(db, execution_run_id, principal, "operate")
     run = await delivery_service.dispatch_execution_run(db, execution_run_id)
     return success_response(
         data=ExecutionRunResponse.model_validate(run).model_dump(),
         message="Execution run dispatched",
     )
+
+
+def _resolve_create_project_id(principal: AuthPrincipal, requested_project_id: int | None) -> int | None:
+    if not principal.auth_enabled:
+        return requested_project_id
+    project_id = requested_project_id or principal.default_project_id
+    if project_id is None:
+        raise BadRequestException("A project is required before creating delivery work")
+    return project_id
+
+
+async def _require_demand_permission(
+    db: AsyncSession,
+    demand_id: int,
+    principal: AuthPrincipal,
+    capability: str,
+):
+    demand = await delivery_repository.get_demand(db, demand_id)
+    if not demand:
+        raise NotFoundException(f"Demand {demand_id} not found")
+    require_capability(principal, capability, demand.project_id)
+    return demand
+
+
+async def _require_spec_permission(
+    db: AsyncSession,
+    spec_card_id: int,
+    principal: AuthPrincipal,
+    capability: str,
+):
+    spec = await delivery_repository.get_spec_card(db, spec_card_id)
+    if not spec:
+        raise NotFoundException(f"Spec card {spec_card_id} not found")
+    await _require_demand_permission(db, spec.demand_id, principal, capability)
+    return spec
+
+
+async def _require_repo_context_permission(
+    db: AsyncSession,
+    repo_context_id: int,
+    principal: AuthPrincipal,
+    capability: str,
+):
+    repo_context = await delivery_repository.get_repo_context(db, repo_context_id)
+    if not repo_context:
+        raise NotFoundException(f"Repo context {repo_context_id} not found")
+    await _require_demand_permission(db, repo_context.demand_id, principal, capability)
+    return repo_context
+
+
+async def _require_impact_permission(
+    db: AsyncSession,
+    impact_analysis_id: int,
+    principal: AuthPrincipal,
+    capability: str,
+):
+    impact = await delivery_repository.get_impact_analysis(db, impact_analysis_id)
+    if not impact:
+        raise NotFoundException(f"Impact analysis {impact_analysis_id} not found")
+    await _require_demand_permission(db, impact.demand_id, principal, capability)
+    return impact
+
+
+async def _require_coding_task_permission(
+    db: AsyncSession,
+    coding_task_id: int,
+    principal: AuthPrincipal,
+    capability: str,
+):
+    task = await delivery_repository.get_coding_task(db, coding_task_id)
+    if not task:
+        raise NotFoundException(f"Coding task {coding_task_id} not found")
+    await _require_demand_permission(db, task.demand_id, principal, capability)
+    return task
+
+
+async def _require_execution_run_permission(
+    db: AsyncSession,
+    execution_run_id: int,
+    principal: AuthPrincipal,
+    capability: str,
+):
+    run = await delivery_repository.get_execution_run(db, execution_run_id)
+    if not run:
+        raise NotFoundException(f"Execution run {execution_run_id} not found")
+    await _require_coding_task_permission(db, run.coding_task_id, principal, capability)
+    return run
+
+
+async def _require_merge_request_permission(
+    db: AsyncSession,
+    merge_request_id: int,
+    principal: AuthPrincipal,
+    capability: str,
+):
+    record = await delivery_repository.get_merge_request_record(db, merge_request_id)
+    if not record:
+        raise NotFoundException(f"Merge request record {merge_request_id} not found")
+    await _require_coding_task_permission(db, record.coding_task_id, principal, capability)
+    return record
+
+
+async def _require_deploy_record_permission(
+    db: AsyncSession,
+    deploy_record_id: int,
+    principal: AuthPrincipal,
+    capability: str,
+):
+    record = await delivery_repository.get_deploy_record(db, deploy_record_id)
+    if not record:
+        raise NotFoundException(f"Deploy record {deploy_record_id} not found")
+    await _require_coding_task_permission(db, record.coding_task_id, principal, capability)
+    return record
 
 
 def _execution_queue_item(run):

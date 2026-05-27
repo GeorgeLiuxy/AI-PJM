@@ -4,6 +4,8 @@
 
 import type {
   ApiResponse,
+  AuthLoginResponse,
+  AuthUser,
   DeliveryCodingTask,
   DeliveryDemand,
   DeliveryDemandDetail,
@@ -18,18 +20,40 @@ import type {
 } from '../types';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8010';
+const AUTH_TOKEN_KEY = 'ai_pjm_auth_token';
+
+export function getAuthToken() {
+  return window.localStorage.getItem(AUTH_TOKEN_KEY);
+}
+
+export function setAuthToken(token: string | null) {
+  if (token) {
+    window.localStorage.setItem(AUTH_TOKEN_KEY, token);
+    return;
+  }
+  window.localStorage.removeItem(AUTH_TOKEN_KEY);
+}
 
 async function fetchAPI<T>(endpoint: string, options?: RequestInit): Promise<ApiResponse<T>> {
   const url = `${API_BASE_URL}${endpoint}`;
+  const headers = new Headers(options?.headers);
+  if (!headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json');
+  }
+  const token = getAuthToken();
+  if (token) {
+    headers.set('Authorization', `Bearer ${token}`);
+  }
+
   const response = await fetch(url, {
     ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      ...options?.headers,
-    },
+    headers,
   });
 
   if (!response.ok) {
+    if (response.status === 401) {
+      setAuthToken(null);
+    }
     const contentType = response.headers.get('content-type') || '';
     let message = response.statusText;
 
@@ -46,6 +70,16 @@ async function fetchAPI<T>(endpoint: string, options?: RequestInit): Promise<Api
 
   return response.json();
 }
+
+export const authApi = {
+  me: () => fetchAPI<AuthUser>('/api/v2/auth/me'),
+  login: (params: { username: string; password: string }) => {
+    return fetchAPI<AuthLoginResponse>('/api/v2/auth/login', {
+      method: 'POST',
+      body: JSON.stringify(params),
+    });
+  },
+};
 
 export const deliveryApi = {
   listDemands: (params: { limit?: number; offset?: number } = {}) => {
@@ -246,4 +280,4 @@ export const deliveryApi = {
   },
 };
 
-export default { deliveryApi };
+export default { authApi, deliveryApi };

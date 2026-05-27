@@ -31,6 +31,16 @@ class DemandItem(Base):
     __tablename__ = "delivery_demand_items"
 
     id: Mapped[int] = mapped_column(DB_BIGINT, primary_key=True, autoincrement=True)
+    project_id: Mapped[Optional[int]] = mapped_column(
+        DB_BIGINT,
+        ForeignKey("auth_projects.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    created_by_user_id: Mapped[Optional[int]] = mapped_column(
+        DB_BIGINT,
+        ForeignKey("auth_users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     raw_input: Mapped[str] = mapped_column(Text, nullable=False)
     source_type: Mapped[str] = mapped_column(String(50), nullable=False, default="other")
     title: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
@@ -78,6 +88,8 @@ class DemandItem(Base):
     )
 
     __table_args__ = (
+        Index("ix_delivery_demand_items_project_id", "project_id"),
+        Index("ix_delivery_demand_items_created_by_user_id", "created_by_user_id"),
         Index("ix_delivery_demand_items_status", "status"),
         Index("ix_delivery_demand_items_risk_level", "risk_level"),
         Index("ix_delivery_demand_items_created_at", "created_at"),

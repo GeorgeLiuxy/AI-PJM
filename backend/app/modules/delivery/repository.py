@@ -32,8 +32,12 @@ class DeliveryRepository:
         title: str | None = None,
         requester_ref: str | None = None,
         context_payload: dict | None = None,
+        project_id: int | None = None,
+        created_by_user_id: int | None = None,
     ) -> DemandItem:
         demand = DemandItem(
+            project_id=project_id,
+            created_by_user_id=created_by_user_id,
             raw_input=raw_input,
             source_type=source_type,
             title=title,
@@ -53,12 +57,20 @@ class DeliveryRepository:
         db: AsyncSession,
         limit: int = 30,
         offset: int = 0,
+        project_ids: list[int] | None = None,
     ) -> list[DemandItem]:
-        result = await db.execute(
+        query = (
             select(DemandItem)
             .order_by(DemandItem.updated_at.desc(), DemandItem.id.desc())
             .offset(offset)
             .limit(limit)
+        )
+        if project_ids is not None:
+            if not project_ids:
+                return []
+            query = query.where(DemandItem.project_id.in_(project_ids))
+        result = await db.execute(
+            query
         )
         return list(result.scalars().all())
 
@@ -235,6 +247,7 @@ class DeliveryRepository:
         statuses: list[str] | None = None,
         limit: int = 30,
         offset: int = 0,
+        project_ids: list[int] | None = None,
     ) -> list[ExecutionRun]:
         query = (
             select(ExecutionRun)
@@ -249,6 +262,14 @@ class DeliveryRepository:
         )
         if statuses:
             query = query.where(ExecutionRun.status.in_(statuses))
+        if project_ids is not None:
+            if not project_ids:
+                return []
+            query = (
+                query.join(CodingTask, CodingTask.id == ExecutionRun.coding_task_id)
+                .join(DemandItem, DemandItem.id == CodingTask.demand_id)
+                .where(DemandItem.project_id.in_(project_ids))
+            )
         result = await db.execute(query)
         return list(result.scalars().all())
 

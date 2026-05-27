@@ -29,6 +29,14 @@ class Settings(BaseSettings):
     database_url: str = "sqlite+aiosqlite:///./data/ai_pjm_dev.db"
     database_echo: bool = False
 
+    # Auth and project access
+    auth_enabled: bool = False
+    auth_bootstrap_admin_username: str = "admin"
+    auth_bootstrap_admin_password: str = ""
+    auth_bootstrap_admin_display_name: str = "Administrator"
+    auth_bootstrap_project_key: str = "default"
+    auth_bootstrap_project_name: str = "Default Project"
+
     # Delivery execution
     workspace_root: str = ""
     execution_worktree_root: str = ""

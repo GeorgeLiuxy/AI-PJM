@@ -31,6 +31,7 @@ AI PJM 是一个 AI 辅助工程交付编排平台。它不是通用项目管理
 - 本地 MR/PR 记录、评审门禁、测试环境记录和验收记录。
 - 执行队列可见性和基础并发上限保护。
 - Dify Provider 边界首版，可通过配置接入 Spec/Impact workflow。
+- 本地认证与项目权限首版：账号密码登录、Bearer Token、项目成员、角色权限、交付 API 权限保护。
 - 中文化交付工作台页面。
 - 前后端启动/关闭脚本。
 
@@ -40,7 +41,8 @@ AI PJM 是一个 AI 辅助工程交付编排平台。它不是通用项目管理
 - OpenAI Provider 尚未实现；Dify Provider 仍需生产联调、质量评估、降级策略和监控。
 - Codex CLI 首版已可用，但仍需继续做自动修复闭环、性能优化和生产化运维配置。本机 WindowsApps 下的 `codex.exe` 仍会返回 `Access is denied`，当前使用全局 npm 版 `@openai/codex`。
 - 当前 MR/PR、测试环境部署和验收是本地记录闭环；真实 GitLab/GitHub 创建、远端评审拉取、真实部署 Provider 仍待实现。
-- 生产级认证授权、项目权限、密钥管理、PostgreSQL、数据库迁移、后台 Worker、审计和监控仍待实现。
+- 认证授权和项目权限已有本地首版，仍需补齐企业 SSO、细粒度按钮权限、人工动作操作者落库和审计报表。
+- 密钥管理、PostgreSQL、数据库迁移、后台 Worker、审计和监控仍待实现。
 - 默认子 Agent 评审、多仓库编排、自动生产发布暂不做。
 
 后续功能执行顺序以 [v2-execution-roadmap.md](docs/v2-execution-roadmap.md) 为准；生产级落地以 [production-readiness-plan.md](docs/production-readiness-plan.md) 为准。
@@ -89,8 +91,18 @@ AI PJM 是一个 AI 辅助工程交付编排平台。它不是通用项目管理
 
 ```powershell
 cd backend
-python -m pytest tests/test_delivery_v2_units.py tests/test_delivery_v2.py tests/test_health.py -q
+python -m pytest tests/test_auth.py tests/test_delivery_v2_units.py tests/test_delivery_v2.py tests/test_health.py -q
 ```
+
+启用本地账号登录：
+
+```powershell
+cd backend
+$env:AUTH_ENABLED="true"
+$env:AUTH_BOOTSTRAP_ADMIN_PASSWORD="change-me-before-production"
+```
+
+首次启动 SQLite 开发库时会创建 `admin` 用户和默认项目。生产环境必须更换默认密码，并接入后续的密钥管理和审计能力。
 
 前端：
 

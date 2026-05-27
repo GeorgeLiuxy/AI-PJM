@@ -8,8 +8,32 @@ export interface ApiResponse<T> {
   data: T;
 }
 
+export interface AuthProject {
+  id: number;
+  key: string;
+  name: string;
+  role: string;
+}
+
+export interface AuthUser {
+  id: number | null;
+  username: string;
+  display_name: string;
+  role: string;
+  auth_enabled: boolean;
+  projects: AuthProject[];
+}
+
+export interface AuthLoginResponse {
+  access_token: string;
+  token_type: 'bearer';
+  user: AuthUser;
+}
+
 export interface DeliveryDemand {
   id: number;
+  project_id: number | null;
+  created_by_user_id: number | null;
   raw_input: string;
   source_type: string;
   title: string | null;

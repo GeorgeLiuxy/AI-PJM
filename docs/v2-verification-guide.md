@@ -535,7 +535,28 @@ confidence_score: number between 0 and 1
 
 If required configuration or required output fields are missing, the provider must fail clearly and must not silently advance the workflow.
 
-## 13. Slice-level Acceptance Criteria
+## 13. Auth and Project Access Verification
+
+Local development keeps auth disabled unless `AUTH_ENABLED=true`.
+
+To test local login and project permissions:
+
+```powershell
+cd backend
+$env:AUTH_ENABLED="true"
+$env:AUTH_BOOTSTRAP_ADMIN_PASSWORD="change-me-before-production"
+python -m pytest tests/test_auth.py -q
+```
+
+Expected behavior:
+
+- `/api/v2/auth/me` returns a local admin principal when auth is disabled.
+- When auth is enabled, delivery APIs reject unauthenticated requests with `401`.
+- A logged-in operator can create delivery work only inside accessible projects.
+- Project members cannot read or operate another project's delivery records.
+- Viewer role can read accessible work but cannot create new demand items.
+
+## 14. Slice-level Acceptance Criteria
 
 ### Slice 0: Baseline
 
@@ -621,11 +642,12 @@ To be added:
 - OpenAI provider.
 - Retry and fallback policy for transient provider failures.
 
-## 14. Regression Checklist
+## 15. Regression Checklist
 
 Before every larger change:
 
 - `python -m compileall app`
+- `python -m pytest tests/test_auth.py -q`
 - `python -m pytest tests/test_delivery_v2_units.py -q`
 - `python -m pytest tests/test_delivery_v2.py tests/test_health.py -q`
 - `npm run build` from `frontend/` when UI code changes
