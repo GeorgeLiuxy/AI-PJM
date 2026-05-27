@@ -15,6 +15,7 @@ from app.modules.auth.schemas import (
     AuthProjectCreateRequest,
     AuthProjectResponse,
     AuthUserCreatedResponse,
+    AuthUserListItemResponse,
     AuthUserResponse,
 )
 from app.modules.auth.service import AuthPrincipal, auth_service
@@ -42,6 +43,37 @@ async def login(request: AuthLoginRequest, db: AsyncSession = Depends(get_db)):
 @router.get("/me", response_model=dict)
 async def get_me(principal: AuthPrincipal = Depends(get_current_principal)):
     return success_response(data=_principal_response(principal).model_dump(), message="Success")
+
+
+@router.get("/projects", response_model=dict)
+async def list_projects(
+    limit: int = 100,
+    offset: int = 0,
+    db: AsyncSession = Depends(get_db),
+    principal: AuthPrincipal = Depends(get_current_principal),
+):
+    require_capability(principal, "admin")
+    projects = await auth_repository.list_projects(
+        db=db,
+        limit=min(max(limit, 1), 200),
+        offset=max(offset, 0),
+    )
+    return success_response(
+        data=[
+            AuthProjectResponse(
+                id=project.id,
+                key=project.key,
+                name=project.name,
+                role="owner",
+                status=project.status,
+                default_branch=project.default_branch,
+                repository_root=project.repository_root,
+                created_at=project.created_at,
+            ).model_dump()
+            for project in projects
+        ],
+        message="Success",
+    )
 
 
 @router.post("/projects", response_model=dict, status_code=status.HTTP_201_CREATED)
@@ -76,9 +108,32 @@ async def create_project(
             key=project.key,
             name=project.name,
             role="owner",
+            status=project.status,
+            default_branch=project.default_branch,
+            repository_root=project.repository_root,
+            created_at=project.created_at,
         ).model_dump(),
         message="Project created",
         code=201,
+    )
+
+
+@router.get("/users", response_model=dict)
+async def list_users(
+    limit: int = 100,
+    offset: int = 0,
+    db: AsyncSession = Depends(get_db),
+    principal: AuthPrincipal = Depends(get_current_principal),
+):
+    require_capability(principal, "admin")
+    users = await auth_repository.list_users(
+        db=db,
+        limit=min(max(limit, 1), 200),
+        offset=max(offset, 0),
+    )
+    return success_response(
+        data=[_managed_user_response(user).model_dump() for user in users],
+        message="Success",
     )
 
 
@@ -145,5 +200,32 @@ def _principal_response(principal: AuthPrincipal) -> AuthUserResponse:
                 role=project.role,
             )
             for project in principal.projects
+        ],
+    )
+
+
+def _managed_user_response(user) -> AuthUserListItemResponse:
+    return AuthUserListItemResponse(
+        id=user.id,
+        username=user.username,
+        display_name=user.display_name,
+        email=user.email,
+        role=user.role,
+        status=user.status,
+        auth_enabled=True,
+        created_at=user.created_at,
+        projects=[
+            AuthProjectResponse(
+                id=membership.project.id,
+                key=membership.project.key,
+                name=membership.project.name,
+                role=membership.role,
+                status=membership.project.status,
+                default_branch=membership.project.default_branch,
+                repository_root=membership.project.repository_root,
+                created_at=membership.project.created_at,
+            )
+            for membership in user.memberships
+            if membership.project
         ],
     )

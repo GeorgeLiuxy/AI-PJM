@@ -13,6 +13,10 @@ class AuthProjectResponse(BaseModel):
     key: str
     name: str
     role: str
+    status: str = "active"
+    default_branch: str = "main"
+    repository_root: Optional[str] = None
+    created_at: Optional[datetime] = None
 
 
 class AuthUserResponse(BaseModel):
@@ -67,3 +71,10 @@ class AuthUserCreatedResponse(AuthUserResponse):
 
     created_at: datetime
 
+
+class AuthUserListItemResponse(AuthUserResponse):
+    """Managed user response for admin pages."""
+
+    email: Optional[str] = None
+    status: str
+    created_at: datetime

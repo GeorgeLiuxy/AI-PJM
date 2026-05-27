@@ -557,6 +557,8 @@ Expected behavior:
 - Viewer role can read accessible work but cannot create new demand items.
 - Key human or sensitive actions create project-scoped audit events.
 - Project members cannot read audit events from another project.
+- Admin users can list projects and users.
+- The access management page can load project and user data without `failed to fetch`.
 
 ## 14. Slice-level Acceptance Criteria
 

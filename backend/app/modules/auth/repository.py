@@ -83,6 +83,35 @@ class AuthRepository:
         result = await db.execute(select(AuthProject).where(AuthProject.id == project_id))
         return result.scalar_one_or_none()
 
+    async def list_projects(
+        self,
+        db: AsyncSession,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[AuthProject]:
+        result = await db.execute(
+            select(AuthProject)
+            .order_by(AuthProject.created_at.desc(), AuthProject.id.desc())
+            .offset(offset)
+            .limit(limit)
+        )
+        return list(result.scalars().all())
+
+    async def list_users(
+        self,
+        db: AsyncSession,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[AuthUser]:
+        result = await db.execute(
+            select(AuthUser)
+            .options(selectinload(AuthUser.memberships).selectinload(AuthProjectMember.project))
+            .order_by(AuthUser.created_at.desc(), AuthUser.id.desc())
+            .offset(offset)
+            .limit(limit)
+        )
+        return list(result.scalars().all())
+
     async def list_projects_for_user(self, db: AsyncSession, user_id: int) -> list[AuthProject]:
         result = await db.execute(
             select(AuthProject)
@@ -142,4 +171,3 @@ class AuthRepository:
 
 
 auth_repository = AuthRepository()
-

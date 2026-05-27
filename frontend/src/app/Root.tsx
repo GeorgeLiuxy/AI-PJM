@@ -6,6 +6,7 @@ import type { AuthUser } from './types';
 
 const navItems = [
   { to: '/', label: '交付工作台' },
+  { to: '/admin/access', label: '权限管理' },
 ];
 
 export default function Root() {

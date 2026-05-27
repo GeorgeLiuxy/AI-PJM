@@ -167,6 +167,55 @@ async def test_viewer_can_read_but_cannot_create_demand(client, db_session, auth
 
 
 @pytest.mark.asyncio
+async def test_admin_can_list_projects_and_users(client, db_session, auth_enabled):
+    _, project = await _create_user_with_project(
+        db_session,
+        username="admin_user",
+        role="admin",
+        project_key="admin-project",
+        project_name="Admin Project",
+        project_role="owner",
+    )
+    token = await _login(client, "admin_user")
+
+    projects_response = await client.get(
+        "/api/v2/auth/projects",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert projects_response.status_code == 200
+    projects = projects_response.json()["data"]
+    assert projects[0]["id"] == project.id
+    assert projects[0]["key"] == "admin-project"
+
+    users_response = await client.get(
+        "/api/v2/auth/users",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert users_response.status_code == 200
+    users = users_response.json()["data"]
+    assert users[0]["username"] == "admin_user"
+    assert users[0]["projects"][0]["role"] == "owner"
+
+
+@pytest.mark.asyncio
+async def test_non_admin_cannot_list_managed_users(client, db_session, auth_enabled):
+    await _create_user_with_project(
+        db_session,
+        username="plain_operator",
+        project_key="plain-project",
+        project_name="Plain Project",
+    )
+    token = await _login(client, "plain_operator")
+
+    response = await client.get(
+        "/api/v2/auth/users",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 403
+
+
+@pytest.mark.asyncio
 async def test_delivery_actions_create_project_scoped_audit_events(client, db_session, auth_enabled):
     _, alpha = await _create_user_with_project(
         db_session,

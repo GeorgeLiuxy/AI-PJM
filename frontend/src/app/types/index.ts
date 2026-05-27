@@ -13,6 +13,10 @@ export interface AuthProject {
   key: string;
   name: string;
   role: string;
+  status: string;
+  default_branch: string;
+  repository_root: string | null;
+  created_at: string | null;
 }
 
 export interface AuthUser {
@@ -22,6 +26,12 @@ export interface AuthUser {
   role: string;
   auth_enabled: boolean;
   projects: AuthProject[];
+}
+
+export interface AuthManagedUser extends AuthUser {
+  email: string | null;
+  status: string;
+  created_at: string;
 }
 
 export interface AuthLoginResponse {

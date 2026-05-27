@@ -5,6 +5,8 @@
 import type {
   ApiResponse,
   AuthLoginResponse,
+  AuthManagedUser,
+  AuthProject,
   AuthUser,
   DeliveryAuditEvent,
   DeliveryCodingTask,
@@ -76,6 +78,33 @@ export const authApi = {
   me: () => fetchAPI<AuthUser>('/api/v2/auth/me'),
   login: (params: { username: string; password: string }) => {
     return fetchAPI<AuthLoginResponse>('/api/v2/auth/login', {
+      method: 'POST',
+      body: JSON.stringify(params),
+    });
+  },
+  listProjects: () => fetchAPI<AuthProject[]>('/api/v2/auth/projects'),
+  createProject: (params: {
+    key: string;
+    name: string;
+    repository_root?: string | null;
+    default_branch?: string;
+  }) => {
+    return fetchAPI<AuthProject>('/api/v2/auth/projects', {
+      method: 'POST',
+      body: JSON.stringify(params),
+    });
+  },
+  listUsers: () => fetchAPI<AuthManagedUser[]>('/api/v2/auth/users'),
+  createUser: (params: {
+    username: string;
+    password: string;
+    display_name: string;
+    email?: string | null;
+    role?: string;
+    project_id?: number | null;
+    project_role?: string;
+  }) => {
+    return fetchAPI<AuthManagedUser>('/api/v2/auth/users', {
       method: 'POST',
       body: JSON.stringify(params),
     });
