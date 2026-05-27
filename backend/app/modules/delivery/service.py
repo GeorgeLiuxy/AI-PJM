@@ -38,6 +38,7 @@ from app.modules.delivery.models import (
 from app.modules.delivery.merge_requests import get_merge_request_client
 from app.modules.delivery.providers import WorkflowProvider, get_workflow_provider
 from app.modules.delivery.providers.dify import DifyWorkflowProvider
+from app.modules.delivery.redaction import redact_text, redact_value
 from app.modules.delivery.repository import delivery_repository
 from app.modules.secrets.service import secret_store_service
 
@@ -1104,7 +1105,7 @@ class DeliveryService:
             message="Execution dispatch started.",
             event_json={
                 "executor_type": run.executor_type,
-                "required_checks": task.required_checks_json,
+                "required_checks": redact_value(task.required_checks_json),
             },
         )
         await db.commit()
@@ -1127,6 +1128,9 @@ class DeliveryService:
             else CodingTaskStatus.BLOCKED
         )
         existing_evidence = run.evidence_json or {}
+        safe_summary = redact_text(result.summary)
+        safe_evidence = redact_value(result.evidence)
+        safe_existing_evidence = redact_value(existing_evidence)
         finished_at = utc_now()
 
         await delivery_repository.update_execution_run(
@@ -1137,10 +1141,10 @@ class DeliveryService:
             worktree_path=result.evidence.get("workspace_root"),
             branch_name=result.evidence.get("branch_name"),
             commit_sha=result.evidence.get("commit_sha"),
-            result_summary=result.summary,
+            result_summary=safe_summary,
             evidence_json={
-                "execution_allowed": existing_evidence,
-                "dispatch": result.evidence,
+                "execution_allowed": safe_existing_evidence,
+                "dispatch": safe_evidence,
             },
         )
         await delivery_repository.update_coding_task_status(db, task, task_status)
@@ -1150,8 +1154,8 @@ class DeliveryService:
                 db=db,
                 execution_run_id=run.id,
                 level=level,
-                message=message,
-                event_json=event_json,
+                message=redact_text(message),
+                event_json=redact_value(event_json) if event_json is not None else None,
             )
 
         await delivery_repository.create_gate_check(
@@ -1159,8 +1163,8 @@ class DeliveryService:
             demand_id=demand.id,
             gate_type=GateType.SELF_TEST_PASSED,
             status=GateStatus.PASSED if result.succeeded else GateStatus.FAILED,
-            reason=result.summary,
-            evidence_json=result.evidence,
+            reason=safe_summary,
+            evidence_json=safe_evidence,
         )
 
         await db.commit()

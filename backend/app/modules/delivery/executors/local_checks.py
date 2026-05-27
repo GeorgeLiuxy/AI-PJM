@@ -16,6 +16,7 @@ from app.modules.delivery.executors.base import (
     ExecutionDispatchResult,
 )
 from app.modules.delivery.models import CodingTask, ExecutionRun
+from app.modules.delivery.redaction import redact_text, redact_value
 
 
 @dataclass
@@ -282,7 +283,7 @@ class LocalChecksExecutor:
         return [executable, *args]
 
     def _tail(self, text: str | bytes | None, limit: int = 4000) -> str:
-        text = self._coerce_text(text)
+        text = redact_text(self._coerce_text(text))
         text = text.strip()
         if len(text) <= limit:
             return text
@@ -296,16 +297,18 @@ class LocalChecksExecutor:
         return value
 
     def _check_to_dict(self, result: CheckResult) -> dict:
-        return {
-            "command": result.command,
-            "cwd": result.cwd,
-            "status": result.status,
-            "exit_code": result.exit_code,
-            "duration_ms": result.duration_ms,
-            "stdout_tail": result.stdout_tail,
-            "stderr_tail": result.stderr_tail,
-            "error": result.error,
-        }
+        return redact_value(
+            {
+                "command": result.command,
+                "cwd": result.cwd,
+                "status": result.status,
+                "exit_code": result.exit_code,
+                "duration_ms": result.duration_ms,
+                "stdout_tail": result.stdout_tail,
+                "stderr_tail": result.stderr_tail,
+                "error": result.error,
+            }
+        )
 
     def _workspace_evidence(
         self,

@@ -1,5 +1,6 @@
 """Delivery v2 API tests."""
 
+import json
 import os
 import shutil
 import subprocess
@@ -620,6 +621,61 @@ async def test_delivery_v2_failed_checks_record_evidence_and_can_retry(client, g
     retry_detail = retry_detail_response.json()["data"]
     assert retry_detail["coding_tasks"][0]["status"] == "blocked"
     assert len(retry_detail["coding_tasks"][0]["execution_runs"]) == 2
+
+
+@pytest.mark.asyncio
+async def test_delivery_v2_dispatch_redacts_sensitive_evidence_and_logs(client, generated_worktrees):
+    raw_token = "secret-token-1234567890"
+    failing_check = f"python -m pytest tests/not_exists_for_delivery_failure.py --token {raw_token} -q"
+    demand_response = await client.post(
+        "/api/v2/demands",
+        json={
+            "raw_input": "Add a compact execution status badge to the delivery dashboard.",
+            "source_type": "new_requirement",
+        },
+    )
+    assert demand_response.status_code == 201
+    demand_id = demand_response.json()["data"]["id"]
+
+    spec_response = await client.post(
+        f"/api/v2/demands/{demand_id}/spec",
+        json={"auto_approve_low_risk": True},
+    )
+    assert spec_response.status_code == 201
+    spec_data = spec_response.json()["data"]
+
+    task_response = await client.post(
+        f"/api/v2/spec-cards/{spec_data['id']}/coding-task",
+        json={
+            "allowed_paths": ["backend/app"],
+            "required_checks": [failing_check],
+        },
+    )
+    assert task_response.status_code == 201
+    task_data = task_response.json()["data"]
+
+    run_response = await client.post(
+        f"/api/v2/coding-tasks/{task_data['id']}/runs",
+        json={"executor_type": "codex", "trigger_mode": "manual"},
+    )
+    assert run_response.status_code == 201
+    run_data = run_response.json()["data"]
+
+    dispatch_response = await client.post(f"/api/v2/execution-runs/{run_data['id']}/dispatch")
+    assert dispatch_response.status_code == 200
+    failed_run = dispatch_response.json()["data"]
+    remember_worktree(failed_run, generated_worktrees)
+
+    persisted_text = json.dumps(
+        {
+            "evidence_json": failed_run["evidence_json"],
+            "result_summary": failed_run["result_summary"],
+            "logs": failed_run["logs"],
+        },
+        ensure_ascii=False,
+    )
+    assert raw_token not in persisted_text
+    assert "[REDACTED]" in persisted_text
 
 
 @pytest.mark.asyncio

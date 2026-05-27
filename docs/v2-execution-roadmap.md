@@ -277,7 +277,7 @@ V2 主链路已经完成本地 MVP 闭环，下一步应转入生产化基础建
 
 1. 完成文档口径清理，让 README、路线图、蓝图、交互说明和生产化计划一致。
 2. 收尾 P1：细化业务角色、补齐审计报表聚合，并准备企业 SSO 接入。
-3. 完善 SecretStore，先让 GitLab/Dify/OpenAI/部署 Provider 按项目安全读取凭证，并补齐 Vault/KMS、健康检查和轮换策略。
+3. 完善 SecretStore。当前已补执行日志和执行证据脱敏；下一步让 GitLab/Dify/OpenAI/部署 Provider 按项目安全读取凭证，并补齐 Vault/KMS、健康检查和轮换策略。
 4. 引入数据库迁移体系，并准备 PostgreSQL 生产路径。
 5. 把执行从 HTTP 请求中拆到后台 Worker 和可靠队列。
 6. 在权限、密钥和队列稳定后，再接真实 GitLab/GitHub MR、真实测试部署和生产级 Dify/OpenAI。

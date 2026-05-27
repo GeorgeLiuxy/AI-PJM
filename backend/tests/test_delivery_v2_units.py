@@ -5,13 +5,15 @@ import pytest
 from app.core.config import settings
 from app.core.exceptions import AIServiceException
 from app.modules.auth.repository import auth_repository
-from app.modules.delivery.executors.local_checks import WorktreeChecksExecutor
+from app.modules.delivery.executors.base import CheckResult
+from app.modules.delivery.executors.local_checks import LocalChecksExecutor, WorktreeChecksExecutor
 from app.modules.delivery.enums import CodingTaskStatus, DeliveryRiskLevel, GateStatus, SpecStatus
 from app.modules.delivery.gates import gate_engine
 from app.modules.delivery.models import DemandItem, RepoContext
 from app.modules.delivery.providers.dify import DifyWorkflowProvider
 from app.modules.delivery.providers.factory import get_workflow_provider
 from app.modules.delivery.providers.local import LocalWorkflowProvider
+from app.modules.delivery.redaction import REDACTED, redact_text, redact_value
 from app.modules.delivery.repository import delivery_repository
 from app.modules.delivery.service import DeliveryService, delivery_service
 from app.modules.secrets.service import secret_store_service
@@ -62,6 +64,68 @@ def test_delivery_v2_execution_gate_blocks_draft_task():
 
     assert decision.status == GateStatus.MANUAL_REQUIRED
     assert decision.evidence["coding_task_status"] == CodingTaskStatus.DRAFT
+
+
+def test_delivery_redacts_sensitive_text_patterns():
+    raw = (
+        "Authorization: Bearer sk-test-abcdefghijklmnopqrstuvwxyz\n"
+        "DIFY_API_KEY=project-dify-key-123456\n"
+        "codex exec --token local-token-123456 --password bad-password\n"
+        "https://dify.local/run?access_token=access-token-123456&x=1\n"
+        "glpat-abcdefghijklmnopqrstuvwxyz"
+    )
+
+    redacted = redact_text(raw)
+
+    assert "sk-test-abcdefghijklmnopqrstuvwxyz" not in redacted
+    assert "project-dify-key-123456" not in redacted
+    assert "local-token-123456" not in redacted
+    assert "bad-password" not in redacted
+    assert "access-token-123456" not in redacted
+    assert "glpat-abcdefghijklmnopqrstuvwxyz" not in redacted
+    assert REDACTED in redacted
+
+
+def test_delivery_redacts_sensitive_json_values_recursively():
+    payload = {
+        "api_key": "project-dify-key",
+        "api_key_secret_name": "dify_api_key",
+        "nested": {
+            "command": "codex exec --api-key sk-proj-abcdefghijklmnopqrstuvwxyz",
+            "stdout_tail": "token=local-token-123456",
+        },
+        "items": ["Authorization: Bearer bearer-token-1234567890"],
+    }
+
+    redacted = redact_value(payload)
+
+    assert redacted["api_key"] == REDACTED
+    assert redacted["api_key_secret_name"] == "dify_api_key"
+    assert "sk-proj-abcdefghijklmnopqrstuvwxyz" not in redacted["nested"]["command"]
+    assert "local-token-123456" not in redacted["nested"]["stdout_tail"]
+    assert "bearer-token-1234567890" not in redacted["items"][0]
+
+
+def test_local_check_result_evidence_is_redacted():
+    executor = LocalChecksExecutor()
+    result = CheckResult(
+        command="python -m pytest --api-key sk-proj-abcdefghijklmnopqrstuvwxyz",
+        cwd="C:/repo",
+        status="failed",
+        exit_code=1,
+        duration_ms=12,
+        stdout_tail=executor._tail("Authorization: Bearer bearer-token-1234567890"),
+        stderr_tail=executor._tail("password=bad-password"),
+        error="token=local-token-123456",
+    )
+
+    evidence = executor._check_to_dict(result)
+
+    assert "sk-proj-abcdefghijklmnopqrstuvwxyz" not in evidence["command"]
+    assert "bearer-token-1234567890" not in evidence["stdout_tail"]
+    assert "bad-password" not in evidence["stderr_tail"]
+    assert "local-token-123456" not in evidence["error"]
+    assert REDACTED in evidence["command"]
 
 
 def test_delivery_v2_repo_context_gate_uses_confidence_threshold():
