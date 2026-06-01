@@ -1,6 +1,6 @@
 # AI PJM 生产级落地计划
 
-本文档用于约束 AI PJM 从本地 MVP 走向生产可用的实施路径。目标不是做企业治理平台，也不是堆功能，而是让平台真实降低 AI 辅助研发交付成本、减少人工搬运、保留关键安全控制，并能被团队长期稳定使用。
+本文档用于约束 AI PJM 从本地 MVP 走向生产可用的实施路径。目标不是做企业治理平台，也不是堆功能，而是让平台真实降低 AI 辅助研发交付成本、减少人工搬运、保留关键安全控制，并能被团队长期稳定使用。Codex 编排优先参考 [symphony-integration-plan.md](symphony-integration-plan.md)，避免重复自研 worker、workspace 和 daemon 能力。
 
 如果本文档与聊天讨论冲突，以本文档为准；如果实施优先级变化，先更新本文档，再改代码。
 
@@ -80,7 +80,7 @@ AI PJM 的生产级目标：
 - 密钥和 Token 已有本地加密存储、健康检查和过期提示首版，Dify API Key 已接入项目级消费；尚未接 Vault/KMS、集中轮换策略和 GitLab/OpenAI/部署 Provider 消费链路。
 - 没有真实 GitLab/GitHub MR 创建和评论同步。
 - 没有真实测试环境部署 Provider。
-- 没有后台 worker 和可靠任务队列。
+- 没有 Symphony Bridge、后台 worker 和可靠任务队列。
 - 没有数据库迁移体系和生产数据库方案。
 - 没有完整审计、告警和运行指标。
 - Dify/OpenAI 没有完成生产联调和质量评估。
@@ -113,6 +113,7 @@ AI 不允许直接决定：
 
 - `WorkflowProvider`: Dify/OpenAI/本地规则。
 - `ExecutionExecutor`: Codex/其他编码执行器。
+- `SymphonyBridge`: Codex 编排和后台执行桥。
 - `MergeRequestClient`: GitLab/GitHub。
 - `DeployClient`: 测试环境部署系统。
 - `SecretStore`: 密钥管理。
@@ -286,13 +287,16 @@ AI 不允许直接决定：
 
 - 生产数据不可演进，升级时容易手工改库。
 
-### P4：后台 worker 和可靠队列
+### P4：Symphony Bridge 和可靠执行队列
 
-目标：让长任务脱离页面请求，支持稳定批量执行。
+目标：复用 OpenAI Symphony 的 Codex 编排模式，让长任务脱离页面请求，支持稳定批量执行。
 
 实施内容：
 
-- 引入后台 worker。
+- 按 [symphony-integration-plan.md](symphony-integration-plan.md) 完成 S0-S3。
+- 增加 AI PJM internal execution bridge API：claim、heartbeat、event、complete。
+- 增加 `SymphonyBridgeExecutor`，支持 `executor_type = symphony`。
+- 引入 Symphony daemon 或兼容 adapter。
 - 执行任务入队，不在 HTTP 请求里长时间运行。
 - 支持排队、运行、成功、失败、取消、暂停、恢复、超时。
 - 支持最大并发、项目级并发、任务级超时。
@@ -301,8 +305,9 @@ AI 不允许直接决定：
 
 建议技术方案：
 
-- 简化方案：数据库队列表 + 后台进程轮询。
-- 生产方案：Redis Queue、Celery、RQ、Dramatiq 或同类队列。
+- 短期方案：AI PJM internal API + Symphony Bridge Executor。
+- 中期方案：Symphony Native Adapter 直接消费 AI PJM `ExecutionRun`。
+- 备用方案：仅借鉴 Symphony app-server 调用方式，自研最小 worker。
 
 验收标准：
 
@@ -310,6 +315,7 @@ AI 不允许直接决定：
 - 同一任务不会被多个 worker 重复执行。
 - worker 重启后可恢复或标记异常任务。
 - 队列积压、失败、超时有明确状态。
+- Symphony 回写事件和执行证据不会绕过 AI PJM 门禁。
 
 不做风险：
 
@@ -515,17 +521,17 @@ AI 不允许直接决定：
 优先级最高。完成后可在小团队、低风险任务中试点。
 
 1. P0 文档口径清理。
-2. P2 密钥安全：Provider 按项目读取凭证，密钥不外泄。
-3. P6 真实 GitLab/GitHub MR：自测通过后自动创建真实 MR。
-4. P7 真实测试环境部署：MR 后能进入可验证环境。
-5. P4 后台 worker：长任务脱离 HTTP 请求。
+2. P4 Symphony Bridge：复用 Symphony 编排 Codex 执行，长任务脱离 HTTP 请求。
+3. P2 密钥安全：Provider 按项目读取凭证，密钥不外泄。
+4. P6 真实 GitLab/GitHub MR：自测通过后自动创建真实 MR。
+5. P7 真实测试环境部署：MR 后能进入可验证环境。
 6. P3 PostgreSQL 和迁移：支撑试点数据可升级、可恢复。
 
 阶段 A 验收：
 
 - 最小角色模型可支撑多人试点。
 - 密钥不泄露。
-- 任务可后台执行。
+- 任务可通过 Symphony Bridge 后台执行。
 - 低风险任务可自动创建真实 MR。
 - 所有人工动作可审计。
 
@@ -571,7 +577,7 @@ AI 不允许直接决定：
 - 密钥不在前端、不在普通日志、不在证据明文中。
 - 真实 MR/PR 集成可用。
 - 可触发真实测试环境或记录可验收的外部测试地址。
-- 后台 worker 可恢复。
+- Symphony Bridge / worker 可恢复。
 - 使用 migration 管理数据库结构。
 - 高风险任务有人工审批门禁。
 - 必要检查失败不能推进。
@@ -593,7 +599,7 @@ AI 不允许直接决定：
 | MR | 可创建真实 MR/PR |
 | MR | 阻塞评论可同步回平台 |
 | 部署 | 可触发真实测试环境部署 |
-| 队列 | worker 重启后任务状态可恢复 |
+| 队列 | Symphony Bridge / worker 重启后任务状态可恢复 |
 | 数据库 | migration 可从空库创建完整结构 |
 | 验收 | 验收失败不会进入完成状态 |
 | 审计 | 人工审批、部署、验收都有操作者 |
@@ -625,12 +631,12 @@ AI 不允许直接决定：
 下一步建议按以下顺序实施：
 
 1. 校准文档口径，明确项目不是企业治理平台。
-2. 完善 SecretStore Provider 消费：GitLab/OpenAI/部署 Provider 按项目读取凭证。
-3. 实现 GitLab MR Client：自测通过后自动创建真实 MR，并记录远端链接和失败原因。
-4. 接入真实测试环境部署 Provider：MR 后能生成可验收地址。
-5. 把执行从 HTTP 请求迁移到后台 worker。
-6. 接入 PostgreSQL 和 Alembic，保证结构可升级。
-7. 增强高风险动作二次确认和任务级责任字段。
-8. 增加最小可观测性：任务失败原因、队列积压、凭证失效。
+2. 按 `docs/symphony-integration-plan.md` 做 S0：拉通 Symphony 本地运行和 Codex 调用方式。
+3. 做 S1/S2：实现 AI PJM internal execution bridge API 和 `SymphonyBridgeExecutor`。
+4. 完善 SecretStore Provider 消费：GitLab/OpenAI/部署 Provider 按项目读取凭证。
+5. 做 S3/S4：用 Symphony 执行低风险任务，并创建真实 GitLab/GitHub MR。
+6. 做 S5：接入真实测试环境部署 Provider。
+7. 做 S6：补 PostgreSQL、队列恢复和最小可观测性。
+8. 增强高风险动作二次确认和任务级责任字段。
 
 这 8 项完成后，AI PJM 才具备小团队低风险任务试点价值。企业 SSO、复杂角色、审计报表平台化不作为试点前置条件。

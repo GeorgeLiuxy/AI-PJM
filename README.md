@@ -31,6 +31,7 @@ AI PJM 是一个 AI 辅助工程交付编排平台。它不是通用项目管理
 - 本地 MR/PR 记录、评审门禁、测试环境记录和验收记录。
 - 执行队列可见性和基础并发上限保护。
 - Dify Provider 边界首版，可通过配置接入 Spec/Impact workflow，并优先按项目从 SecretStore 读取 `dify_api_key`。
+- Symphony 融合方案已落地到文档，后续 Codex 编排优先采用 AI PJM 控制平面 + Symphony 执行编排引擎。
 - 本地认证与项目权限首版：账号密码登录、Bearer Token、项目成员、角色权限、交付 API 权限保护。
 - 权限管理页面首版：查看项目/用户、创建项目、创建本地用户、维护用户状态/角色、重置密码并调整项目角色。
 - 前端按钮级权限首版：工作台动作和权限管理入口按角色显示或拦截。
@@ -49,6 +50,7 @@ AI PJM 是一个 AI 辅助工程交付编排平台。它不是通用项目管理
 - OpenAI Provider 尚未实现；Dify Provider 仍需生产联调、质量评估、降级策略和监控。
 - Codex CLI 首版已可用，但仍需继续做自动修复闭环、性能优化和生产化运维配置。本机 WindowsApps 下的 `codex.exe` 仍会返回 `Access is denied`，当前使用全局 npm 版 `@openai/codex`。
 - 当前 MR/PR、测试环境部署和验收是本地记录闭环；真实 GitLab/GitHub 创建、远端评审拉取、真实部署 Provider 仍待实现，这是近期主线。
+- Symphony Bridge 尚未实现；当前执行仍是 AI PJM 本地执行器路径，后续按融合方案接入后台 daemon/workspace 编排。
 - 认证授权和项目权限保留最小角色模型；企业 SSO、复杂业务角色和审计报表平台化不作为近期主线。
 - 密钥管理已有本地加密存储、健康检查和执行证据脱敏首版，Dify API Key 已可按项目读取；近期重点是让 GitLab/OpenAI/部署 Provider 按项目消费凭证。
 - PostgreSQL、数据库迁移、后台 Worker 和最小可观测性仍待实现。
@@ -60,6 +62,7 @@ AI PJM 是一个 AI 辅助工程交付编排平台。它不是通用项目管理
 
 - [V2 后续执行路线图](docs/v2-execution-roadmap.md)
 - [生产级落地计划](docs/production-readiness-plan.md)
+- [AI PJM + OpenAI Symphony 融合方案](docs/symphony-integration-plan.md)
 - [V2 交付蓝图](docs/v2-delivery-blueprint.md)
 - [V2 实现计划](docs/v2-implementation-plan.md)
 - [V2 交互流程](docs/v2-interaction-flow.md)

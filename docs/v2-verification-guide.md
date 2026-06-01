@@ -661,8 +661,8 @@ Plaintext secret values never appear after save or refresh.
 
 To be added:
 
-- Production Codex CLI or SDK command and runner operations are finalized for the target environment.
-- Background worker dispatches queued execution outside HTTP request handling.
+- Production Codex CLI, SDK command, or Symphony Bridge runner operations are finalized for the target environment.
+- Symphony Bridge / background worker dispatches queued execution outside HTTP request handling.
 
 ### Slice 5: Delivery
 
@@ -687,7 +687,7 @@ To be added:
 
 To be added:
 
-- Background worker dispatches queued runs automatically.
+- Symphony Bridge / background worker dispatches queued runs automatically.
 - Cancel, pause, and resume controls are available.
 - Resource usage limits are visible in the workbench.
 

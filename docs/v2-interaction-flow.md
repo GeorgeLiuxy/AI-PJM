@@ -133,7 +133,7 @@ GET  /health                                  # Health check
 - Configurable Codex command hook can run before checks when enabled
 - Safe command execution (pytest, npm build, compileall)
 - Execution evidence collection and persistence
-- Support for future Codex worker integration
+- Support for future Symphony Bridge / Codex worker integration
 
 ### Automation Status (Complete)
 - ✅ Low-risk auto-approval flow
@@ -178,7 +178,7 @@ Current operator console includes:
 - Failed check output and failure details.
 
 ### Future Enhancements (Not Production-Ready)
-- ⏳ Background worker and reliable queue for production execution
+- ⏳ Symphony Bridge and reliable queue for production execution
 - ⏳ Production-grade Codex runner configuration and operations
 - ⏳ Real GitLab/GitHub MR/PR creation and remote review polling
 - ⏳ Real test deployment provider
@@ -225,7 +225,7 @@ Current automation:
 Not production-ready yet:
 
 - Production-ready Codex CLI or SDK command configuration and runner operations.
-- Background automatic worker for queued execution.
+- Symphony Bridge / background automatic worker for queued execution.
 - Real GitLab/GitHub MR/PR creation and remote review synchronization.
 - Real test deployment provider.
 - Verification evidence archival and audit hardening.

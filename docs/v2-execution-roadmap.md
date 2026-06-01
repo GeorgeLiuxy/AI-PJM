@@ -28,7 +28,7 @@
 - 中文化交付工作台页面。
 - 前后端启动/关闭脚本。
 
-当前是“本地 MVP 闭环”，不是完整生产级系统。近期生产化缺口集中在主链路：真实 GitLab/GitHub MR、真实部署 Provider、后台 Worker、生产数据库和 Provider 凭证消费。企业 SSO、复杂业务角色和审计报表平台化不是近期主线。
+当前是“本地 MVP 闭环”，不是完整生产级系统。近期生产化缺口集中在主链路：Symphony Bridge、真实 GitLab/GitHub MR、真实部署 Provider、生产数据库和 Provider 凭证消费。企业 SSO、复杂业务角色和审计报表平台化不是近期主线。
 
 ## 2. 总体目标
 
@@ -56,6 +56,7 @@
 - 每个阶段完成后必须有测试、页面验证和证据记录。
 - 不为了追求“全自动”绕过安全门禁。
 - 不把权限、审计、组织治理做成主产品；它们只作为 AI 交付链路的必要护栏。
+- Codex 编排优先参考 `docs/symphony-integration-plan.md`，避免重复自研 worker、workspace 和 daemon。
 - 不先做复杂多 Agent、知识图谱、多仓库编排，除非主闭环已经稳定。
 
 ## 4. 阶段计划
@@ -200,15 +201,18 @@
 - 人工验收结果进入证据链。
 - 验收失败能回到修复流程或标记阻塞。
 
-### P7：队列化与多任务并行
+### P7：Symphony Bridge、队列化与多任务并行
 
-目标：在主闭环稳定后，再做批量任务能力。
+目标：通过 Symphony Bridge 把执行从 HTTP 请求迁移到后台编排，并支撑批量任务能力。
 
-状态：首版已实现执行队列可见性和并发上限保护。当前可查询最近执行记录、按状态筛选，并在页面“队列”页签查看；`EXECUTION_MAX_CONCURRENCY` 会阻止超过上限的 dispatch，让执行记录保持 queued。后台自动 worker、取消、暂停、恢复和真正并行调度仍待实现。
+状态：首版已实现执行队列可见性和并发上限保护。当前可查询最近执行记录、按状态筛选，并在页面“队列”页签查看；`EXECUTION_MAX_CONCURRENCY` 会阻止超过上限的 dispatch，让执行记录保持 queued。Symphony Bridge、后台自动 worker、取消、暂停、恢复和真正并行调度仍待实现。
 
 任务：
 
+- 按 `docs/symphony-integration-plan.md` 完成 S0-S3。
 - 引入任务队列和运行中状态管理。（执行记录队列查询已完成）
+- 增加 internal claim、heartbeat、event、complete API。
+- 增加 `SymphonyBridgeExecutor`，支持 `executor_type = symphony`。
 - 限制最大并发数，避免本地 CPU/内存被打满。（dispatch 并发保护已完成）
 - 支持取消、暂停、恢复。（待实现）
 - 页面增加多任务执行看板。（队列页签已完成）
@@ -218,6 +222,7 @@
 - 多个需求可排队执行。
 - worktree、分支、日志互相隔离。
 - 资源限制可配置。
+- Symphony 回写结果后仍由 AI PJM 执行门禁判断。
 
 ### P8：Dify/OpenAI Provider 集成
 
@@ -278,11 +283,11 @@ V2 主链路已经完成本地 MVP 闭环，下一步应转入生产化基础建
 推荐顺序：
 
 1. 完成文档口径清理，让 README、路线图、蓝图、交互说明和生产化计划一致。
-2. 完善 SecretStore Provider 消费：让 GitLab/OpenAI/部署 Provider 按项目安全读取凭证。
-3. 接真实 GitLab/GitHub MR：自测通过后自动创建 MR，并同步远端链接和失败原因。
-4. 接真实测试环境部署 Provider：MR 后能生成可验收地址。
-5. 把执行从 HTTP 请求中拆到后台 Worker 和可靠队列。
-6. 引入数据库迁移体系，并准备 PostgreSQL 生产路径。
-7. 再做生产级 Dify/OpenAI 质量评估和产品化交互。
+2. 按 `docs/symphony-integration-plan.md` 做 S0：拉通 Symphony 本地运行和 Codex 调用方式。
+3. 做 S1/S2：实现 AI PJM internal execution bridge API 和 `SymphonyBridgeExecutor`。
+4. 完善 SecretStore Provider 消费：让 GitLab/OpenAI/部署 Provider 按项目安全读取凭证。
+5. 做 S3/S4：用 Symphony 执行低风险任务，并创建真实 GitLab/GitHub MR。
+6. 做 S5：接真实测试环境部署 Provider，MR 后能生成可验收地址。
+7. 再补 PostgreSQL/Alembic、队列恢复、生产级 Dify/OpenAI 质量评估和产品化交互。
 
 原因：生产使用时最大的风险不是缺少复杂组织治理，而是主链路仍需人工搬运、真实 MR/部署没有打通、执行和证据不够可靠。先补这些直接影响交付效率的能力，平台才能真实减少人工介入。

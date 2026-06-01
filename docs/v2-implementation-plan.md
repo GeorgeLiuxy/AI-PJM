@@ -156,7 +156,7 @@ Gate:
 
 Goal: make queued and running execution attempts visible and enforce a basic local concurrency limit.
 
-Status: queue query, queue page, and dispatch concurrency guard are implemented. Automatic background workers and lifecycle controls are pending.
+Status: queue query, queue page, and dispatch concurrency guard are implemented. Symphony Bridge, automatic background workers, and lifecycle controls are pending. See `docs/symphony-integration-plan.md`.
 
 Backend:
 
@@ -184,7 +184,7 @@ Backend:
 
 ## Explicit Deferrals
 
-- Background multi-task parallel worker.
+- Symphony Bridge / background multi-task parallel worker.
 - Cancel, pause, and resume controls.
 - Sub-agent review by default.
 - Multi-repository orchestration.
