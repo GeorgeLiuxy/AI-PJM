@@ -145,13 +145,32 @@ python -m pytest tests/test_delivery_v2_units.py tests/test_delivery_v2.py tests
 
 ## 7. 下一步
 
-S2 不应把 Symphony 执行塞回现有 HTTP dispatch 长请求。下一步应该实现一个独立 worker/adapter：
+S2 不应把 Symphony 执行塞回现有 HTTP dispatch 长请求。当前已经增加一个最小命令行 worker：
+
+```text
+backend/scripts/symphony_worker.py
+```
+
+它负责：
 
 - 轮询 `/internal/symphony/execution-runs`
 - claim 后读取 task package
-- 调用真实 Symphony/Codex runner
+- 调用本地 runner command
 - 周期性 heartbeat
 - 事件流写回 events
 - required checks 完成后调用 complete
 
 如果真实 Symphony 本地 clone 仍不稳定，可以先实现一个最小 `symphony-worker` 命令行适配器，按相同 API 合同跑通本地 Codex 命令，再替换底层执行引擎。
+
+示例：
+
+```powershell
+cd backend
+$env:SYMPHONY_BRIDGE_TOKEN="dev-bridge-token"
+python scripts/symphony_worker.py `
+  --api-base-url http://127.0.0.1:8010/api/v2 `
+  --workspace "D:\projects\AI PJM\backend" `
+  --runner-command "python -m compileall app"
+```
+
+后续接真实 Symphony 时，优先把 `--runner-command` 替换为 Symphony/Codex 的本地执行入口；不要让前端页面或 `/dispatch` HTTP 请求承担长任务执行。
