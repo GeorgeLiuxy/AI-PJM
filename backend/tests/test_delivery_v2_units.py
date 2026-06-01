@@ -1,6 +1,7 @@
 """Delivery v2 service rule tests that do not require a database."""
 
 import sys
+import subprocess
 
 import pytest
 
@@ -19,7 +20,7 @@ from app.modules.delivery.redaction import REDACTED, redact_text, redact_value
 from app.modules.delivery.repository import delivery_repository
 from app.modules.delivery.service import DeliveryService, delivery_service
 from app.modules.secrets.service import secret_store_service
-from scripts.symphony_worker import Worker, quote_arg
+from scripts.symphony_worker import Worker, quote_arg, tail
 
 
 def test_delivery_v2_low_risk_auto_approval_rule():
@@ -199,6 +200,48 @@ def test_symphony_worker_formats_quoted_runner_placeholders(tmp_path):
     assert f"--workspace {quote_arg(str(tmp_path / 'workspace with spaces'))}" in formatted
     assert f"--prompt {quote_arg(str(tmp_path / 'prompt with spaces.md'))}" in formatted
     assert f"--raw {tmp_path / 'package with spaces.json'}" in formatted
+
+
+def test_symphony_worker_records_command_timeout(tmp_path, monkeypatch):
+    class FakeBridgeClient:
+        def __init__(self):
+            self.posts = []
+
+        def post(self, path, payload):
+            self.posts.append((path, payload))
+            return {"data": {}}
+
+    def fake_run(*args, **kwargs):
+        raise subprocess.TimeoutExpired(
+            cmd=args[0],
+            timeout=1,
+            output=b"\xffstdout",
+            stderr=b"\xffstderr",
+        )
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    worker = Worker(
+        client=FakeBridgeClient(),
+        worker_id="worker-unit",
+        workspace=tmp_path,
+        runtime_dir=tmp_path / ".runtime",
+        runner_command="",
+        timeout_seconds=1,
+        lease_seconds=60,
+        skip_required_checks=False,
+    )
+
+    result = worker._run_command(7, "example command", "runner_command")
+
+    assert result.status == "failed"
+    assert result.exit_code == -1
+    assert result.error == "Timed out after 1 seconds."
+    assert "stdout" in result.stdout_tail
+    assert "stderr" in result.stderr_tail
+
+
+def test_symphony_worker_tail_decodes_bytes():
+    assert "text" in tail(b"\xfftext")
 
 
 def test_local_check_result_evidence_is_redacted():

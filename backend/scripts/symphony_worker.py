@@ -37,6 +37,7 @@ class CommandResult:
     duration_ms: int
     stdout_tail: str
     stderr_tail: str
+    error: str | None = None
 
 
 class BridgeClient:
@@ -252,35 +253,67 @@ class Worker:
         self._event(run_id, "info", f"{command_type} started.", {"command": command})
         cwd = self._command_cwd(command) if command_type == "required_check" else self.workspace
         start = time.perf_counter()
-        result = subprocess.run(
-            command,
-            cwd=cwd,
-            shell=True,
-            text=True,
-            capture_output=True,
-            timeout=self.timeout_seconds,
-            check=False,
-        )
-        duration_ms = int((time.perf_counter() - start) * 1000)
-        status = "passed" if result.returncode == 0 else "failed"
-        command_result = CommandResult(
-            command=command,
-            command_type=command_type,
-            cwd=str(cwd),
-            status=status,
-            exit_code=result.returncode,
-            duration_ms=duration_ms,
-            stdout_tail=tail(result.stdout),
-            stderr_tail=tail(result.stderr),
-        )
+        try:
+            result = subprocess.run(
+                command,
+                cwd=cwd,
+                shell=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                capture_output=True,
+                timeout=self.timeout_seconds,
+                check=False,
+            )
+            duration_ms = int((time.perf_counter() - start) * 1000)
+            status = "passed" if result.returncode == 0 else "failed"
+            command_result = CommandResult(
+                command=command,
+                command_type=command_type,
+                cwd=str(cwd),
+                status=status,
+                exit_code=result.returncode,
+                duration_ms=duration_ms,
+                stdout_tail=tail(result.stdout),
+                stderr_tail=tail(result.stderr),
+            )
+        except subprocess.TimeoutExpired as exc:
+            command_result = self._timeout_result(
+                command=command,
+                command_type=command_type,
+                cwd=cwd,
+                started=start,
+                exc=exc,
+            )
         self._event(
             run_id,
-            "info" if result.returncode == 0 else "error",
-            f"{command_type} {status}.",
+            "info" if command_result.exit_code == 0 else "error",
+            f"{command_type} {command_result.status}.",
             command_result.__dict__,
         )
         self._heartbeat(run_id)
         return command_result
+
+    def _timeout_result(
+        self,
+        *,
+        command: str,
+        command_type: str,
+        cwd: Path,
+        started: float,
+        exc: subprocess.TimeoutExpired,
+    ) -> CommandResult:
+        return CommandResult(
+            command=command,
+            command_type=command_type,
+            cwd=str(cwd),
+            status="failed",
+            exit_code=-1,
+            duration_ms=int((time.perf_counter() - started) * 1000),
+            stdout_tail=tail(exc.stdout),
+            stderr_tail=tail(exc.stderr),
+            error=f"Timed out after {self.timeout_seconds} seconds.",
+        )
 
     def _command_cwd(self, command: str) -> Path:
         normalized = command.strip().lower().split()
@@ -418,9 +451,13 @@ class Worker:
                     "worker_id": self.worker_id,
                     "status": "failed",
                     "summary": f"Worker failed: {exc}",
+                    "worktree_path": str(self.workspace),
+                    "branch_name": self._git_output(["rev-parse", "--abbrev-ref", "HEAD"]),
+                    "commit_sha": self._git_output(["rev-parse", "HEAD"]),
                     "evidence": {
                         "worker_id": self.worker_id,
                         "workspace": str(self.workspace),
+                        "changed_files": self._git_changed_files(),
                         "command_results": [result.__dict__ for result in command_results],
                         "error": str(exc),
                     },
@@ -430,10 +467,19 @@ class Worker:
             print(f"Failed to write completion error for run {run_id}: {complete_error}", file=sys.stderr)
 
 
-def tail(value: str) -> str:
-    if len(value) <= TAIL_LIMIT:
-        return value
-    return value[-TAIL_LIMIT:]
+def tail(value: str | bytes | None) -> str:
+    text = coerce_text(value)
+    if len(text) <= TAIL_LIMIT:
+        return text
+    return text[-TAIL_LIMIT:]
+
+
+def coerce_text(value: str | bytes | None) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return value
 
 
 def format_list(value: Any) -> list[str]:

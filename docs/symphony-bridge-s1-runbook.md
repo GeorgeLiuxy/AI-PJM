@@ -30,6 +30,27 @@ SYMPHONY_BRIDGE_TOKEN=<内部 worker token>
 SYMPHONY_BRIDGE_DEFAULT_LEASE_SECONDS=300
 ```
 
+### Symphony Bridge 环境配置项
+
+这些配置只影响内部 Symphony Bridge API 或可选的本地 worker。修改
+`backend/.env` 后需要重启后端进程；修改 worker 环境变量后需要重启 worker。
+
+| 配置项 | 默认值 | 作用 |
+| --- | --- | --- |
+| `SYMPHONY_BRIDGE_TOKEN` | 空 | 后端内部接口鉴权 token。为空时内部 Symphony Bridge API 不接受请求；worker 请求必须通过 `X-Symphony-Bridge-Token` 发送同值。 |
+| `SYMPHONY_BRIDGE_DEFAULT_LEASE_SECONDS` | `300` | claim 或 heartbeat 未显式传入 `lease_seconds` 时，后端写入的默认租约秒数。 |
+| `AI_PJM_API_BASE_URL` | `http://127.0.0.1:8010/api/v2` | `backend/scripts/symphony_worker.py` 连接的 AI PJM API 根地址，需要包含 `/api/v2`。 |
+| `SYMPHONY_WORKER_ID` | `symphony-worker-<随机后缀>` | worker 标识，会写入 execution evidence，建议生产或长期运行环境使用稳定值。 |
+| `SYMPHONY_WORKSPACE` | 当前工作目录 | worker 运行 runner command 和 required checks 的工作区。建议使用仓库根目录，便于按仓库相对路径回写 changed files。 |
+| `SYMPHONY_WORKER_RUNTIME_DIR` | `.runtime/symphony-worker` | worker 保存 task package 和 prompt 文件的本地运行目录。 |
+| `SYMPHONY_RUNNER_COMMAND` | 空 | 可选本地执行命令模板。支持 `{run_id}`、`{workspace}`、`{workspace_q}`、`{task_package_file}`、`{task_package_file_q}`、`{task_prompt_file}`、`{task_prompt_file_q}`。 |
+| `SYMPHONY_WORKER_COMMAND_TIMEOUT_SECONDS` | `1800` | worker 执行 runner command 和 required checks 时，每条本地命令的超时时间。 |
+| `SYMPHONY_WORKER_LEASE_SECONDS` | `2100` | worker claim 和 heartbeat 时请求的租约秒数。默认比命令超时多 300 秒。 |
+| `SYMPHONY_WORKER_POLL_SECONDS` | `5` | worker 使用 `--loop` 时，队列为空后的轮询间隔秒数。 |
+
+命令行参数优先级高于 worker 环境变量；后端运行时只读取
+`SYMPHONY_BRIDGE_TOKEN` 和 `SYMPHONY_BRIDGE_DEFAULT_LEASE_SECONDS`。
+
 已实现接口：
 
 ```text
