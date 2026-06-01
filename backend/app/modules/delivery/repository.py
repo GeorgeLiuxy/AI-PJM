@@ -2,7 +2,9 @@
 
 from typing import Optional
 
-from sqlalchemy import func, select
+from datetime import datetime
+
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -245,6 +247,7 @@ class DeliveryRepository:
         self,
         db: AsyncSession,
         statuses: list[str] | None = None,
+        executor_types: list[str] | None = None,
         limit: int = 30,
         offset: int = 0,
         project_ids: list[int] | None = None,
@@ -262,6 +265,8 @@ class DeliveryRepository:
         )
         if statuses:
             query = query.where(ExecutionRun.status.in_(statuses))
+        if executor_types:
+            query = query.where(ExecutionRun.executor_type.in_(executor_types))
         if project_ids is not None:
             if not project_ids:
                 return []
@@ -459,6 +464,31 @@ class DeliveryRepository:
         db.add(log)
         await db.flush()
         return log
+
+    async def claim_execution_run(
+        self,
+        db: AsyncSession,
+        execution_run_id: int,
+        started_at: datetime,
+        result_summary: str,
+        evidence_json: dict,
+    ) -> bool:
+        result = await db.execute(
+            update(ExecutionRun)
+            .where(
+                ExecutionRun.id == execution_run_id,
+                ExecutionRun.status == "queued",
+            )
+            .values(
+                status="running",
+                started_at=started_at,
+                result_summary=result_summary,
+                evidence_json=evidence_json,
+                updated_at=started_at,
+            )
+        )
+        await db.flush()
+        return result.rowcount == 1
 
     async def create_merge_request_record(
         self,

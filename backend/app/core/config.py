@@ -53,6 +53,8 @@ class Settings(BaseSettings):
     execution_auto_repair_max_attempts: int = 1
     execution_max_concurrency: int = 1
     merge_request_default_target_branch: str = "main"
+    symphony_bridge_token: str = ""
+    symphony_bridge_default_lease_seconds: int = 300
 
     # AI API (reserved)
     anthropic_api_key: str = ""

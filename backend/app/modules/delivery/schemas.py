@@ -1,7 +1,7 @@
 """Delivery v2 request and response schemas."""
 
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -285,6 +285,61 @@ class ExecutionRunQueueItemResponse(ExecutionRunResponse):
     demand_id: int
     demand_title: Optional[str] = None
     risk_level: Optional[DeliveryRiskLevel] = None
+
+
+class SymphonyBridgeClaimRequest(BaseModel):
+    """Claim a queued Symphony execution run."""
+
+    worker_id: str = Field(..., min_length=1, max_length=200)
+    lease_seconds: int | None = Field(default=None, ge=30, le=3600)
+
+
+class SymphonyBridgeHeartbeatRequest(BaseModel):
+    """Refresh a worker lease for a Symphony execution run."""
+
+    worker_id: str = Field(..., min_length=1, max_length=200)
+    lease_seconds: int | None = Field(default=None, ge=30, le=3600)
+
+
+class SymphonyBridgeEventRequest(BaseModel):
+    """Append a structured event from a Symphony worker."""
+
+    worker_id: str = Field(..., min_length=1, max_length=200)
+    level: ExecutionLogLevel = ExecutionLogLevel.INFO
+    message: str = Field(..., min_length=1, max_length=4000)
+    event_json: dict[str, Any] = Field(default_factory=dict)
+
+
+class SymphonyBridgeCompleteRequest(BaseModel):
+    """Complete a Symphony execution run."""
+
+    worker_id: str = Field(..., min_length=1, max_length=200)
+    status: Literal["succeeded", "failed"]
+    summary: str = Field(..., min_length=1, max_length=4000)
+    evidence: dict[str, Any] = Field(default_factory=dict)
+    worktree_path: Optional[str] = Field(default=None, max_length=1000)
+    branch_name: Optional[str] = Field(default=None, max_length=500)
+    commit_sha: Optional[str] = Field(default=None, max_length=100)
+
+
+class SymphonyBridgeTaskPackageResponse(BaseModel):
+    """Task package consumed by an external Symphony worker."""
+
+    run_id: int
+    coding_task_id: int
+    demand_id: int
+    demand_title: str
+    risk_level: DeliveryRiskLevel
+    task_title: str
+    task_prompt: str
+    allowed_paths: list[str]
+    forbidden_actions: list[str]
+    required_checks: list[str]
+    expected_evidence: list[str]
+    acceptance_criteria: list[str] = Field(default_factory=list)
+    repo_context_summary: Optional[str] = None
+    impact_summary: Optional[str] = None
+    execution_evidence: dict[str, Any] = Field(default_factory=dict)
 
 
 class MergeRequestRecordResponse(BaseModel):

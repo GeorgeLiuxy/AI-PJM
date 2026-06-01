@@ -157,6 +157,103 @@ async def create_review_passed_merge_request(client, generated_worktrees) -> tup
 
 
 @pytest.mark.asyncio
+async def test_symphony_bridge_claim_event_heartbeat_and_complete(client, monkeypatch):
+    monkeypatch.setattr(settings, "symphony_bridge_token", "bridge-token")
+    monkeypatch.setattr(settings, "symphony_bridge_default_lease_seconds", 120)
+
+    task_data = await create_ready_coding_task(client, allowed_paths=["backend/app"])
+    run_response = await client.post(
+        f"/api/v2/coding-tasks/{task_data['id']}/runs",
+        json={"executor_type": "symphony", "trigger_mode": "background"},
+    )
+    assert run_response.status_code == 201
+    run_data = run_response.json()["data"]
+
+    missing_token_response = await client.get("/api/v2/internal/symphony/execution-runs")
+    assert missing_token_response.status_code == 401
+
+    headers = {"X-Symphony-Bridge-Token": "bridge-token"}
+    queue_response = await client.get("/api/v2/internal/symphony/execution-runs", headers=headers)
+    assert queue_response.status_code == 200
+    queue_items = queue_response.json()["data"]
+    assert [item["id"] for item in queue_items] == [run_data["id"]]
+
+    package_response = await client.get(
+        f"/api/v2/internal/symphony/execution-runs/{run_data['id']}/task-package",
+        headers=headers,
+    )
+    assert package_response.status_code == 200
+    package = package_response.json()["data"]
+    assert package["run_id"] == run_data["id"]
+    assert package["coding_task_id"] == task_data["id"]
+    assert package["required_checks"] == ["python -m compileall app"]
+
+    claim_response = await client.post(
+        f"/api/v2/internal/symphony/execution-runs/{run_data['id']}/claim",
+        json={"worker_id": "worker-a", "lease_seconds": 90},
+        headers=headers,
+    )
+    assert claim_response.status_code == 200
+    claimed = claim_response.json()["data"]
+    assert claimed["status"] == ExecutionRunStatus.RUNNING
+    assert claimed["evidence_json"]["symphony_bridge"]["worker_id"] == "worker-a"
+    assert claimed["evidence_json"]["symphony_bridge"]["lease_seconds"] == 90
+
+    duplicate_claim_response = await client.post(
+        f"/api/v2/internal/symphony/execution-runs/{run_data['id']}/claim",
+        json={"worker_id": "worker-b"},
+        headers=headers,
+    )
+    assert duplicate_claim_response.status_code == 409
+
+    event_response = await client.post(
+        f"/api/v2/internal/symphony/execution-runs/{run_data['id']}/events",
+        json={
+            "worker_id": "worker-a",
+            "level": "info",
+            "message": "Codex started with token=local-token-123456",
+            "event_json": {"api_key": "sk-test-abcdefghijklmnopqrstuvwxyz"},
+        },
+        headers=headers,
+    )
+    assert event_response.status_code == 200
+    event_payload = json.dumps(event_response.json()["data"], ensure_ascii=False)
+    assert "local-token-123456" not in event_payload
+    assert "sk-test-abcdefghijklmnopqrstuvwxyz" not in event_payload
+
+    heartbeat_response = await client.post(
+        f"/api/v2/internal/symphony/execution-runs/{run_data['id']}/heartbeat",
+        json={"worker_id": "worker-a", "lease_seconds": 180},
+        headers=headers,
+    )
+    assert heartbeat_response.status_code == 200
+    assert heartbeat_response.json()["data"]["evidence_json"]["symphony_bridge"]["lease_seconds"] == 180
+
+    complete_response = await client.post(
+        f"/api/v2/internal/symphony/execution-runs/{run_data['id']}/complete",
+        json={
+            "worker_id": "worker-a",
+            "status": "succeeded",
+            "summary": "Required checks passed.",
+            "evidence": {
+                "changed_files": ["backend/app/modules/delivery/symphony_bridge.py"],
+                "checks": [{"command": "python -m pytest", "status": "passed"}],
+                "api_key": "sk-test-abcdefghijklmnopqrstuvwxyz",
+            },
+            "worktree_path": "D:/projects/AI PJM/.runtime/worktrees/example",
+            "branch_name": "codex/example",
+            "commit_sha": "abc123",
+        },
+        headers=headers,
+    )
+    assert complete_response.status_code == 200
+    completed = complete_response.json()["data"]
+    assert completed["status"] == ExecutionRunStatus.SUCCEEDED
+    assert completed["worktree_path"].endswith("/.runtime/worktrees/example")
+    assert completed["evidence_json"]["dispatch"]["api_key"] == "[REDACTED]"
+
+
+@pytest.mark.asyncio
 async def test_delivery_v2_demand_to_coding_task(client, generated_worktrees):
     demand_response = await client.post(
         "/api/v2/demands",
