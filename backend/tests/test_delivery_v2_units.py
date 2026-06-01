@@ -19,7 +19,7 @@ from app.modules.delivery.redaction import REDACTED, redact_text, redact_value
 from app.modules.delivery.repository import delivery_repository
 from app.modules.delivery.service import DeliveryService, delivery_service
 from app.modules.secrets.service import secret_store_service
-from scripts.symphony_worker import Worker
+from scripts.symphony_worker import Worker, quote_arg
 
 
 def test_delivery_v2_low_risk_auto_approval_rule():
@@ -164,12 +164,41 @@ def test_symphony_worker_runs_required_checks_and_completes(tmp_path):
     assert complete_payload["status"] == "succeeded"
     result = complete_payload["evidence"]["command_results"][0]
     assert result["command"] == command
+    assert result["command_type"] == "required_check"
     assert result["status"] == "passed"
     assert result["cwd"] == str(tmp_path)
     prompt = (tmp_path / ".runtime" / "7" / "task-prompt.md").read_text(encoding="utf-8")
     assert "## Allowed Paths" in prompt
     assert "- backend/app" in prompt
     assert command in prompt
+
+
+def test_symphony_worker_formats_quoted_runner_placeholders(tmp_path):
+    worker = Worker(
+        client=None,
+        worker_id="worker-unit",
+        workspace=tmp_path / "workspace with spaces",
+        runtime_dir=tmp_path / ".runtime",
+        runner_command=(
+            "runner --workspace {workspace_q} --prompt {task_prompt_file_q} "
+            "--raw {task_package_file}"
+        ),
+        timeout_seconds=30,
+        lease_seconds=60,
+        skip_required_checks=False,
+    )
+
+    formatted = worker._format_command(
+        7,
+        {
+            "task_package_file": str(tmp_path / "package with spaces.json"),
+            "task_prompt_file": str(tmp_path / "prompt with spaces.md"),
+        },
+    )
+
+    assert f"--workspace {quote_arg(str(tmp_path / 'workspace with spaces'))}" in formatted
+    assert f"--prompt {quote_arg(str(tmp_path / 'prompt with spaces.md'))}" in formatted
+    assert f"--raw {tmp_path / 'package with spaces.json'}" in formatted
 
 
 def test_local_check_result_evidence_is_redacted():

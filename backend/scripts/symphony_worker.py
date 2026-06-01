@@ -30,6 +30,7 @@ TAIL_LIMIT = 4000
 @dataclass
 class CommandResult:
     command: str
+    command_type: str
     cwd: str
     status: str
     exit_code: int
@@ -130,7 +131,8 @@ def parse_args() -> argparse.Namespace:
         default=os.environ.get("SYMPHONY_RUNNER_COMMAND", ""),
         help=(
             "Optional local command template. Supports {run_id}, {workspace}, "
-            "{task_package_file}, and {task_prompt_file}."
+            "{workspace_q}, {task_package_file}, {task_package_file_q}, "
+            "{task_prompt_file}, and {task_prompt_file_q}."
         ),
     )
     parser.add_argument(
@@ -263,6 +265,7 @@ class Worker:
         status = "passed" if result.returncode == 0 else "failed"
         command_result = CommandResult(
             command=command,
+            command_type=command_type,
             cwd=str(cwd),
             status=status,
             exit_code=result.returncode,
@@ -348,11 +351,17 @@ class Worker:
         return "\n".join(lines)
 
     def _format_command(self, run_id: int, package_files: dict[str, str]) -> str:
+        workspace = str(self.workspace)
+        task_package_file = package_files["task_package_file"]
+        task_prompt_file = package_files["task_prompt_file"]
         return self.runner_command.format(
             run_id=run_id,
-            workspace=str(self.workspace),
-            task_package_file=package_files["task_package_file"],
-            task_prompt_file=package_files["task_prompt_file"],
+            workspace=workspace,
+            workspace_q=quote_arg(workspace),
+            task_package_file=task_package_file,
+            task_package_file_q=quote_arg(task_package_file),
+            task_prompt_file=task_prompt_file,
+            task_prompt_file_q=quote_arg(task_prompt_file),
         )
 
     def _git_changed_files(self) -> list[str]:
@@ -431,6 +440,10 @@ def format_list(value: Any) -> list[str]:
     if not isinstance(value, list) or not value:
         return ["- None"]
     return [f"- {item}" for item in value]
+
+
+def quote_arg(value: str) -> str:
+    return subprocess.list2cmdline([value])
 
 
 if __name__ == "__main__":

@@ -298,6 +298,48 @@ async def test_symphony_bridge_complete_enforces_required_checks_and_allowed_pat
 
 
 @pytest.mark.asyncio
+async def test_symphony_bridge_complete_requires_expected_changed_file_evidence(client, monkeypatch):
+    monkeypatch.setattr(settings, "symphony_bridge_token", "bridge-token")
+
+    task_data = await create_ready_coding_task(client, allowed_paths=["backend/app"])
+    run_response = await client.post(
+        f"/api/v2/coding-tasks/{task_data['id']}/runs",
+        json={"executor_type": "symphony", "trigger_mode": "background"},
+    )
+    assert run_response.status_code == 201
+    run_id = run_response.json()["data"]["id"]
+
+    headers = {"X-Symphony-Bridge-Token": "bridge-token"}
+    claim_response = await client.post(
+        f"/api/v2/internal/symphony/execution-runs/{run_id}/claim",
+        json={"worker_id": "worker-a"},
+        headers=headers,
+    )
+    assert claim_response.status_code == 200
+
+    complete_response = await client.post(
+        f"/api/v2/internal/symphony/execution-runs/{run_id}/complete",
+        json={
+            "worker_id": "worker-a",
+            "status": "succeeded",
+            "summary": "Worker reported success without changes.",
+            "evidence": {
+                "changed_files": [],
+                "command_results": [
+                    {"command": "python -m compileall app", "status": "passed", "exit_code": 0}
+                ],
+            },
+        },
+        headers=headers,
+    )
+    assert complete_response.status_code == 200
+    completed = complete_response.json()["data"]
+    assert completed["status"] == ExecutionRunStatus.FAILED
+    validation = completed["evidence_json"]["dispatch"]["bridge_validation"]
+    assert validation["missing_expected_evidence"] == ["changed_files"]
+
+
+@pytest.mark.asyncio
 async def test_delivery_v2_demand_to_coding_task(client, generated_worktrees):
     demand_response = await client.post(
         "/api/v2/demands",

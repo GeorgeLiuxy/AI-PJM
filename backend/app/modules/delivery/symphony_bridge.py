@@ -356,12 +356,22 @@ class SymphonyBridgeService:
             required_checks=task.required_checks_json or [],
             command_results=evidence.get("command_results", []),
         )
-        passed = not changed_file_violations and not missing_required_checks and not failed_required_checks
+        missing_expected_evidence = self._missing_expected_evidence(
+            expected_evidence=task.expected_evidence_json or [],
+            changed_files=changed_files,
+        )
+        passed = (
+            not changed_file_violations
+            and not missing_required_checks
+            and not failed_required_checks
+            and not missing_expected_evidence
+        )
         return {
             "passed": passed,
             "changed_file_violations": changed_file_violations,
             "missing_required_checks": missing_required_checks,
             "failed_required_checks": failed_required_checks,
+            "missing_expected_evidence": missing_expected_evidence,
         }
 
     def _validate_required_checks(
@@ -416,6 +426,22 @@ class SymphonyBridgeService:
             ):
                 violations.append(changed_file)
         return violations
+
+    def _missing_expected_evidence(
+        self,
+        *,
+        expected_evidence: list[str],
+        changed_files: list[str],
+    ) -> list[str]:
+        missing: list[str] = []
+        expects_changed_files = any(
+            "changed file" in item.lower()
+            for item in expected_evidence
+            if isinstance(item, str)
+        )
+        if expects_changed_files and not changed_files:
+            missing.append("changed_files")
+        return missing
 
 
 symphony_bridge_service = SymphonyBridgeService()

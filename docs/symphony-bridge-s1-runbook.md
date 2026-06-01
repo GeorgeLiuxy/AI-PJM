@@ -71,6 +71,7 @@ flowchart LR
 
 - `evidence.command_results` 必须包含所有 `required_checks`，且 `status=passed`、`exit_code=0`。
 - `evidence.changed_files` 不能超出 `allowed_paths`。
+- 当任务期望包含 changed files 证据时，`evidence.changed_files` 不能为空；Codex 进程返回 0 但未实际改文件不视为成功。
 - 校验失败时，最终 `ExecutionRun.status` 会被降级为 `failed`，并在 `evidence_json.dispatch.bridge_validation` 中记录原因。
 
 ## 4. 任务包内容
@@ -176,9 +177,10 @@ $env:SYMPHONY_BRIDGE_TOKEN="dev-bridge-token"
 python scripts/symphony_worker.py `
   --api-base-url http://127.0.0.1:8010/api/v2 `
   --workspace "D:\projects\AI PJM" `
-  --runner-command "powershell -NoProfile -ExecutionPolicy Bypass -File `"{workspace}\scripts\run-codex-task.ps1`" -PromptFile `"{task_prompt_file}`" -WorkspaceRoot `"{workspace}`""
+  --runner-command "powershell -NoProfile -ExecutionPolicy Bypass -File {workspace_q}\scripts\run-codex-task.ps1 -PromptFile {task_prompt_file_q} -WorkspaceRoot {workspace_q}"
 ```
 
 `--workspace` 建议使用项目根目录，这样 changed files 会以仓库相对路径回写，AI PJM 才能准确校验 allowed paths。required checks 会按常见命令自动选择 `backend` 或 `frontend` 子目录运行。
+路径里包含空格时，runner command 应优先使用 `{workspace_q}`、`{task_prompt_file_q}`、`{task_package_file_q}` 这类已转义占位符。
 
 后续接真实 Symphony 时，优先把 `--runner-command` 替换为 Symphony/Codex 的本地执行入口；不要让前端页面或 `/dispatch` HTTP 请求承担长任务执行。
