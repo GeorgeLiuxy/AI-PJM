@@ -237,7 +237,9 @@ async def test_symphony_bridge_claim_event_heartbeat_and_complete(client, monkey
             "summary": "Required checks passed.",
             "evidence": {
                 "changed_files": ["backend/app/modules/delivery/symphony_bridge.py"],
-                "checks": [{"command": "python -m pytest", "status": "passed"}],
+                "command_results": [
+                    {"command": "python -m compileall app", "status": "passed", "exit_code": 0}
+                ],
                 "api_key": "sk-test-abcdefghijklmnopqrstuvwxyz",
             },
             "worktree_path": "D:/projects/AI PJM/.runtime/worktrees/example",
@@ -251,6 +253,48 @@ async def test_symphony_bridge_claim_event_heartbeat_and_complete(client, monkey
     assert completed["status"] == ExecutionRunStatus.SUCCEEDED
     assert completed["worktree_path"].endswith("/.runtime/worktrees/example")
     assert completed["evidence_json"]["dispatch"]["api_key"] == "[REDACTED]"
+
+
+@pytest.mark.asyncio
+async def test_symphony_bridge_complete_enforces_required_checks_and_allowed_paths(client, monkeypatch):
+    monkeypatch.setattr(settings, "symphony_bridge_token", "bridge-token")
+
+    task_data = await create_ready_coding_task(client, allowed_paths=["backend/app"])
+    run_response = await client.post(
+        f"/api/v2/coding-tasks/{task_data['id']}/runs",
+        json={"executor_type": "symphony", "trigger_mode": "background"},
+    )
+    assert run_response.status_code == 201
+    run_id = run_response.json()["data"]["id"]
+
+    headers = {"X-Symphony-Bridge-Token": "bridge-token"}
+    claim_response = await client.post(
+        f"/api/v2/internal/symphony/execution-runs/{run_id}/claim",
+        json={"worker_id": "worker-a"},
+        headers=headers,
+    )
+    assert claim_response.status_code == 200
+
+    complete_response = await client.post(
+        f"/api/v2/internal/symphony/execution-runs/{run_id}/complete",
+        json={
+            "worker_id": "worker-a",
+            "status": "succeeded",
+            "summary": "Worker reported success.",
+            "evidence": {
+                "changed_files": ["README.md"],
+                "command_results": [],
+            },
+        },
+        headers=headers,
+    )
+    assert complete_response.status_code == 200
+    completed = complete_response.json()["data"]
+    assert completed["status"] == ExecutionRunStatus.FAILED
+    validation = completed["evidence_json"]["dispatch"]["bridge_validation"]
+    assert validation["passed"] is False
+    assert validation["changed_file_violations"] == ["README.md"]
+    assert validation["missing_required_checks"] == ["python -m compileall app"]
 
 
 @pytest.mark.asyncio

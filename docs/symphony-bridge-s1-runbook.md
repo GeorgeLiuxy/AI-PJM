@@ -67,6 +67,12 @@ flowchart LR
 
 `complete` 回写后由 AI PJM 落库最终状态，并写入 `self_test_passed` 门禁。Symphony 不直接决定业务门禁，只提交执行证据。
 
+即使 worker 上报 `status=succeeded`，AI PJM 也会重新校验：
+
+- `evidence.command_results` 必须包含所有 `required_checks`，且 `status=passed`、`exit_code=0`。
+- `evidence.changed_files` 不能超出 `allowed_paths`。
+- 校验失败时，最终 `ExecutionRun.status` 会被降级为 `failed`，并在 `evidence_json.dispatch.bridge_validation` 中记录原因。
+
 ## 4. 任务包内容
 
 `task-package` 当前返回最小执行上下文：
@@ -118,7 +124,7 @@ curl.exe -X POST `
 curl.exe -X POST `
   -H "Content-Type: application/json" `
   -H "X-Symphony-Bridge-Token: dev-bridge-token" `
-  -d "{\"worker_id\":\"worker-a\",\"status\":\"succeeded\",\"summary\":\"Required checks passed.\",\"evidence\":{\"checks\":[{\"command\":\"npm run build\",\"status\":\"passed\"}]}}" `
+  -d "{\"worker_id\":\"worker-a\",\"status\":\"succeeded\",\"summary\":\"Required checks passed.\",\"evidence\":{\"changed_files\":[\"backend/app/example.py\"],\"command_results\":[{\"command\":\"python -m compileall app\",\"status\":\"passed\",\"exit_code\":0}]}}" `
   http://127.0.0.1:8010/api/v2/internal/symphony/execution-runs/<run_id>/complete
 ```
 
@@ -169,8 +175,10 @@ cd backend
 $env:SYMPHONY_BRIDGE_TOKEN="dev-bridge-token"
 python scripts/symphony_worker.py `
   --api-base-url http://127.0.0.1:8010/api/v2 `
-  --workspace "D:\projects\AI PJM\backend" `
-  --runner-command "python -m compileall app"
+  --workspace "D:\projects\AI PJM" `
+  --runner-command "powershell -NoProfile -ExecutionPolicy Bypass -File `"{workspace}\scripts\run-codex-task.ps1`" -PromptFile `"{task_prompt_file}`" -WorkspaceRoot `"{workspace}`""
 ```
+
+`--workspace` 建议使用项目根目录，这样 changed files 会以仓库相对路径回写，AI PJM 才能准确校验 allowed paths。required checks 会按常见命令自动选择 `backend` 或 `frontend` 子目录运行。
 
 后续接真实 Symphony 时，优先把 `--runner-command` 替换为 Symphony/Codex 的本地执行入口；不要让前端页面或 `/dispatch` HTTP 请求承担长任务执行。

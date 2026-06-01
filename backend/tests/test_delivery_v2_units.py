@@ -1,5 +1,7 @@
 """Delivery v2 service rule tests that do not require a database."""
 
+import sys
+
 import pytest
 
 from app.core.config import settings
@@ -17,6 +19,7 @@ from app.modules.delivery.redaction import REDACTED, redact_text, redact_value
 from app.modules.delivery.repository import delivery_repository
 from app.modules.delivery.service import DeliveryService, delivery_service
 from app.modules.secrets.service import secret_store_service
+from scripts.symphony_worker import Worker
 
 
 def test_delivery_v2_low_risk_auto_approval_rule():
@@ -104,6 +107,69 @@ def test_delivery_redacts_sensitive_json_values_recursively():
     assert "sk-proj-abcdefghijklmnopqrstuvwxyz" not in redacted["nested"]["command"]
     assert "local-token-123456" not in redacted["nested"]["stdout_tail"]
     assert "bearer-token-1234567890" not in redacted["items"][0]
+
+
+def test_symphony_worker_runs_required_checks_and_completes(tmp_path):
+    command = (
+        f'"{sys.executable}" -c '
+        '"from pathlib import Path; Path(\'worker-output.txt\').write_text(\'ok\', encoding=\'utf-8\')"'
+    )
+
+    class FakeBridgeClient:
+        def __init__(self):
+            self.posts = []
+
+        def get(self, path, query=None):
+            if path == "/internal/symphony/execution-runs":
+                return {"data": [{"id": 7}]}
+            if path == "/internal/symphony/execution-runs/7/task-package":
+                return {
+                    "data": {
+                        "run_id": 7,
+                        "coding_task_id": 11,
+                        "demand_id": 13,
+                        "risk_level": "L1",
+                        "task_prompt": "Write a worker output probe.",
+                        "allowed_paths": ["backend/app"],
+                        "forbidden_actions": ["Do not edit secrets."],
+                        "required_checks": [command],
+                        "expected_evidence": ["command_results"],
+                    }
+                }
+            raise AssertionError(f"Unexpected GET {path}")
+
+        def post(self, path, payload):
+            self.posts.append((path, payload))
+            return {"data": {}}
+
+    client = FakeBridgeClient()
+    worker = Worker(
+        client=client,
+        worker_id="worker-unit",
+        workspace=tmp_path,
+        runtime_dir=tmp_path / ".runtime",
+        runner_command="",
+        timeout_seconds=30,
+        lease_seconds=60,
+        skip_required_checks=False,
+    )
+
+    assert worker.run_once() is True
+    assert (tmp_path / "worker-output.txt").read_text(encoding="utf-8") == "ok"
+    complete_payload = [
+        payload
+        for path, payload in client.posts
+        if path == "/internal/symphony/execution-runs/7/complete"
+    ][0]
+    assert complete_payload["status"] == "succeeded"
+    result = complete_payload["evidence"]["command_results"][0]
+    assert result["command"] == command
+    assert result["status"] == "passed"
+    assert result["cwd"] == str(tmp_path)
+    prompt = (tmp_path / ".runtime" / "7" / "task-prompt.md").read_text(encoding="utf-8")
+    assert "## Allowed Paths" in prompt
+    assert "- backend/app" in prompt
+    assert command in prompt
 
 
 def test_local_check_result_evidence_is_redacted():

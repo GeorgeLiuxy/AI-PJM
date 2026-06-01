@@ -30,6 +30,7 @@ TAIL_LIMIT = 4000
 @dataclass
 class CommandResult:
     command: str
+    cwd: str
     status: str
     exit_code: int
     duration_ms: int
@@ -218,15 +219,20 @@ class Worker:
                     if failed
                     else f"{len(command_results)} command(s) completed successfully."
                 )
+            changed_files = self._git_changed_files()
             self.client.post(
                 f"/internal/symphony/execution-runs/{run_id}/complete",
                 {
                     "worker_id": self.worker_id,
                     "status": status,
                     "summary": summary,
+                    "worktree_path": str(self.workspace),
+                    "branch_name": self._git_output(["rev-parse", "--abbrev-ref", "HEAD"]),
+                    "commit_sha": self._git_output(["rev-parse", "HEAD"]),
                     "evidence": {
                         "worker_id": self.worker_id,
                         "workspace": str(self.workspace),
+                        "changed_files": changed_files,
                         "command_results": [result.__dict__ for result in command_results],
                         "task_package_file": package_files["task_package_file"],
                         "task_prompt_file": package_files["task_prompt_file"],
@@ -242,10 +248,11 @@ class Worker:
     def _run_command(self, run_id: int, command: str, command_type: str) -> CommandResult:
         self._heartbeat(run_id)
         self._event(run_id, "info", f"{command_type} started.", {"command": command})
+        cwd = self._command_cwd(command) if command_type == "required_check" else self.workspace
         start = time.perf_counter()
         result = subprocess.run(
             command,
-            cwd=self.workspace,
+            cwd=cwd,
             shell=True,
             text=True,
             capture_output=True,
@@ -256,6 +263,7 @@ class Worker:
         status = "passed" if result.returncode == 0 else "failed"
         command_result = CommandResult(
             command=command,
+            cwd=str(cwd),
             status=status,
             exit_code=result.returncode,
             duration_ms=duration_ms,
@@ -271,17 +279,73 @@ class Worker:
         self._heartbeat(run_id)
         return command_result
 
+    def _command_cwd(self, command: str) -> Path:
+        normalized = command.strip().lower().split()
+        if not normalized:
+            return self.workspace
+        backend_dir = self.workspace / "backend"
+        frontend_dir = self.workspace / "frontend"
+        if normalized[:3] == ["npm", "run", "build"] and frontend_dir.is_dir():
+            return frontend_dir
+        if normalized[0] == "pytest" and backend_dir.is_dir():
+            return backend_dir
+        if normalized[:3] in (["python", "-m", "pytest"], ["python", "-m", "compileall"]):
+            return backend_dir if backend_dir.is_dir() else self.workspace
+        return self.workspace
+
     def _write_package_files(self, run_id: int, package: dict[str, Any]) -> dict[str, str]:
         run_dir = self.runtime_dir / str(run_id)
         run_dir.mkdir(parents=True, exist_ok=True)
         package_file = run_dir / "task-package.json"
         prompt_file = run_dir / "task-prompt.md"
         package_file.write_text(json.dumps(package, ensure_ascii=False, indent=2), encoding="utf-8")
-        prompt_file.write_text(package.get("task_prompt") or "", encoding="utf-8")
+        prompt_file.write_text(self._render_task_prompt(package), encoding="utf-8")
         return {
             "task_package_file": str(package_file),
             "task_prompt_file": str(prompt_file),
         }
+
+    def _render_task_prompt(self, package: dict[str, Any]) -> str:
+        lines = [
+            "# AI PJM Symphony Task",
+            "",
+            f"Run ID: {package.get('run_id')}",
+            f"Task ID: {package.get('coding_task_id')}",
+            f"Demand ID: {package.get('demand_id')}",
+            f"Risk Level: {package.get('risk_level')}",
+            "",
+            "## Task Prompt",
+            str(package.get("task_prompt") or ""),
+            "",
+            "## Allowed Paths",
+            *format_list(package.get("allowed_paths")),
+            "",
+            "## Forbidden Actions",
+            *format_list(package.get("forbidden_actions")),
+            "",
+            "## Required Checks",
+            *format_list(package.get("required_checks")),
+            "",
+            "## Expected Evidence",
+            *format_list(package.get("expected_evidence")),
+            "",
+            "## Acceptance Criteria",
+            *format_list(package.get("acceptance_criteria")),
+            "",
+            "## Repository Context",
+            str(package.get("repo_context_summary") or "No repository context was provided."),
+            "",
+            "## Impact Summary",
+            str(package.get("impact_summary") or "No impact summary was provided."),
+            "",
+            "## Execution Rules",
+            "- Modify only files inside the allowed paths.",
+            "- Do not perform forbidden actions.",
+            "- Run all required checks before reporting completion.",
+            "- Provide changed files and command results as execution evidence.",
+            "",
+        ]
+        return "\n".join(lines)
 
     def _format_command(self, run_id: int, package_files: dict[str, str]) -> str:
         return self.runner_command.format(
@@ -290,6 +354,30 @@ class Worker:
             task_package_file=package_files["task_package_file"],
             task_prompt_file=package_files["task_prompt_file"],
         )
+
+    def _git_changed_files(self) -> list[str]:
+        output = self._git_output(["status", "--porcelain"])
+        changed_files: list[str] = []
+        for line in output.splitlines():
+            if not line.strip() or len(line) < 4:
+                continue
+            path = line[3:]
+            if " -> " in path:
+                path = path.split(" -> ", 1)[1]
+            changed_files.append(path.replace("\\", "/"))
+        return changed_files
+
+    def _git_output(self, args: list[str]) -> str:
+        result = subprocess.run(
+            ["git", *args],
+            cwd=self.workspace,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            return ""
+        return result.stdout.strip()
 
     def _event(self, run_id: int, level: str, message: str, event_json: dict[str, Any]) -> None:
         self.client.post(
@@ -337,6 +425,12 @@ def tail(value: str) -> str:
     if len(value) <= TAIL_LIMIT:
         return value
     return value[-TAIL_LIMIT:]
+
+
+def format_list(value: Any) -> list[str]:
+    if not isinstance(value, list) or not value:
+        return ["- None"]
+    return [f"- {item}" for item in value]
 
 
 if __name__ == "__main__":

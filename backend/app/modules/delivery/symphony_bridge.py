@@ -203,13 +203,27 @@ class SymphonyBridgeService:
         if status not in {ExecutionRunStatus.SUCCEEDED, ExecutionRunStatus.FAILED}:
             raise BadRequestException("Symphony completion status must be succeeded or failed")
 
-        final_status = ExecutionRunStatus.SUCCEEDED if status == ExecutionRunStatus.SUCCEEDED else ExecutionRunStatus.FAILED
-        task_status = CodingTaskStatus.COMPLETED if final_status == ExecutionRunStatus.SUCCEEDED else CodingTaskStatus.BLOCKED
         existing_evidence = run.evidence_json or {}
         bridge_metadata = existing_evidence.get(SYMPHONY_EVIDENCE_KEY) or {}
         safe_summary = redact_text(summary)
         safe_evidence = redact_value(evidence or {})
+        bridge_validation = self._validate_completion(task, safe_evidence)
         finished_at = utc_now()
+        requested_success = status == ExecutionRunStatus.SUCCEEDED
+        final_status = (
+            ExecutionRunStatus.SUCCEEDED
+            if requested_success and bridge_validation["passed"]
+            else ExecutionRunStatus.FAILED
+        )
+        if requested_success and not bridge_validation["passed"]:
+            safe_summary = f"{safe_summary} Symphony bridge validation failed."
+        safe_evidence["bridge_validation"] = bridge_validation
+
+        task_status = (
+            CodingTaskStatus.COMPLETED
+            if final_status == ExecutionRunStatus.SUCCEEDED
+            else CodingTaskStatus.BLOCKED
+        )
 
         await delivery_repository.update_execution_run(
             db,
@@ -327,6 +341,81 @@ class SymphonyBridgeService:
         if "execution_allowed" in evidence and isinstance(evidence["execution_allowed"], dict):
             return evidence["execution_allowed"]
         return {key: value for key, value in evidence.items() if key != SYMPHONY_EVIDENCE_KEY}
+
+    def _validate_completion(self, task: Any, evidence: dict[str, Any]) -> dict[str, Any]:
+        changed_files = [
+            item.replace("\\", "/").strip("/")
+            for item in evidence.get("changed_files", [])
+            if isinstance(item, str) and item.strip()
+        ]
+        changed_file_violations = self._changed_files_outside_allowed_paths(
+            changed_files=changed_files,
+            allowed_paths=task.allowed_paths_json or [],
+        )
+        missing_required_checks, failed_required_checks = self._validate_required_checks(
+            required_checks=task.required_checks_json or [],
+            command_results=evidence.get("command_results", []),
+        )
+        passed = not changed_file_violations and not missing_required_checks and not failed_required_checks
+        return {
+            "passed": passed,
+            "changed_file_violations": changed_file_violations,
+            "missing_required_checks": missing_required_checks,
+            "failed_required_checks": failed_required_checks,
+        }
+
+    def _validate_required_checks(
+        self,
+        *,
+        required_checks: list[str],
+        command_results: Any,
+    ) -> tuple[list[str], list[dict[str, Any]]]:
+        results = [item for item in command_results if isinstance(item, dict)]
+        missing: list[str] = []
+        failed: list[dict[str, Any]] = []
+        for required_check in [item for item in required_checks if item and item.strip()]:
+            result = next(
+                (item for item in results if item.get("command") == required_check),
+                None,
+            )
+            if result is None:
+                missing.append(required_check)
+                continue
+            exit_code = result.get("exit_code")
+            status = str(result.get("status") or "").lower()
+            if exit_code not in (0, "0") or status not in {"passed", "succeeded"}:
+                failed.append(
+                    {
+                        "command": required_check,
+                        "status": result.get("status"),
+                        "exit_code": exit_code,
+                    }
+                )
+        return missing, failed
+
+    def _changed_files_outside_allowed_paths(
+        self,
+        *,
+        changed_files: list[str],
+        allowed_paths: list[str],
+    ) -> list[str]:
+        normalized_allowed = [
+            path.replace("\\", "/").strip("/")
+            for path in allowed_paths
+            if path and path.strip()
+        ]
+        if not changed_files or not normalized_allowed:
+            return []
+
+        violations: list[str] = []
+        for changed_file in changed_files:
+            if not any(
+                changed_file == allowed_path
+                or changed_file.startswith(f"{allowed_path.rstrip('/')}/")
+                for allowed_path in normalized_allowed
+            ):
+                violations.append(changed_file)
+        return violations
 
 
 symphony_bridge_service = SymphonyBridgeService()
