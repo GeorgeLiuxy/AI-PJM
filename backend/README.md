@@ -51,6 +51,7 @@ Local URLs:
 
 - API docs: http://localhost:8010/docs
 - Health: http://localhost:8010/health
+- Observability summary: http://localhost:8010/api/v2/observability/summary
 
 The default local database is SQLite at `backend/data/ai_pjm_dev.db`.
 
@@ -75,6 +76,7 @@ Provider credential defaults:
 
 GitLab MR creation pushes the execution branch before calling the GitLab API when `MERGE_REQUEST_AUTO_PUSH_ENABLED=true`.
 After a GitLab MR is created, `POST /api/v2/merge-requests/{id}/sync-review` can pull remote MR state, discussion comments, and commit CI statuses back into the delivery MR record, review gate, audit log, and redacted evidence.
+`GET /api/v2/observability/summary` returns the minimal operator alert snapshot for worker lease expiry, queue backlog, unhealthy credentials, and failed test deployments.
 
 ## Verification
 

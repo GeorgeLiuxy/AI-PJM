@@ -294,6 +294,29 @@ class DeliveryRepository:
         result = await db.execute(query)
         return list(result.scalars().all())
 
+    async def count_execution_runs(
+        self,
+        db: AsyncSession,
+        statuses: list[str] | None = None,
+        executor_types: list[str] | None = None,
+        project_ids: list[int] | None = None,
+    ) -> int:
+        query = select(func.count(ExecutionRun.id))
+        if statuses:
+            query = query.where(ExecutionRun.status.in_(statuses))
+        if executor_types:
+            query = query.where(ExecutionRun.executor_type.in_(executor_types))
+        if project_ids is not None:
+            if not project_ids:
+                return 0
+            query = (
+                query.join(CodingTask, CodingTask.id == ExecutionRun.coding_task_id)
+                .join(DemandItem, DemandItem.id == CodingTask.demand_id)
+                .where(DemandItem.project_id.in_(project_ids))
+            )
+        result = await db.execute(query)
+        return int(result.scalar_one() or 0)
+
     async def count_running_execution_runs(
         self,
         db: AsyncSession,
@@ -629,6 +652,54 @@ class DeliveryRepository:
             setattr(record, key, value)
         await db.flush()
         return record
+
+    async def list_deploy_records(
+        self,
+        db: AsyncSession,
+        statuses: list[str] | None = None,
+        limit: int = 30,
+        offset: int = 0,
+        project_ids: list[int] | None = None,
+    ) -> list[DeployRecord]:
+        query = (
+            select(DeployRecord)
+            .options(selectinload(DeployRecord.verification_records))
+            .order_by(DeployRecord.updated_at.desc(), DeployRecord.id.desc())
+            .offset(offset)
+            .limit(limit)
+        )
+        if statuses:
+            query = query.where(DeployRecord.status.in_(statuses))
+        if project_ids is not None:
+            if not project_ids:
+                return []
+            query = (
+                query.join(CodingTask, CodingTask.id == DeployRecord.coding_task_id)
+                .join(DemandItem, DemandItem.id == CodingTask.demand_id)
+                .where(DemandItem.project_id.in_(project_ids))
+            )
+        result = await db.execute(query)
+        return list(result.scalars().all())
+
+    async def count_deploy_records(
+        self,
+        db: AsyncSession,
+        statuses: list[str] | None = None,
+        project_ids: list[int] | None = None,
+    ) -> int:
+        query = select(func.count(DeployRecord.id))
+        if statuses:
+            query = query.where(DeployRecord.status.in_(statuses))
+        if project_ids is not None:
+            if not project_ids:
+                return 0
+            query = (
+                query.join(CodingTask, CodingTask.id == DeployRecord.coding_task_id)
+                .join(DemandItem, DemandItem.id == CodingTask.demand_id)
+                .where(DemandItem.project_id.in_(project_ids))
+            )
+        result = await db.execute(query)
+        return int(result.scalar_one() or 0)
 
     async def update_deploy_record(
         self,

@@ -29,6 +29,7 @@ from app.modules.delivery.schemas import (
     MergeRequestCreateRequest,
     MergeRequestRecordResponse,
     MergeRequestReviewRequest,
+    ObservabilitySummaryResponse,
     RepoContextCreateRequest,
     RepoContextResponse,
     SpecCardResponse,
@@ -40,6 +41,22 @@ from app.modules.delivery.service import delivery_service
 
 
 router = APIRouter(tags=["delivery"])
+
+
+@router.get("/observability/summary", response_model=dict)
+async def get_observability_summary(
+    db: AsyncSession = Depends(get_db),
+    principal: AuthPrincipal = Depends(get_current_principal),
+):
+    require_capability(principal, "read")
+    summary = await delivery_service.get_observability_summary(
+        db,
+        project_ids=principal.accessible_project_ids,
+    )
+    return success_response(
+        data=ObservabilitySummaryResponse.model_validate(summary).model_dump(),
+        message="Success",
+    )
 
 
 @router.get("/demands", response_model=dict)

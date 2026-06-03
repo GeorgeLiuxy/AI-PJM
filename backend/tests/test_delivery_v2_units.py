@@ -3,10 +3,12 @@
 import sys
 import subprocess
 import json
+from datetime import timedelta
 
 import pytest
 
 from app.core.config import settings
+from app.core.db import utc_now
 from app.core.exceptions import AIServiceException, BadRequestException
 from app.modules.audit.repository import audit_repository
 from app.modules.auth.repository import auth_repository
@@ -1533,6 +1535,125 @@ async def test_delivery_service_redeploys_failed_deployment_with_source_evidence
     assert audit_events[0].actor_ref == "operator"
     assert audit_events[0].metadata_json["source_deploy_record_id"] == failed_deploy.id
     assert audit_events[0].metadata_json["new_deploy_record_id"] == redeployed.id
+
+
+@pytest.mark.asyncio
+async def test_delivery_service_observability_summary_reports_core_alerts(db_session, monkeypatch):
+    monkeypatch.setattr(settings, "secret_store_master_key", "test-secret-master-key")
+    monkeypatch.setattr(settings, "observability_queue_backlog_threshold", 2)
+
+    project = await auth_repository.create_project(
+        db_session,
+        key="observability",
+        name="Observability",
+    )
+    demand = await delivery_repository.create_demand(
+        db_session,
+        raw_input="Add alert summary.",
+        source_type="new_requirement",
+        title="Alert summary",
+        project_id=project.id,
+    )
+    spec = await delivery_repository.create_spec_card(
+        db_session,
+        demand_id=demand.id,
+        status=SpecStatus.APPROVED,
+        title="Alert summary",
+        user_story="As an operator, I can see operational alerts.",
+        scope="Observability",
+        acceptance_criteria=["Alerts are visible"],
+        constraints=[],
+        risks=[],
+        open_questions=[],
+    )
+    task = await delivery_repository.create_coding_task(
+        db_session,
+        demand_id=demand.id,
+        spec_card_id=spec.id,
+        status=CodingTaskStatus.READY,
+        title="Alert task",
+        task_prompt="Implement alerts.",
+        allowed_paths=["backend/app"],
+        forbidden_actions=[],
+        required_checks=["python -m compileall app"],
+        expected_evidence=["tests"],
+    )
+    queued_a = await delivery_repository.create_execution_run(
+        db_session,
+        coding_task_id=task.id,
+        status=ExecutionRunStatus.QUEUED,
+        executor_type="symphony",
+        trigger_mode="manual",
+    )
+    queued_b = await delivery_repository.create_execution_run(
+        db_session,
+        coding_task_id=task.id,
+        status=ExecutionRunStatus.QUEUED,
+        executor_type="symphony",
+        trigger_mode="manual",
+    )
+    expired_run = await delivery_repository.create_execution_run(
+        db_session,
+        coding_task_id=task.id,
+        status=ExecutionRunStatus.RUNNING,
+        executor_type="symphony",
+        trigger_mode="manual",
+        evidence_json={
+            "symphony_bridge": {
+                "worker_id": "worker-a",
+                "lease_expires_at": (utc_now() - timedelta(minutes=5)).isoformat(),
+            }
+        },
+    )
+    merge_request = await delivery_repository.create_merge_request_record(
+        db_session,
+        coding_task_id=task.id,
+        execution_run_id=expired_run.id,
+        provider="local",
+        status=MergeRequestStatus.REVIEW_PASSED,
+        review_status=ReviewStatus.PASSED,
+        title="Alert MR",
+        source_branch="codex/alerts",
+        target_branch="main",
+    )
+    failed_deploy = await delivery_repository.create_deploy_record(
+        db_session,
+        merge_request_id=merge_request.id,
+        coding_task_id=task.id,
+        provider="local",
+        status=DeploymentStatus.FAILED,
+        environment="test",
+        url="local://deployments/failed",
+    )
+    secret = await secret_store_service.create_secret(
+        db_session,
+        project_id=project.id,
+        name="deploy_token",
+        provider="deploy",
+        value="deploy-token",
+        expires_at=utc_now() - timedelta(days=1),
+    )
+
+    summary = await DeliveryService().get_observability_summary(db_session, project_ids=[project.id])
+
+    assert summary["status"] == "critical"
+    assert summary["metrics"]["queued_runs"] == 2
+    assert summary["metrics"]["running_runs"] == 1
+    assert summary["metrics"]["expired_worker_runs"] == 1
+    assert summary["metrics"]["failed_deployments"] == 1
+    assert summary["metrics"]["unhealthy_secrets"] == 1
+    alert_ids = {alert["id"] for alert in summary["alerts"]}
+    assert alert_ids == {
+        "worker-lease-expired",
+        "queue-backlog",
+        "secret-unhealthy",
+        "deployment-failed",
+    }
+    alert_entities = {alert["id"]: alert["entity_ids"] for alert in summary["alerts"]}
+    assert alert_entities["queue-backlog"] == [queued_b.id, queued_a.id]
+    assert alert_entities["worker-lease-expired"] == [expired_run.id]
+    assert alert_entities["deployment-failed"] == [failed_deploy.id]
+    assert alert_entities["secret-unhealthy"] == [secret.id]
 
 
 @pytest.mark.asyncio

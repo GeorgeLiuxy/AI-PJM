@@ -2,6 +2,7 @@
 
 import asyncio
 import subprocess
+from datetime import datetime, timezone
 from pathlib import Path
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -50,6 +51,8 @@ from app.modules.delivery.providers import WorkflowProvider, get_workflow_provid
 from app.modules.delivery.providers.dify import DifyWorkflowProvider
 from app.modules.delivery.redaction import redact_text, redact_value
 from app.modules.delivery.repository import delivery_repository
+from app.modules.secrets.repository import secret_repository
+from app.modules.secrets.service import secret_store_service
 
 
 class DeliveryService:
@@ -245,6 +248,151 @@ class DeliveryService:
             offset=max(offset, 0),
             project_ids=project_ids,
         )
+
+    async def get_observability_summary(
+        self,
+        db: AsyncSession,
+        project_ids: list[int] | None = None,
+    ) -> dict:
+        sample_limit = max(1, min(settings.observability_alert_sample_limit, 20))
+        now = utc_now()
+
+        queued_count = await delivery_repository.count_execution_runs(
+            db,
+            statuses=["queued"],
+            project_ids=project_ids,
+        )
+        running_count = await delivery_repository.count_execution_runs(
+            db,
+            statuses=["running"],
+            project_ids=project_ids,
+        )
+        running_symphony = await delivery_repository.list_execution_runs(
+            db,
+            statuses=["running"],
+            executor_types=["symphony"],
+            limit=100,
+            project_ids=project_ids,
+        )
+        expired_worker_runs = [
+            run for run in running_symphony
+            if self._symphony_lease_expired(run, now)
+        ]
+
+        failed_deploy_count = await delivery_repository.count_deploy_records(
+            db,
+            statuses=["failed"],
+            project_ids=project_ids,
+        )
+        failed_deploys = await delivery_repository.list_deploy_records(
+            db,
+            statuses=["failed"],
+            limit=sample_limit,
+            project_ids=project_ids,
+        )
+
+        secrets = await secret_repository.list_secrets(
+            db,
+            project_ids=project_ids,
+            limit=1000,
+        )
+        unhealthy_secrets = []
+        expiring_secrets = []
+        for secret in secrets:
+            health = secret_store_service.to_response(secret, verify_decrypt=False)
+            if health.health_status in {"expired", "invalid", "disabled"}:
+                unhealthy_secrets.append(secret)
+            elif health.health_status == "expiring_soon":
+                expiring_secrets.append(secret)
+
+        alerts = []
+        if expired_worker_runs:
+            alerts.append({
+                "id": "worker-lease-expired",
+                "category": "worker",
+                "severity": "critical",
+                "title": "Worker 心跳异常",
+                "summary": f"{len(expired_worker_runs)} 个 Symphony 执行已超过 lease，需要检查 worker 或触发恢复。",
+                "count": len(expired_worker_runs),
+                "entity_type": "execution_run",
+                "entity_ids": [run.id for run in expired_worker_runs[:sample_limit]],
+            })
+
+        if queued_count >= settings.observability_queue_backlog_threshold:
+            queued_samples = await delivery_repository.list_execution_runs(
+                db,
+                statuses=["queued"],
+                limit=sample_limit,
+                project_ids=project_ids,
+            )
+            alerts.append({
+                "id": "queue-backlog",
+                "category": "queue",
+                "severity": "warning",
+                "title": "执行队列积压",
+                "summary": (
+                    f"当前有 {queued_count} 个执行排队，已达到阈值 "
+                    f"{settings.observability_queue_backlog_threshold}。"
+                ),
+                "count": queued_count,
+                "entity_type": "execution_run",
+                "entity_ids": [run.id for run in queued_samples],
+            })
+
+        if unhealthy_secrets:
+            alerts.append({
+                "id": "secret-unhealthy",
+                "category": "secret",
+                "severity": "critical",
+                "title": "凭证不可用",
+                "summary": f"{len(unhealthy_secrets)} 个项目凭证已过期、禁用或不可用。",
+                "count": len(unhealthy_secrets),
+                "entity_type": "secret",
+                "entity_ids": [secret.id for secret in unhealthy_secrets[:sample_limit]],
+            })
+        elif expiring_secrets:
+            alerts.append({
+                "id": "secret-expiring",
+                "category": "secret",
+                "severity": "warning",
+                "title": "凭证即将过期",
+                "summary": f"{len(expiring_secrets)} 个项目凭证将在近期过期。",
+                "count": len(expiring_secrets),
+                "entity_type": "secret",
+                "entity_ids": [secret.id for secret in expiring_secrets[:sample_limit]],
+            })
+
+        if failed_deploy_count:
+            alerts.append({
+                "id": "deployment-failed",
+                "category": "deployment",
+                "severity": "critical",
+                "title": "测试部署失败",
+                "summary": f"{failed_deploy_count} 个测试部署处于失败状态，需要重新部署或检查部署系统。",
+                "count": failed_deploy_count,
+                "entity_type": "deployment",
+                "entity_ids": [record.id for record in failed_deploys],
+            })
+
+        status_value = "healthy"
+        if any(alert["severity"] == "critical" for alert in alerts):
+            status_value = "critical"
+        elif alerts:
+            status_value = "warning"
+
+        return {
+            "generated_at": now,
+            "status": status_value,
+            "metrics": {
+                "queued_runs": queued_count,
+                "running_runs": running_count,
+                "expired_worker_runs": len(expired_worker_runs),
+                "failed_deployments": failed_deploy_count,
+                "unhealthy_secrets": len(unhealthy_secrets),
+                "expiring_secrets": len(expiring_secrets),
+            },
+            "alerts": alerts,
+        }
 
     async def get_merge_request_record(
         self,
@@ -2484,6 +2632,25 @@ class DeliveryService:
         if isinstance(invocation, dict) and invocation.get("changed_file_violations"):
             return True
         return bool(dispatch.get("changed_file_violations"))
+
+    def _symphony_lease_expired(self, run: ExecutionRun, now: datetime) -> bool:
+        evidence = run.evidence_json or {}
+        bridge = evidence.get("symphony_bridge") if isinstance(evidence, dict) else {}
+        if not isinstance(bridge, dict):
+            return False
+        expires_at = self._parse_datetime(bridge.get("lease_expires_at"))
+        return expires_at is not None and expires_at <= now
+
+    def _parse_datetime(self, value) -> datetime | None:
+        if not isinstance(value, str) or not value.strip():
+            return None
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=timezone.utc)
+        return parsed
 
     async def _record_gate(self, db: AsyncSession, demand_id: int, decision) -> None:
         await delivery_repository.create_gate_check(

@@ -160,6 +160,24 @@ export interface DeliveryExecutionQueueItem extends DeliveryExecutionRun {
   risk_level: 'L0' | 'L1' | 'L2' | 'L3' | null;
 }
 
+export interface DeliveryObservabilityAlert {
+  id: string;
+  category: 'worker' | 'queue' | 'secret' | 'deployment';
+  severity: 'warning' | 'critical';
+  title: string;
+  summary: string;
+  count: number;
+  entity_type: string;
+  entity_ids: number[];
+}
+
+export interface DeliveryObservabilitySummary {
+  generated_at: string;
+  status: 'healthy' | 'warning' | 'critical';
+  metrics: Record<string, number>;
+  alerts: DeliveryObservabilityAlert[];
+}
+
 export interface DeliveryAuditEvent {
   id: number;
   project_id: number | null;

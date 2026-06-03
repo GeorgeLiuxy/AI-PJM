@@ -158,6 +158,17 @@ async def create_review_passed_merge_request(client, generated_worktrees) -> tup
 
 
 @pytest.mark.asyncio
+async def test_observability_summary_endpoint(client):
+    response = await client.get("/api/v2/observability/summary")
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["status"] == "healthy"
+    assert data["metrics"]["queued_runs"] == 0
+    assert data["alerts"] == []
+
+
+@pytest.mark.asyncio
 async def test_symphony_dispatch_keeps_run_queued_for_worker(client, monkeypatch):
     monkeypatch.setattr(settings, "symphony_bridge_token", "bridge-token")
 

@@ -67,6 +67,10 @@ class Settings(BaseSettings):
     symphony_bridge_token: str = ""
     symphony_bridge_default_lease_seconds: int = 300
 
+    # Observability
+    observability_queue_backlog_threshold: int = 5
+    observability_alert_sample_limit: int = 5
+
     # AI API (reserved)
     anthropic_api_key: str = ""
     openai_api_key: str = ""

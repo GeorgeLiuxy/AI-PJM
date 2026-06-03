@@ -34,6 +34,7 @@ import type {
   DeliveryExecutionRun,
   DeliveryImpactAnalysis,
   DeliveryMergeRequestRecord,
+  DeliveryObservabilitySummary,
   DeliveryRepoContext,
   DeliverySpecCard,
   DeliveryVerificationRecord,
@@ -137,9 +138,11 @@ export default function DeliveryV2Page() {
   const [demands, setDemands] = useState<DeliveryDemand[]>([]);
   const [queueItems, setQueueItems] = useState<DeliveryExecutionQueueItem[]>([]);
   const [auditEvents, setAuditEvents] = useState<DeliveryAuditEvent[]>([]);
+  const [observability, setObservability] = useState<DeliveryObservabilitySummary | null>(null);
   const [selectedDemandId, setSelectedDemandId] = useState<number | null>(null);
   const [listLoading, setListLoading] = useState(false);
   const [queueLoading, setQueueLoading] = useState(false);
+  const [observabilityLoading, setObservabilityLoading] = useState(false);
   const [auditLoading, setAuditLoading] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
   const [steps, setSteps] = useState<Record<StepKey, StepState>>(initialSteps);
@@ -293,6 +296,19 @@ export default function DeliveryV2Page() {
     }
   };
 
+  const loadObservability = async () => {
+    setObservabilityLoading(true);
+    try {
+      const summary = (await deliveryApi.getObservabilitySummary()).data;
+      setObservability(summary);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '加载运行告警失败';
+      setError(localizeText(message));
+    } finally {
+      setObservabilityLoading(false);
+    }
+  };
+
   const auditQueryParams = (filters: AuditFilterState = auditFilters) => ({
     limit: 50,
     query: filters.query.trim() || undefined,
@@ -337,6 +353,7 @@ export default function DeliveryV2Page() {
   useEffect(() => {
     void loadDemandList();
     void loadExecutionQueue();
+    void loadObservability();
     void loadAuditEvents();
     // The initial load intentionally runs once; user actions refresh the list explicitly.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -447,6 +464,7 @@ export default function DeliveryV2Page() {
   const refreshCurrent = async () => {
     await loadDemandList(selectedDemandId ?? result.demand?.id, activeTab);
     await loadExecutionQueue();
+    await loadObservability();
     await loadAuditEvents();
   };
 
@@ -873,6 +891,12 @@ export default function DeliveryV2Page() {
         />
 
         <div className="order-1 min-w-0 xl:order-1">
+          <ObservabilityBanner
+            summary={observability}
+            loading={observabilityLoading}
+            onRefresh={() => void loadObservability()}
+          />
+
           <section className="mb-2 grid gap-2 lg:grid-cols-[minmax(0,1fr)_300px]">
             <div className="rounded border border-slate-200 bg-white">
               <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 px-3 py-2">
@@ -1123,6 +1147,75 @@ export default function DeliveryV2Page() {
         </div>
       </div>
     </main>
+  );
+}
+
+function ObservabilityBanner({
+  summary,
+  loading,
+  onRefresh,
+}: {
+  summary: DeliveryObservabilitySummary | null;
+  loading: boolean;
+  onRefresh: () => void;
+}) {
+  const status = summary?.status || 'healthy';
+  const alerts = summary?.alerts || [];
+  const isCritical = status === 'critical';
+  const isWarning = status === 'warning';
+  const tone = isCritical
+    ? 'border-rose-200 bg-rose-50 text-rose-900'
+    : isWarning
+      ? 'border-amber-200 bg-amber-50 text-amber-900'
+      : 'border-emerald-200 bg-emerald-50 text-emerald-900';
+  const queued = summary?.metrics.queued_runs ?? 0;
+  const running = summary?.metrics.running_runs ?? 0;
+  const failedDeployments = summary?.metrics.failed_deployments ?? 0;
+  const unhealthySecrets = summary?.metrics.unhealthy_secrets ?? 0;
+
+  return (
+    <section className={`mb-2 rounded border px-3 py-2 ${tone}`}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex min-w-0 items-center gap-2">
+          {isCritical || isWarning ? <AlertTriangle className="h-4 w-4 shrink-0" /> : <Activity className="h-4 w-4 shrink-0" />}
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2 text-sm font-medium">
+              <span>运行告警</span>
+              <StatusBadge value={loading ? 'loading' : formatObservabilityStatus(status)} />
+            </div>
+            <div className="mt-0.5 flex flex-wrap gap-x-3 gap-y-1 text-xs">
+              <span>排队 {queued}</span>
+              <span>运行 {running}</span>
+              <span>失败部署 {failedDeployments}</span>
+              <span>异常凭证 {unhealthySecrets}</span>
+              {summary?.generated_at ? <span>更新 {formatDateTime(summary.generated_at)}</span> : null}
+            </div>
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={onRefresh}
+          disabled={loading}
+          className="inline-flex h-7 items-center gap-1.5 rounded border border-current/20 bg-white/70 px-2 text-xs font-medium hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
+          刷新
+        </button>
+      </div>
+      {alerts.length > 0 ? (
+        <div className="mt-2 grid gap-1.5 md:grid-cols-2">
+          {alerts.slice(0, 2).map((alert) => (
+            <div key={alert.id} className="min-w-0 rounded border border-current/15 bg-white/65 px-2 py-1.5 text-xs">
+              <div className="flex items-center justify-between gap-2 font-medium">
+                <span className="truncate">{alert.title}</span>
+                <span>{alert.count}</span>
+              </div>
+              <div className="mt-0.5 line-clamp-2 opacity-85">{alert.summary}</div>
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </section>
   );
 }
 
@@ -2285,6 +2378,15 @@ function formatStatusLabel(value?: string | number | null): string {
   };
 
   return statusLabels[raw] || raw;
+}
+
+function formatObservabilityStatus(value: string): string {
+  const labels: Record<string, string> = {
+    healthy: '正常',
+    warning: '预警',
+    critical: '严重',
+  };
+  return labels[value] || value;
 }
 
 function formatGateType(value?: string | null): string {

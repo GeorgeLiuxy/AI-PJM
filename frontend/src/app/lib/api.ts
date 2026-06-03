@@ -17,6 +17,7 @@ import type {
   DeliveryExecutionRun,
   DeliveryImpactAnalysis,
   DeliveryMergeRequestRecord,
+  DeliveryObservabilitySummary,
   DeliveryRepoContext,
   DeliverySpecCard,
   DeliveryVerificationRecord,
@@ -211,6 +212,7 @@ export const authApi = {
 };
 
 export const deliveryApi = {
+  getObservabilitySummary: () => fetchAPI<DeliveryObservabilitySummary>('/api/v2/observability/summary'),
   listAuditEvents: (params: {
     project_id?: number;
     entity_type?: string;

@@ -293,6 +293,28 @@ class ExecutionRunQueueItemResponse(ExecutionRunResponse):
     risk_level: Optional[DeliveryRiskLevel] = None
 
 
+class ObservabilityAlertResponse(BaseModel):
+    """Actionable operational alert derived from delivery state."""
+
+    id: str
+    category: Literal["worker", "queue", "secret", "deployment"]
+    severity: Literal["warning", "critical"]
+    title: str
+    summary: str
+    count: int
+    entity_type: str
+    entity_ids: list[int] = Field(default_factory=list)
+
+
+class ObservabilitySummaryResponse(BaseModel):
+    """Minimal observability snapshot for the delivery workspace."""
+
+    generated_at: datetime
+    status: Literal["healthy", "warning", "critical"]
+    metrics: dict[str, int]
+    alerts: list[ObservabilityAlertResponse] = Field(default_factory=list)
+
+
 class SymphonyBridgeClaimRequest(BaseModel):
     """Claim a queued Symphony execution run."""
 
