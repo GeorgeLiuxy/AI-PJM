@@ -113,6 +113,7 @@ class ReviewStatus(str, Enum):
 class DeploymentStatus(str, Enum):
     """Test deployment status."""
 
+    PENDING = "pending"
     DEPLOYED = "deployed"
     FAILED = "failed"
 

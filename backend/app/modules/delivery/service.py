@@ -1232,12 +1232,8 @@ class DeliveryService:
             db=db,
             demand_id=demand.id,
             gate_type=GateType.TEST_DEPLOYED,
-            status=GateStatus.PASSED if status == self._enum_or_str(DeploymentStatus.DEPLOYED) else GateStatus.FAILED,
-            reason=(
-                "Test deployment record was created."
-                if status == self._enum_or_str(DeploymentStatus.DEPLOYED)
-                else "Test deployment provider reported failure."
-            ),
+            status=self._deployment_gate_status(status),
+            reason=self._deployment_gate_reason(status),
             evidence_json={
                 "deploy_record_id": deploy_record.id,
                 "merge_request_id": merge_request.id,
@@ -1264,6 +1260,80 @@ class DeliveryService:
         )
         await db.commit()
 
+        loaded_record = await delivery_repository.get_deploy_record(db, deploy_record.id)
+        if not loaded_record:
+            raise NotFoundException(f"Deploy record {deploy_record.id} not found")
+        return loaded_record
+
+    async def sync_deploy_record_status(
+        self,
+        db: AsyncSession,
+        deploy_record_id: int,
+        actor_user_id: int | None = None,
+        actor_ref: str | None = None,
+    ) -> DeployRecord:
+        deploy_record = await delivery_repository.get_deploy_record(db, deploy_record_id)
+        if not deploy_record:
+            raise NotFoundException(f"Deploy record {deploy_record_id} not found")
+        merge_request = await delivery_repository.get_merge_request_record(db, deploy_record.merge_request_id)
+        if not merge_request:
+            raise NotFoundException(f"Merge request record {deploy_record.merge_request_id} not found")
+        task = await delivery_repository.get_coding_task(db, deploy_record.coding_task_id)
+        if not task:
+            raise NotFoundException(f"Coding task {deploy_record.coding_task_id} not found")
+        demand = await delivery_repository.get_demand(db, task.demand_id)
+        if not demand:
+            raise NotFoundException(f"Demand {task.demand_id} not found")
+
+        credential = await self._deployment_credential_for_provider(db, demand, deploy_record.provider)
+        client = get_deploy_client(deploy_record.provider, credential=credential)
+        remote_status = await client.fetch_deployment_status(deploy_record=deploy_record)
+        status = self._enum_or_str(remote_status.status)
+        remote_evidence = redact_value(remote_status.evidence)
+        evidence = {
+            **(deploy_record.evidence_json or {}),
+            "remote_status": remote_evidence,
+            "remote_status_synced_by_user_id": actor_user_id,
+            "remote_status_synced_by_ref": actor_ref or "system",
+            "remote_status_synced_at": utc_now().isoformat(),
+        }
+        await delivery_repository.update_deploy_record(
+            db,
+            deploy_record,
+            status=status,
+            url=remote_status.url or deploy_record.url,
+            evidence_json=evidence,
+        )
+        await delivery_repository.create_gate_check(
+            db=db,
+            demand_id=demand.id,
+            gate_type=GateType.TEST_DEPLOYED,
+            status=self._deployment_gate_status(status),
+            reason=remote_status.summary or self._deployment_gate_reason(status),
+            evidence_json={
+                "deploy_record_id": deploy_record.id,
+                "merge_request_id": merge_request.id,
+                "environment": deploy_record.environment,
+                "url": deploy_record.url,
+                "remote_status": remote_evidence,
+            },
+        )
+        await audit_repository.create_event(
+            db,
+            action="delivery.test_deployment_status_synced",
+            entity_type="deployment",
+            entity_id=deploy_record.id,
+            project_id=demand.project_id,
+            actor_user_id=actor_user_id,
+            actor_ref=actor_ref or "system",
+            summary=remote_status.summary or f"Test deployment status synced: {status}",
+            metadata={
+                "status": status,
+                "merge_request_id": merge_request.id,
+                "environment": deploy_record.environment,
+            },
+        )
+        await db.commit()
         loaded_record = await delivery_repository.get_deploy_record(db, deploy_record.id)
         if not loaded_record:
             raise NotFoundException(f"Deploy record {deploy_record.id} not found")
@@ -1952,6 +2022,20 @@ class DeliveryService:
         if review_status == self._enum_or_str(ReviewStatus.BLOCKING):
             return GateStatus.FAILED
         return GateStatus.MANUAL_REQUIRED
+
+    def _deployment_gate_status(self, deployment_status: str) -> GateStatus:
+        if deployment_status == self._enum_or_str(DeploymentStatus.DEPLOYED):
+            return GateStatus.PASSED
+        if deployment_status == self._enum_or_str(DeploymentStatus.FAILED):
+            return GateStatus.FAILED
+        return GateStatus.MANUAL_REQUIRED
+
+    def _deployment_gate_reason(self, deployment_status: str) -> str:
+        if deployment_status == self._enum_or_str(DeploymentStatus.DEPLOYED):
+            return "Test deployment record was created."
+        if deployment_status == self._enum_or_str(DeploymentStatus.FAILED):
+            return "Test deployment provider reported failure."
+        return "Test deployment is pending."
 
     async def _push_source_branch_for_provider(
         self,

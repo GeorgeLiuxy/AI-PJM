@@ -508,6 +508,25 @@ async def get_deploy_record(
     )
 
 
+@router.post("/deployments/{deploy_record_id}/sync-status", response_model=dict)
+async def sync_deploy_record_status(
+    deploy_record_id: int,
+    db: AsyncSession = Depends(get_db),
+    principal: AuthPrincipal = Depends(get_current_principal),
+):
+    await _require_deploy_record_permission(db, deploy_record_id, principal, "operate")
+    record = await delivery_service.sync_deploy_record_status(
+        db=db,
+        deploy_record_id=deploy_record_id,
+        actor_user_id=principal.user_id,
+        actor_ref=principal.username,
+    )
+    return success_response(
+        data=DeployRecordResponse.model_validate(record).model_dump(),
+        message="Deployment status synced",
+    )
+
+
 @router.post("/deployments/{deploy_record_id}/verification", response_model=dict, status_code=status.HTTP_201_CREATED)
 async def record_verification(
     deploy_record_id: int,

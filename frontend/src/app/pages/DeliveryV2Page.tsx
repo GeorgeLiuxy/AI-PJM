@@ -218,6 +218,13 @@ export default function DeliveryV2Page() {
       !busy &&
       canOperateCurrent,
   );
+  const canSyncDeploymentStatus = Boolean(
+    result.deployRecord &&
+      result.deployRecord.provider !== 'local' &&
+      !result.verificationRecord &&
+      !busy &&
+      canOperateCurrent,
+  );
   const canRecordVerification = Boolean(
     result.deployRecord &&
       result.deployRecord.status === 'deployed' &&
@@ -729,6 +736,32 @@ export default function DeliveryV2Page() {
     }
   };
 
+  const syncDeploymentStatus = async () => {
+    if (!result.deployRecord || !canSyncDeploymentStatus) {
+      return;
+    }
+
+    setRecovering(true);
+    setError(null);
+    setActiveTab('evidence');
+
+    try {
+      const deployRecord = (await deliveryApi.syncDeployRecordStatus(result.deployRecord.id)).data;
+      setResult((current) => ({ ...current, deployRecord }));
+      setStep('deploy', stepFromDeployRecord(deployRecord));
+      await loadDemandList(result.task?.demand_id || result.demand?.id, 'evidence');
+      if (deployRecord.status === 'failed') {
+        setError('测试环境部署失败。');
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '同步部署状态失败';
+      setError(localizeText(message));
+      setStep('deploy', 'failed');
+    } finally {
+      setRecovering(false);
+    }
+  };
+
   const recordVerification = async (status: 'passed' | 'failed') => {
     if (!result.deployRecord || !canRecordVerification) {
       return;
@@ -895,6 +928,15 @@ export default function DeliveryV2Page() {
                   >
                     {recovering ? <Loader2 className="h-4 w-4 animate-spin" /> : <ExternalLink className="h-4 w-4" />}
                     部署测试
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void syncDeploymentStatus()}
+                    disabled={!canSyncDeploymentStatus}
+                    className={`h-8 items-center gap-1.5 rounded border border-slate-200 bg-white px-2.5 text-sm text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 ${canSyncDeploymentStatus ? 'inline-flex' : 'hidden'}`}
+                  >
+                    {recovering ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                    同步部署
                   </button>
                   <button
                     type="button"
@@ -2040,6 +2082,9 @@ function stepFromMergeRequest(mergeRequest: DeliveryMergeRequestRecord): StepSta
 }
 
 function stepFromDeployRecord(deployRecord: DeliveryDeployRecord): StepState {
+  if (deployRecord.status === 'pending') {
+    return 'running';
+  }
   return deployRecord.status === 'failed' ? 'failed' : 'done';
 }
 
@@ -2239,6 +2284,7 @@ function formatAuditAction(value: string): string {
     'delivery.merge_request_remote_review_synced': '同步远端评审',
     'delivery.merge_request_review_repair_started': '启动评审修复',
     'delivery.test_deployment_created': '测试部署',
+    'delivery.test_deployment_status_synced': '同步部署状态',
     'delivery.verification_recorded': '记录验收',
     'auth.project_created': '创建项目',
     'auth.user_created': '创建用户',
@@ -2283,6 +2329,7 @@ function localizeText(value: string): string {
     'Merge request remote review synced': '远端评审已同步',
     'Merge request review repair completed': '评审修复已完成',
     'Deployment record created': '测试环境记录已创建',
+    'Deployment status synced': '部署状态已同步',
     'Verification record created': '验收结果已记录',
   };
   const trimmed = output.trim();
@@ -2388,6 +2435,8 @@ function localizeText(value: string): string {
     [/GitLab review sync completed: MR ([^,]+), detailed status ([^.]+)\./g, 'GitLab 远端评审同步完成：MR 状态 $1，详细状态 $2。'],
     [/A passed merge request review is required before test deployment/g, '创建测试环境记录前必须先通过合并请求评审'],
     [/Test deployment record was created\./g, '测试环境记录已创建。'],
+    [/Test deployment is pending\./g, '测试环境部署中。'],
+    [/Deployment status is (pending|deployed|failed)\./g, '部署状态：$1。'],
     [/Test deployment verification passed\./g, '测试环境验收已通过。'],
     [/Test deployment verification failed\./g, '测试环境验收未通过。'],
     [/Execution workspace preparation failed:/g, '执行工作区准备失败：'],

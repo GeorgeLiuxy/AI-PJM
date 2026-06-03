@@ -327,13 +327,14 @@ AI PJM 收到完成事件后再执行：
 
 目标：MR 后进入测试环境，完成业务验收。
 
-状态：`DeployClient` 和 webhook 部署 provider 首版已实现，可通过 AI PJM 服务端按项目读取 `deploy_token` 并回写 `DeployRecord`；环境级配置、CI/CD 状态轮询、重新部署和日志归档待实现。
+状态：`DeployClient` 和 webhook 部署 provider 首版已实现，可通过 AI PJM 服务端按项目读取 `deploy_token` 并回写 `DeployRecord`；webhook 返回 `status_url` 时可手动同步部署状态并回写门禁、审计和证据。环境级配置、自动状态轮询、重新部署和日志归档待实现。
 
 任务：
 
 - 增加 DeployClient。（已完成首版）
 - 支持脚本型、本地 webhook 型或 CI/CD 型部署入口。（webhook 首版已完成）
 - 部署结果回写 DeployRecord。（首版已完成）
+- webhook 部署状态同步。（手动同步首版已完成，自动轮询待实现）
 - 验收失败回到修复或人工处理。
 
 完成标准：

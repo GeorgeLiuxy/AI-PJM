@@ -237,7 +237,7 @@ export interface DeliveryDeployRecord {
   merge_request_id: number;
   coding_task_id: number;
   provider: string;
-  status: 'deployed' | 'failed';
+  status: 'pending' | 'deployed' | 'failed';
   environment: string;
   url: string | null;
   evidence_json: Record<string, unknown> | null;

@@ -1,8 +1,9 @@
 """Local deployment client."""
 
-from app.modules.delivery.deployments.base import DeployDraft
+from app.core.exceptions import BadRequestException
+from app.modules.delivery.deployments.base import DeployDraft, DeployRemoteStatus
 from app.modules.delivery.enums import DeploymentStatus
-from app.modules.delivery.models import CodingTask, MergeRequestRecord
+from app.modules.delivery.models import CodingTask, DeployRecord, MergeRequestRecord
 
 
 class LocalDeployClient:
@@ -30,3 +31,10 @@ class LocalDeployClient:
                 "merge_request_url": merge_request.url,
             },
         )
+
+    async def fetch_deployment_status(
+        self,
+        *,
+        deploy_record: DeployRecord,
+    ) -> DeployRemoteStatus:
+        raise BadRequestException("Local deployment provider does not support remote status sync")

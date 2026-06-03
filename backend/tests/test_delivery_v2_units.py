@@ -18,6 +18,7 @@ from app.modules.delivery.deployments.webhook import WebhookDeployClient
 from app.modules.delivery.enums import (
     CodingTaskStatus,
     DeliveryRiskLevel,
+    DeploymentStatus,
     ExecutionRunStatus,
     GateStatus,
     GateType,
@@ -27,7 +28,7 @@ from app.modules.delivery.enums import (
 )
 from app.modules.delivery.gates import gate_engine
 from app.modules.delivery.merge_requests.gitlab import GitLabMergeRequestClient
-from app.modules.delivery.models import CodingTask, DemandItem, ExecutionRun, MergeRequestRecord, RepoContext
+from app.modules.delivery.models import CodingTask, DemandItem, DeployRecord, ExecutionRun, MergeRequestRecord, RepoContext
 from app.modules.delivery.provider_credentials import ProviderCredential, resolve_provider_credential
 from app.modules.delivery.providers.dify import DifyWorkflowProvider
 from app.modules.delivery.providers.factory import get_workflow_provider
@@ -679,6 +680,7 @@ async def test_webhook_deploy_client_uses_credential_without_exposing_it(monkeyp
             return {
                 "id": "deploy-123",
                 "url": "https://test.example/deploy-123",
+                "status_url": "https://deploy.example/status/deploy-123",
                 "status": "deployed",
             }
 
@@ -730,12 +732,78 @@ async def test_webhook_deploy_client_uses_credential_without_exposing_it(monkeyp
     assert captured["json"]["commit_sha"] == "abc123"
     assert draft.provider == "webhook"
     assert draft.url == "https://test.example/deploy-123"
+    assert draft.evidence["status_url"] == "https://deploy.example/status/deploy-123"
     assert draft.evidence["credential"] == {
         "credential_source": "secret_store",
         "credential_project_id": 123,
         "token_secret_name": "deploy_token",
     }
     assert "project-deploy-token" not in str(draft.evidence)
+
+
+@pytest.mark.asyncio
+async def test_webhook_deploy_client_fetches_status_without_exposing_credential(monkeypatch):
+    captured: dict[str, object] = {}
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "status": "success",
+                "url": "https://test.example/deploy-123",
+                "summary": "Deployment completed.",
+            }
+
+    class FakeAsyncClient:
+        def __init__(self, timeout):
+            captured["timeout"] = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return None
+
+        async def get(self, url, headers):
+            captured["url"] = url
+            captured["headers"] = headers
+            return FakeResponse()
+
+    monkeypatch.setattr("app.modules.delivery.deployments.webhook.httpx.AsyncClient", FakeAsyncClient)
+    credential = ProviderCredential(
+        provider="webhook",
+        value="project-deploy-token",
+        source="secret_store",
+        project_id=123,
+        secret_name="deploy_token",
+    )
+    deploy_record = DeployRecord(
+        id=21,
+        merge_request_id=19,
+        coding_task_id=11,
+        provider="webhook",
+        status=DeploymentStatus.PENDING,
+        environment="test",
+        evidence_json={"provider_evidence": {"status_url": "https://deploy.example/status/deploy-123"}},
+    )
+
+    remote_status = await WebhookDeployClient(credential=credential).fetch_deployment_status(
+        deploy_record=deploy_record,
+    )
+
+    assert captured["url"] == "https://deploy.example/status/deploy-123"
+    assert captured["headers"] == {"Authorization": "Bearer project-deploy-token"}
+    assert remote_status.status == DeploymentStatus.DEPLOYED
+    assert remote_status.url == "https://test.example/deploy-123"
+    assert remote_status.summary == "Deployment completed."
+    assert remote_status.evidence["credential"] == {
+        "credential_source": "secret_store",
+        "credential_project_id": 123,
+        "token_secret_name": "deploy_token",
+    }
+    assert "project-deploy-token" not in str(remote_status.evidence)
 
 
 @pytest.mark.asyncio
@@ -1186,6 +1254,154 @@ async def test_delivery_service_auto_repairs_blocking_merge_request_review(db_se
     assert audit_events
     assert audit_events[0].actor_ref == "operator"
     assert audit_events[0].metadata_json["execution_run_ids"] == [repair_run.id]
+
+
+@pytest.mark.asyncio
+async def test_delivery_service_syncs_webhook_deployment_status_gate_and_audit(db_session, monkeypatch):
+    monkeypatch.setattr(settings, "secret_store_master_key", "test-secret-master-key")
+    monkeypatch.setattr(settings, "deploy_token", "")
+    monkeypatch.setattr(settings, "deploy_token_secret_name", "deploy_token")
+    captured: dict[str, object] = {}
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "status": "success",
+                "url": "https://test.example/deploy-123",
+                "summary": "Deployment completed.",
+            }
+
+    class FakeAsyncClient:
+        def __init__(self, timeout):
+            captured["timeout"] = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return None
+
+        async def get(self, url, headers):
+            captured["url"] = url
+            captured["headers"] = headers
+            return FakeResponse()
+
+    monkeypatch.setattr("app.modules.delivery.deployments.webhook.httpx.AsyncClient", FakeAsyncClient)
+    project = await auth_repository.create_project(
+        db_session,
+        key="deploy-sync-project",
+        name="Deploy Sync Project",
+    )
+    demand = await delivery_repository.create_demand(
+        db_session,
+        raw_input="Add a status badge to the delivery dashboard.",
+        source_type="new_requirement",
+        title="Add status badge",
+        project_id=project.id,
+    )
+    await secret_store_service.create_secret(
+        db_session,
+        project_id=project.id,
+        name="deploy_token",
+        provider="webhook",
+        value="project-deploy-token",
+        actor_ref="test",
+    )
+    spec = await delivery_repository.create_spec_card(
+        db_session,
+        demand_id=demand.id,
+        status=SpecStatus.APPROVED,
+        title="Add status badge",
+        user_story="As an operator, I can see delivery status.",
+        scope="Dashboard badge only.",
+        acceptance_criteria=["Badge is visible."],
+        constraints=["Do not expose secrets."],
+        risks=["Low risk."],
+        open_questions=[],
+    )
+    task = await delivery_repository.create_coding_task(
+        db_session,
+        demand_id=demand.id,
+        spec_card_id=spec.id,
+        status=CodingTaskStatus.COMPLETED,
+        title="Add status badge",
+        task_prompt="Add a compact execution status badge.",
+        allowed_paths=["frontend/src/app/pages/DeliveryV2Page.tsx"],
+        forbidden_actions=["Do not expose secrets."],
+        required_checks=["npm run build"],
+        expected_evidence=["build output"],
+    )
+    run = await delivery_repository.create_execution_run(
+        db_session,
+        coding_task_id=task.id,
+        status=ExecutionRunStatus.SUCCEEDED,
+        executor_type="codex",
+        trigger_mode="manual",
+        result_summary="Implemented.",
+        evidence_json={"dispatch": {"branch_name": "codex/status-badge", "commit_sha": "abc123"}},
+    )
+    merge_request = await delivery_repository.create_merge_request_record(
+        db_session,
+        coding_task_id=task.id,
+        execution_run_id=run.id,
+        provider="gitlab",
+        status=MergeRequestStatus.REVIEW_PASSED,
+        review_status=ReviewStatus.PASSED,
+        title="Add status badge",
+        source_branch="codex/status-badge",
+        target_branch="main",
+        external_id="12",
+        url="https://gitlab.example/group/demo/-/merge_requests/12",
+        evidence_json={"commit_sha": "abc123"},
+    )
+    deploy_record = await delivery_repository.create_deploy_record(
+        db_session,
+        merge_request_id=merge_request.id,
+        coding_task_id=task.id,
+        provider="webhook",
+        status=DeploymentStatus.PENDING,
+        environment="test",
+        url=None,
+        evidence_json={
+            "provider_evidence": {
+                "status_url": "https://deploy.example/status/deploy-123",
+                "credential": {"token_secret_name": "deploy_token"},
+            },
+        },
+    )
+    await db_session.commit()
+
+    synced = await DeliveryService().sync_deploy_record_status(
+        db_session,
+        deploy_record.id,
+        actor_ref="operator",
+    )
+
+    assert captured["url"] == "https://deploy.example/status/deploy-123"
+    assert captured["headers"] == {"Authorization": "Bearer project-deploy-token"}
+    assert synced.status == DeploymentStatus.DEPLOYED
+    assert synced.url == "https://test.example/deploy-123"
+    assert synced.evidence_json["remote_status"]["credential"] == {
+        "credential_source": "secret_store",
+        "credential_project_id": project.id,
+        "token_secret_name": "deploy_token",
+    }
+    assert "project-deploy-token" not in str(synced.evidence_json)
+
+    detail = await delivery_repository.get_demand_detail(db_session, demand.id)
+    deploy_gates = [gate for gate in detail.gate_checks if gate.gate_type == GateType.TEST_DEPLOYED]
+    assert deploy_gates[-1].status == GateStatus.PASSED
+
+    audit_events = await audit_repository.list_events(
+        db_session,
+        project_id=project.id,
+        action="delivery.test_deployment_status_synced",
+    )
+    assert audit_events
+    assert audit_events[0].actor_ref == "operator"
 
 
 @pytest.mark.asyncio

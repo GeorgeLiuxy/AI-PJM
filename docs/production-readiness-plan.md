@@ -382,7 +382,7 @@ AI 不允许直接决定：
 
 目标：让 MR 后的结果进入可验证环境。
 
-当前状态：`DeployClient` 边界和 `webhook` 部署 provider 首版已实现，可用项目级 `deploy_token` 或全局 `DEPLOY_TOKEN` 调用外部 webhook，并把部署 URL、状态、commit 和凭据来源写入 `DeployRecord` 证据。失败状态会写入失败门禁，不会推进验收。环境级配置、CI/CD 状态轮询、重新部署、部署日志归档仍待实现。
+当前状态：`DeployClient` 边界和 `webhook` 部署 provider 首版已实现，可用项目级 `deploy_token` 或全局 `DEPLOY_TOKEN` 调用外部 webhook，并把部署 URL、状态、commit 和凭据来源写入 `DeployRecord` 证据。webhook 返回 `status_url` 时，可通过 `POST /api/v2/deployments/{id}/sync-status` 手动同步部署状态，并写回 `test_deployed` 门禁、审计事件和脱敏证据。失败状态会写入失败门禁，不会推进验收。自动轮询、重新部署、环境级配置、部署日志归档仍待实现。
 
 实施内容：
 
@@ -390,6 +390,7 @@ AI 不允许直接决定：
 - 对接现有 CI/CD、测试环境平台或脚本入口。（webhook 首版已完成）
 - 支持按项目配置部署环境。
 - 记录部署 URL、版本、commit、日志、状态。
+- webhook `status_url` 手动同步部署状态。（首版已完成，自动轮询待实现）
 - 部署失败保留日志并阻断验收。
 - 支持重新部署。
 
@@ -397,7 +398,7 @@ AI 不允许直接决定：
 
 - 评审通过后可触发真实测试环境部署。
 - 页面展示真实测试地址。
-- 部署状态能自动回写。
+- 部署状态能自动回写。（手动同步首版已完成，自动轮询待实现）
 - 部署失败不会推进验收门禁。
 
 不做风险：

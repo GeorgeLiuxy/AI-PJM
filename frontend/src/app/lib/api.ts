@@ -450,6 +450,12 @@ export const deliveryApi = {
       }),
     });
   },
+  syncDeployRecordStatus: (deployRecordId: number) => {
+    return fetchAPI<DeliveryDeployRecord>(`/api/v2/deployments/${deployRecordId}/sync-status`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    });
+  },
   recordVerification: (
     deployRecordId: number,
     params: {
