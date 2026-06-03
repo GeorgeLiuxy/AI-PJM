@@ -291,6 +291,6 @@ V2 主链路已经完成本地 MVP 闭环，下一步应转入生产化基础建
 4. 完善 SecretStore Provider 消费：让 GitLab/OpenAI/部署 Provider 按项目安全读取凭证。（Dify/GitLab/webhook 部署已完成首版，OpenAI 待实现）
 5. 做 S3/S4：用 Symphony 执行低风险任务，创建真实 GitLab/GitHub MR，并补远端评审同步。
 6. 做 S5：增强真实测试环境部署 Provider，补环境配置和自动状态轮询；重新部署入口首版已完成。
-7. 再补 PostgreSQL/Alembic、队列恢复、生产级 Dify/OpenAI 质量评估和产品化交互。
+7. 再补 PostgreSQL 真库演练、备份恢复、队列恢复、生产级 Dify/OpenAI 质量评估和产品化交互；Alembic 迁移链路首版已完成。
 
 原因：生产使用时最大的风险不是缺少复杂组织治理，而是主链路仍需人工搬运、真实 MR/部署没有打通、执行和证据不够可靠。先补这些直接影响交付效率的能力，平台才能真实减少人工介入。

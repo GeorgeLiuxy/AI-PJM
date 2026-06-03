@@ -175,6 +175,42 @@ async def _sqlite_columns(conn, table_name: str) -> set[str]:
     return {row[1] for row in result.fetchall()}
 
 
+def _alembic_config():
+    from alembic.config import Config
+
+    backend_root = Path(__file__).resolve().parents[2]
+    config = Config(str(backend_root / "alembic.ini"))
+    config.set_main_option("script_location", str(backend_root / "migrations"))
+    config.set_main_option("version_locations", str(backend_root / "migrations" / "versions"))
+    return config
+
+
+async def assert_database_current() -> None:
+    """Fail fast when a non-SQLite database is not migrated to Alembic head."""
+
+    from alembic.runtime.migration import MigrationContext
+    from alembic.script import ScriptDirectory
+
+    import_all_models()
+    config = _alembic_config()
+    script = ScriptDirectory.from_config(config)
+    expected_heads = set(script.get_heads())
+
+    async with engine.connect() as conn:
+        current_heads = await conn.run_sync(
+            lambda sync_conn: set(MigrationContext.configure(sync_conn).get_current_heads())
+        )
+
+    if current_heads != expected_heads:
+        current = ", ".join(sorted(current_heads)) or "<empty>"
+        expected = ", ".join(sorted(expected_heads)) or "<empty>"
+        raise RuntimeError(
+            "Database schema is not migrated to Alembic head. "
+            f"Current heads: {current}; expected heads: {expected}. "
+            "Run `python scripts/migrate.py upgrade head` from backend/ before starting production."
+        )
+
+
 def utc_now() -> datetime:
     """Get current UTC timestamp"""
     return datetime.now(timezone.utc)

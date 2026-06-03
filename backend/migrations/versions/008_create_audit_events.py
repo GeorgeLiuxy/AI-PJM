@@ -1,4 +1,4 @@
-"""Create audit events table
+﻿"""Create audit events table
 
 Revision ID: 008
 Revises: 007
@@ -17,6 +17,10 @@ branch_labels = None
 depends_on = None
 
 
+def json_type():
+    return sa.JSON().with_variant(postgresql.JSONB(astext_type=sa.Text()), "postgresql")
+
+
 def upgrade() -> None:
     op.create_table(
         "audit_events",
@@ -28,7 +32,7 @@ def upgrade() -> None:
         sa.Column("entity_type", sa.String(length=100), nullable=False),
         sa.Column("entity_id", sa.BigInteger(), nullable=True),
         sa.Column("summary", sa.Text(), nullable=False),
-        sa.Column("metadata_json", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
+        sa.Column("metadata_json", json_type(), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.ForeignKeyConstraint(["actor_user_id"], ["auth_users.id"], ondelete="SET NULL"),
         sa.ForeignKeyConstraint(["project_id"], ["auth_projects.id"], ondelete="SET NULL"),
@@ -48,4 +52,3 @@ def downgrade() -> None:
     op.drop_index("ix_audit_events_actor_user_id", table_name="audit_events")
     op.drop_index("ix_audit_events_project_id", table_name="audit_events")
     op.drop_table("audit_events")
-

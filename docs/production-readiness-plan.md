@@ -78,10 +78,10 @@ AI PJM 的生产级目标：
 
 - 权限仍是本地首版，但当前阶段只需要最小角色模型；企业 SSO、复杂组织角色和审计报表平台化不作为近期主线。
 - 密钥和 Token 已有本地加密存储、健康检查和过期提示首版，Dify、GitLab MR 和 webhook 部署已接入项目级消费；尚未接 Vault/KMS、集中轮换策略和 OpenAI Provider 消费链路。
-- GitLab MR 创建 client 和源分支自动推送已有首版，但仍缺远端评审评论同步和阻塞意见闭环。
+- GitLab MR 创建、源分支自动推送、远端评审同步和阻塞意见自动修复已有首版；GitHub provider、GitLab webhook 和 reviewer/label 配置仍待实现。
 - webhook 测试部署 client 已有首版，失败部署重新部署入口已完成；仍缺 CI/CD 状态轮询和环境级配置。
-- 没有 Symphony Bridge、后台 worker 和可靠任务队列。
-- 没有数据库迁移体系和生产数据库方案。
+- Symphony Bridge、最小 worker、lease 恢复和暂停/恢复/取消控制已有首版；真实 Symphony daemon、队列恢复增强和生产 worker 运维仍待实现。
+- Alembic 迁移链路首版已完成；PostgreSQL 真库演练、备份恢复和性能压测仍待实现。
 - 没有完整审计、告警和运行指标。
 - Dify/OpenAI 没有完成生产联调和质量评估。
 
@@ -265,22 +265,22 @@ AI 不允许直接决定：
 
 目标：替换 SQLite，保证可升级、可备份、可恢复。
 
-当前状态：仍未生产化。开发环境使用 SQLite、`create_all` 和少量幂等补列兼容已有本地库；完整 Alembic migration 链路仍需在本阶段重建和验证。
+当前状态：迁移链路首版已完成。开发环境继续使用 SQLite、`create_all` 和少量幂等补列兼容已有本地库；生产路径提供 `backend/scripts/migrate.py` 执行 Alembic `upgrade head/current`，当前迁移可从空库升级到 head，并由 `tests/test_migrations.py` 覆盖 SQLite 干净库验证。非 SQLite 启动会在 `DATABASE_VALIDATE_MIGRATIONS=true` 时校验数据库是否到达 Alembic head。PostgreSQL 真库演练、备份恢复流程和性能压测仍待完成。
 
 实施内容：
 
-- 引入 PostgreSQL。
-- 引入 Alembic 数据库迁移。
-- 为当前所有模型生成初始 migration。
-- 增加索引：项目、需求、状态、任务、执行记录、门禁、创建时间。
+- 引入 PostgreSQL。（真库演练待完成）
+- 引入 Alembic 数据库迁移。（首版已完成）
+- 为当前所有模型生成初始 migration。（首版已完成）
+- 增加索引：项目、需求、状态、任务、执行记录、门禁、创建时间。（随当前迁移首版完成）
 - 增加数据保留策略。
 - 增加备份和恢复流程。
 
 验收标准：
 
-- 新环境可一键执行 migration 初始化。
+- 新环境可一键执行 migration 初始化。（SQLite 干净库验证已覆盖，PostgreSQL 真库验证待完成）
 - 旧版本升级不会丢数据。
-- 测试覆盖 SQLite 和 PostgreSQL 至少一种生产等价路径。
+- 测试覆盖 SQLite 和 PostgreSQL 至少一种生产等价路径。（SQLite 迁移链路已覆盖，PostgreSQL 待真库演练）
 - 关键列表接口在 1 万条任务下仍可接受。
 
 不做风险：

@@ -350,7 +350,7 @@ AI PJM 收到完成事件后再执行：
 - worker heartbeat、lease 过期恢复。
 - 任务取消、暂停、恢复。
 - 队列积压和失败原因可见。
-- PostgreSQL/Alembic。
+- PostgreSQL/Alembic 迁移链路首版已完成；PostgreSQL 真库演练、备份恢复和性能压测待完成。
 - 最小可观测性。
 
 完成标准：
@@ -368,7 +368,7 @@ AI PJM 收到完成事件后再执行：
 4. S3：用 Symphony 执行一个真实低风险任务并回写证据。
 5. S4：接 GitLab/GitHub MR。
 6. S5：接测试环境部署。
-7. S6：再补 PostgreSQL、队列恢复和可观测性。
+7. S6：再补 PostgreSQL 真库演练、队列恢复和可观测性；Alembic 迁移链路首版已完成。
 
 ## 12. 验证清单
 

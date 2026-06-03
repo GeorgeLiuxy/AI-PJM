@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.v2_router import v2_router
 from app.common.responses import HealthResponse
 from app.core.config import settings
-from app.core.db import async_session_maker, init_db, is_sqlite_url
+from app.core.db import async_session_maker, assert_database_current, init_db, is_sqlite_url
 from app.core.logging import setup_logging
 from app.core.exceptions import AppException
 from app.modules.auth.service import auth_service
@@ -29,6 +29,12 @@ async def lifespan(app: FastAPI):
         async with async_session_maker() as session:
             await auth_service.ensure_bootstrap_data(session)
         print("SQLite development database initialized")
+    else:
+        if settings.database_validate_migrations:
+            await assert_database_current()
+        async with async_session_maker() as session:
+            await auth_service.ensure_bootstrap_data(session)
+        print("Database migration state verified")
     yield
     # Shutdown
     print(f"Shutting down {settings.app_name}")

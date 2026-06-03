@@ -8,17 +8,7 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 from alembic import context
 
 # Import models and base
-from app.core.db import Base
-from app.modules.delivery.models import (
-    CodingTask,
-    DemandItem,
-    ExecutionLog,
-    ExecutionRun,
-    GateCheck,
-    ImpactAnalysis,
-    RepoContext,
-    SpecCard,
-)
+from app.core.db import Base, import_all_models
 
 # Alembic config object
 config = context.config
@@ -28,6 +18,7 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 # Set target metadata for autogenerate support
+import_all_models()
 target_metadata = Base.metadata
 
 

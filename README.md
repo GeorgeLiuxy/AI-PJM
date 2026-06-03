@@ -23,6 +23,7 @@ AI PJM 是一个 AI 辅助工程交付编排平台。它不是通用项目管理
 
 - V2 主链路 API 和前端交付工作台。
 - SQLite 本地数据库。
+- Alembic 迁移链路首版：覆盖当前业务模型，提供 `backend/scripts/migrate.py`，非 SQLite 启动会校验数据库是否到达 Alembic head。
 - 低风险自动审批、高风险人工审批。
 - Git worktree 隔离执行。
 - 必要检查执行、失败证据记录、重试入口和低风险自动修复首版。
@@ -54,7 +55,7 @@ AI PJM 是一个 AI 辅助工程交付编排平台。它不是通用项目管理
 - Symphony Bridge 已完成首版 internal API、最小 worker、lease 恢复和暂停/恢复/取消控制；真实 Symphony daemon 替换和更强队列恢复仍待实现。
 - 认证授权和项目权限保留最小角色模型；企业 SSO、复杂业务角色和审计报表平台化不作为近期主线。
 - 密钥管理已有本地加密存储、健康检查和执行证据脱敏首版，Dify/GitLab/部署 provider 已可按项目消费凭证；OpenAI Provider 仍待实现。
-- PostgreSQL、数据库迁移、后台 Worker 和最小可观测性仍待实现。
+- PostgreSQL 真库演练、备份恢复流程、后台 Worker 和最小可观测性仍待实现。
 - 默认子 Agent 评审、多仓库编排、自动生产发布暂不做。
 
 后续功能执行顺序以 [v2-execution-roadmap.md](docs/v2-execution-roadmap.md) 为准；生产级落地以 [production-readiness-plan.md](docs/production-readiness-plan.md) 为准。

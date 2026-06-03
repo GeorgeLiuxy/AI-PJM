@@ -1,4 +1,4 @@
-"""Create secret records table
+﻿"""Create secret records table
 
 Revision ID: 009
 Revises: 008
@@ -17,6 +17,10 @@ branch_labels = None
 depends_on = None
 
 
+def json_type():
+    return sa.JSON().with_variant(postgresql.JSONB(astext_type=sa.Text()), "postgresql")
+
+
 def upgrade() -> None:
     op.create_table(
         "secret_records",
@@ -30,7 +34,7 @@ def upgrade() -> None:
         sa.Column("value_hash", sa.String(length=128), nullable=False),
         sa.Column("value_mask", sa.String(length=32), nullable=False),
         sa.Column("status", sa.String(length=50), nullable=False),
-        sa.Column("metadata_json", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
+        sa.Column("metadata_json", json_type(), nullable=True),
         sa.Column("created_by_user_id", sa.BigInteger(), nullable=True),
         sa.Column("updated_by_user_id", sa.BigInteger(), nullable=True),
         sa.Column("last_used_at", sa.DateTime(timezone=True), nullable=True),

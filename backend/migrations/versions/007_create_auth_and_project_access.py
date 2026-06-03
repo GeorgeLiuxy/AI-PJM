@@ -1,4 +1,4 @@
-"""Create auth and project access tables
+﻿"""Create auth and project access tables
 
 Revision ID: 007
 Revises: 006
@@ -15,6 +15,10 @@ revision = "007"
 down_revision = "006"
 branch_labels = None
 depends_on = None
+
+
+def json_type():
+    return sa.JSON().with_variant(postgresql.JSONB(astext_type=sa.Text()), "postgresql")
 
 
 def upgrade() -> None:
@@ -44,7 +48,7 @@ def upgrade() -> None:
         sa.Column("repository_root", sa.String(length=1000), nullable=True),
         sa.Column("default_branch", sa.String(length=200), nullable=False),
         sa.Column("status", sa.String(length=50), nullable=False),
-        sa.Column("settings_json", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
+        sa.Column("settings_json", json_type(), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
         sa.PrimaryKeyConstraint("id"),
@@ -75,7 +79,7 @@ def upgrade() -> None:
         sa.Column("user_id", sa.BigInteger(), nullable=False),
         sa.Column("name", sa.String(length=200), nullable=False),
         sa.Column("token_hash", sa.String(length=128), nullable=False),
-        sa.Column("scopes_json", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
+        sa.Column("scopes_json", json_type(), nullable=False),
         sa.Column("expires_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("last_used_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("revoked_at", sa.DateTime(timezone=True), nullable=True),
@@ -88,24 +92,23 @@ def upgrade() -> None:
     op.create_index("ix_auth_api_tokens_token_hash", "auth_api_tokens", ["token_hash"])
     op.create_index("ix_auth_api_tokens_revoked_at", "auth_api_tokens", ["revoked_at"])
 
-    op.add_column("delivery_demand_items", sa.Column("project_id", sa.BigInteger(), nullable=True))
-    op.add_column("delivery_demand_items", sa.Column("created_by_user_id", sa.BigInteger(), nullable=True))
-    op.create_foreign_key(
-        "fk_delivery_demand_items_project_id_auth_projects",
-        "delivery_demand_items",
-        "auth_projects",
-        ["project_id"],
-        ["id"],
-        ondelete="SET NULL",
-    )
-    op.create_foreign_key(
-        "fk_delivery_demand_items_created_by_user_id_auth_users",
-        "delivery_demand_items",
-        "auth_users",
-        ["created_by_user_id"],
-        ["id"],
-        ondelete="SET NULL",
-    )
+    with op.batch_alter_table("delivery_demand_items") as batch:
+        batch.add_column(sa.Column("project_id", sa.BigInteger(), nullable=True))
+        batch.add_column(sa.Column("created_by_user_id", sa.BigInteger(), nullable=True))
+        batch.create_foreign_key(
+            "fk_delivery_demand_items_project_id_auth_projects",
+            "auth_projects",
+            ["project_id"],
+            ["id"],
+            ondelete="SET NULL",
+        )
+        batch.create_foreign_key(
+            "fk_delivery_demand_items_created_by_user_id_auth_users",
+            "auth_users",
+            ["created_by_user_id"],
+            ["id"],
+            ondelete="SET NULL",
+        )
     op.create_index("ix_delivery_demand_items_project_id", "delivery_demand_items", ["project_id"])
     op.create_index(
         "ix_delivery_demand_items_created_by_user_id",
@@ -117,18 +120,17 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.drop_index("ix_delivery_demand_items_created_by_user_id", table_name="delivery_demand_items")
     op.drop_index("ix_delivery_demand_items_project_id", table_name="delivery_demand_items")
-    op.drop_constraint(
-        "fk_delivery_demand_items_created_by_user_id_auth_users",
-        "delivery_demand_items",
-        type_="foreignkey",
-    )
-    op.drop_constraint(
-        "fk_delivery_demand_items_project_id_auth_projects",
-        "delivery_demand_items",
-        type_="foreignkey",
-    )
-    op.drop_column("delivery_demand_items", "created_by_user_id")
-    op.drop_column("delivery_demand_items", "project_id")
+    with op.batch_alter_table("delivery_demand_items") as batch:
+        batch.drop_constraint(
+            "fk_delivery_demand_items_created_by_user_id_auth_users",
+            type_="foreignkey",
+        )
+        batch.drop_constraint(
+            "fk_delivery_demand_items_project_id_auth_projects",
+            type_="foreignkey",
+        )
+        batch.drop_column("created_by_user_id")
+        batch.drop_column("project_id")
 
     op.drop_index("ix_auth_api_tokens_revoked_at", table_name="auth_api_tokens")
     op.drop_index("ix_auth_api_tokens_token_hash", table_name="auth_api_tokens")
@@ -148,4 +150,3 @@ def downgrade() -> None:
     op.drop_index("ix_auth_users_role", table_name="auth_users")
     op.drop_index("ix_auth_users_username", table_name="auth_users")
     op.drop_table("auth_users")
-

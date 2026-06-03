@@ -54,6 +54,18 @@ Local URLs:
 
 The default local database is SQLite at `backend/data/ai_pjm_dev.db`.
 
+Production-style migration flow:
+
+```powershell
+$env:DATABASE_URL="postgresql+asyncpg://user:password@host:5432/ai_pjm"
+python scripts/migrate.py upgrade head
+python scripts/migrate.py current
+```
+
+Non-SQLite startup validates the database is at Alembic head when
+`DATABASE_VALIDATE_MIGRATIONS=true`. Local SQLite development still uses
+`create_all` plus compatibility fixes to preserve the lightweight dev loop.
+
 Provider credential defaults:
 
 - Dify: `dify_api_key`, fallback `DIFY_API_KEY`
@@ -68,7 +80,7 @@ After a GitLab MR is created, `POST /api/v2/merge-requests/{id}/sync-review` can
 
 ```powershell
 python -m compileall app migrations
-python -m pytest tests/test_delivery_v2_units.py tests/test_delivery_v2.py tests/test_health.py -q
+python -m pytest tests/test_migrations.py tests/test_delivery_v2_units.py tests/test_delivery_v2.py tests/test_auth.py tests/test_health.py -q
 ```
 
 ## Structure
@@ -80,6 +92,6 @@ backend/
     common/               # Shared response contracts
     core/                 # Config, DB, logging, exceptions
     modules/delivery/     # Delivery domain, gates, provider boundary
-  migrations/             # Alembic migrations for the delivery schema
+  migrations/             # Alembic migrations for the backend schema
   tests/                  # Delivery and health tests
 ```

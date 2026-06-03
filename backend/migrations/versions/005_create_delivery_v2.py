@@ -1,4 +1,4 @@
-"""Create delivery v2 tables
+﻿"""Create delivery v2 tables
 
 Revision ID: 005
 Revises: 004
@@ -17,6 +17,10 @@ branch_labels = None
 depends_on = None
 
 
+def json_type():
+    return sa.JSON().with_variant(postgresql.JSONB(astext_type=sa.Text()), "postgresql")
+
+
 def upgrade() -> None:
     op.create_table(
         "delivery_demand_items",
@@ -28,7 +32,7 @@ def upgrade() -> None:
         sa.Column("status", sa.String(length=50), nullable=False),
         sa.Column("risk_level", sa.String(length=20), nullable=True),
         sa.Column("confidence_score", sa.Float(), nullable=True),
-        sa.Column("context_payload", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
+        sa.Column("context_payload", json_type(), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
         sa.PrimaryKeyConstraint("id"),
@@ -45,10 +49,10 @@ def upgrade() -> None:
         sa.Column("title", sa.String(length=500), nullable=False),
         sa.Column("user_story", sa.Text(), nullable=False),
         sa.Column("scope", sa.Text(), nullable=True),
-        sa.Column("acceptance_criteria_json", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
-        sa.Column("constraints_json", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
-        sa.Column("risks_json", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
-        sa.Column("open_questions_json", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
+        sa.Column("acceptance_criteria_json", json_type(), nullable=False),
+        sa.Column("constraints_json", json_type(), nullable=False),
+        sa.Column("risks_json", json_type(), nullable=False),
+        sa.Column("open_questions_json", json_type(), nullable=False),
         sa.Column("created_by", sa.String(length=50), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
@@ -65,7 +69,7 @@ def upgrade() -> None:
         sa.Column("gate_type", sa.String(length=100), nullable=False),
         sa.Column("status", sa.String(length=50), nullable=False),
         sa.Column("reason", sa.Text(), nullable=True),
-        sa.Column("evidence_json", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
+        sa.Column("evidence_json", json_type(), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.ForeignKeyConstraint(["demand_id"], ["delivery_demand_items.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
@@ -82,10 +86,10 @@ def upgrade() -> None:
         sa.Column("status", sa.String(length=50), nullable=False),
         sa.Column("title", sa.String(length=500), nullable=False),
         sa.Column("task_prompt", sa.Text(), nullable=False),
-        sa.Column("allowed_paths_json", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
-        sa.Column("forbidden_actions_json", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
-        sa.Column("required_checks_json", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
-        sa.Column("expected_evidence_json", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
+        sa.Column("allowed_paths_json", json_type(), nullable=False),
+        sa.Column("forbidden_actions_json", json_type(), nullable=False),
+        sa.Column("required_checks_json", json_type(), nullable=False),
+        sa.Column("expected_evidence_json", json_type(), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
         sa.ForeignKeyConstraint(["demand_id"], ["delivery_demand_items.id"], ondelete="CASCADE"),
@@ -103,11 +107,11 @@ def upgrade() -> None:
         sa.Column("status", sa.String(length=50), nullable=False),
         sa.Column("provider", sa.String(length=100), nullable=False),
         sa.Column("summary", sa.Text(), nullable=False),
-        sa.Column("source_refs_json", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
-        sa.Column("discovered_files_json", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
-        sa.Column("dependency_refs_json", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
+        sa.Column("source_refs_json", json_type(), nullable=False),
+        sa.Column("discovered_files_json", json_type(), nullable=False),
+        sa.Column("dependency_refs_json", json_type(), nullable=False),
         sa.Column("confidence_score", sa.Float(), nullable=False),
-        sa.Column("provider_metadata_json", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
+        sa.Column("provider_metadata_json", json_type(), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
         sa.ForeignKeyConstraint(["demand_id"], ["delivery_demand_items.id"], ondelete="CASCADE"),
@@ -124,12 +128,12 @@ def upgrade() -> None:
         sa.Column("status", sa.String(length=50), nullable=False),
         sa.Column("provider", sa.String(length=100), nullable=False),
         sa.Column("summary", sa.Text(), nullable=False),
-        sa.Column("impacted_areas_json", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
-        sa.Column("affected_files_json", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
-        sa.Column("recommendations_json", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
+        sa.Column("impacted_areas_json", json_type(), nullable=False),
+        sa.Column("affected_files_json", json_type(), nullable=False),
+        sa.Column("recommendations_json", json_type(), nullable=False),
         sa.Column("risk_level", sa.String(length=20), nullable=False),
         sa.Column("confidence_score", sa.Float(), nullable=False),
-        sa.Column("provider_metadata_json", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
+        sa.Column("provider_metadata_json", json_type(), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
         sa.ForeignKeyConstraint(["demand_id"], ["delivery_demand_items.id"], ondelete="CASCADE"),
@@ -152,7 +156,7 @@ def upgrade() -> None:
         sa.Column("branch_name", sa.String(length=500), nullable=True),
         sa.Column("commit_sha", sa.String(length=100), nullable=True),
         sa.Column("result_summary", sa.Text(), nullable=True),
-        sa.Column("evidence_json", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
+        sa.Column("evidence_json", json_type(), nullable=True),
         sa.Column("started_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("finished_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
@@ -170,7 +174,7 @@ def upgrade() -> None:
         sa.Column("execution_run_id", sa.BigInteger(), nullable=False),
         sa.Column("level", sa.String(length=50), nullable=False),
         sa.Column("message", sa.Text(), nullable=False),
-        sa.Column("event_json", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
+        sa.Column("event_json", json_type(), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.ForeignKeyConstraint(["execution_run_id"], ["delivery_execution_runs.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),

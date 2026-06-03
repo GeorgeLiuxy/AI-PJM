@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     # Database
     database_url: str = "sqlite+aiosqlite:///./data/ai_pjm_dev.db"
     database_echo: bool = False
+    database_validate_migrations: bool = True
 
     # Auth and project access
     auth_enabled: bool = False
