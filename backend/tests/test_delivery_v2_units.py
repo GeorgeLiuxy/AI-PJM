@@ -1207,6 +1207,7 @@ async def test_delivery_service_auto_repairs_blocking_merge_request_review(db_se
     await db_session.commit()
 
     service = DeliveryService()
+    pushed: dict[str, object] = {}
 
     async def fake_dispatch(db, execution_run_id):
         run = await delivery_repository.get_execution_run(db, execution_run_id)
@@ -1228,7 +1229,22 @@ async def test_delivery_service_auto_repairs_blocking_merge_request_review(db_se
         assert loaded is not None
         return loaded
 
+    async def fake_push_repair(*, provider, record, run):
+        pushed["provider"] = provider
+        pushed["merge_request_id"] = record.id
+        pushed["repair_run_id"] = run.id
+        return {
+            "enabled": True,
+            "provider": "gitlab",
+            "remote": "origin",
+            "source_branch": "codex/repaired",
+            "target_branch": record.source_branch,
+            "stdout_tail": "pushed",
+            "stderr_tail": "",
+        }
+
     service.dispatch_execution_run = fake_dispatch
+    service._push_repair_run_to_merge_request = fake_push_repair
 
     repair_runs = await service.auto_repair_merge_request_review(
         db_session,
@@ -1245,15 +1261,27 @@ async def test_delivery_service_auto_repairs_blocking_merge_request_review(db_se
     assert repair_context["source_run_id"] == source_run.id
     assert repair_context["source_merge_request_id"] == record.id
     assert repair_context["review_issues"] == ["Fix the failing build before merging."]
+    assert pushed == {
+        "provider": "gitlab",
+        "merge_request_id": record.id,
+        "repair_run_id": repair_run.id,
+    }
+
+    updated_record = await delivery_repository.get_merge_request_record(db_session, record.id)
+    assert updated_record.status == MergeRequestStatus.REVIEWING
+    assert updated_record.review_status == ReviewStatus.PENDING
+    assert updated_record.evidence_json["latest_repair_run_id"] == repair_run.id
+    assert updated_record.evidence_json["latest_repair_push"]["target_branch"] == "codex/status-badge"
 
     audit_events = await audit_repository.list_events(
         db_session,
         project_id=project.id,
-        action="delivery.merge_request_review_repair_started",
+        entity_type="merge_request",
     )
-    assert audit_events
-    assert audit_events[0].actor_ref == "operator"
-    assert audit_events[0].metadata_json["execution_run_ids"] == [repair_run.id]
+    actions = {event.action: event for event in audit_events}
+    assert actions["delivery.merge_request_review_repair_started"].actor_ref == "operator"
+    assert actions["delivery.merge_request_review_repair_started"].metadata_json["execution_run_ids"] == [repair_run.id]
+    assert actions["delivery.merge_request_repair_pushed"].metadata_json["repair_run_id"] == repair_run.id
 
 
 @pytest.mark.asyncio
@@ -1438,6 +1466,61 @@ async def test_delivery_service_blocks_gitlab_merge_request_when_push_fails(monk
     assert "Git push failed" in exc_info.value.detail
     assert "local-token-123456" not in exc_info.value.detail
     assert REDACTED in exc_info.value.detail
+
+
+@pytest.mark.asyncio
+async def test_delivery_service_pushes_repair_run_to_original_merge_request_branch(monkeypatch, tmp_path):
+    monkeypatch.setattr(settings, "merge_request_auto_push_enabled", True)
+    monkeypatch.setattr(settings, "merge_request_git_remote", "origin")
+    worktree_path = tmp_path / "worktree"
+    worktree_path.mkdir()
+    captured: dict[str, object] = {}
+
+    def fake_git_push_refspec(self, path, remote, source_ref, target_ref):
+        captured["path"] = str(path)
+        captured["remote"] = remote
+        captured["source_ref"] = source_ref
+        captured["target_ref"] = target_ref
+        return subprocess.CompletedProcess(
+            args=["git", "push"],
+            returncode=0,
+            stdout="repair pushed",
+            stderr="",
+        )
+
+    monkeypatch.setattr(DeliveryService, "_run_git_push_refspec", fake_git_push_refspec)
+    run = ExecutionRun(
+        id=8,
+        coding_task_id=11,
+        worktree_path=str(worktree_path),
+        branch_name="codex/delivery-run-8-repair",
+        commit_sha="def456",
+    )
+    record = MergeRequestRecord(
+        id=19,
+        coding_task_id=11,
+        execution_run_id=7,
+        provider="gitlab",
+        title="Add status badge",
+        source_branch="codex/status-badge",
+        target_branch="main",
+    )
+
+    evidence = await DeliveryService()._push_repair_run_to_merge_request(
+        provider="gitlab",
+        record=record,
+        run=run,
+    )
+
+    assert captured == {
+        "path": str(worktree_path),
+        "remote": "origin",
+        "source_ref": "codex/delivery-run-8-repair",
+        "target_ref": "codex/status-badge",
+    }
+    assert evidence["source_branch"] == "codex/delivery-run-8-repair"
+    assert evidence["target_branch"] == "codex/status-badge"
+    assert evidence["stdout_tail"] == "repair pushed"
 
 
 @pytest.mark.asyncio

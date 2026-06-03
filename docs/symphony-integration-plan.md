@@ -309,7 +309,7 @@ AI PJM 收到完成事件后再执行：
 
 目标：自测通过后自动创建真实 GitLab/GitHub MR。
 
-状态：GitLab MR provider 首版已实现，可通过 AI PJM 服务端按项目读取 `gitlab_token`，创建 MR 前自动 push 执行分支，并创建 MR。GitLab 远端评审同步首版已实现，可拉取 MR 状态、讨论评论和 commit CI 状态，并回写 MR、门禁、审计和证据链；交付工作台已提供远端 MR 的“同步评审”入口。评审阻塞自动修复串联首版已实现，可把远端阻塞项写入修复 run 的 `repair_context.review_issues`，再由 Codex/Symphony 受控执行。后续重点是修复后更新原 MR、支持 GitLab webhook 和补 GitHub provider。
+状态：GitLab MR provider 首版已实现，可通过 AI PJM 服务端按项目读取 `gitlab_token`，创建 MR 前自动 push 执行分支，并创建 MR。GitLab 远端评审同步首版已实现，可拉取 MR 状态、讨论评论和 commit CI 状态，并回写 MR、门禁、审计和证据链；交付工作台已提供远端 MR 的“同步评审”入口。评审阻塞自动修复串联首版已实现，可把远端阻塞项写入修复 run 的 `repair_context.review_issues`，再由 Codex/Symphony 受控执行；修复成功后会把修复分支推回原 GitLab MR 源分支。后续重点是支持 GitLab webhook 和补 GitHub provider。
 
 任务：
 
@@ -317,7 +317,7 @@ AI PJM 收到完成事件后再执行：
 - Symphony 或 AI PJM 推送分支。（AI PJM 服务端自动 push 首版已完成）
 - AI PJM 创建 `MergeRequestRecord` 并记录远端 URL。
 - 远端失败原因、评论和 CI 状态回写证据。（GitLab 手动同步接口首版已完成）
-- 远端阻塞意见触发受控自动修复 run。（首版已完成，更新原 MR 待实现）
+- 远端阻塞意见触发受控自动修复 run。（首版已完成，修复后推回原 GitLab MR 源分支已完成）
 
 完成标准：
 

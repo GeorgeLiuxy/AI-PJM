@@ -848,6 +848,20 @@ class DeliveryService:
             repaired_run = await self.dispatch_execution_run(db, queued_run.id)
             repair_runs.append(repaired_run)
             if repaired_run.status == ExecutionRunStatus.SUCCEEDED:
+                push_evidence = await self._push_repair_run_to_merge_request(
+                    provider=record.provider,
+                    record=record,
+                    run=repaired_run,
+                )
+                await self._mark_merge_request_repair_pushed(
+                    db=db,
+                    record=record,
+                    repaired_run=repaired_run,
+                    push_evidence=push_evidence,
+                    project_id=demand.project_id,
+                    actor_user_id=actor_user_id,
+                    actor_ref=actor_ref,
+                )
                 break
             if self._has_changed_file_violations(repaired_run) or not self._has_failed_check_evidence(repaired_run):
                 break
@@ -2090,11 +2104,129 @@ class DeliveryService:
             "stderr_tail": stderr_tail,
         }
 
+    async def _push_repair_run_to_merge_request(
+        self,
+        *,
+        provider: str,
+        record: MergeRequestRecord,
+        run: ExecutionRun,
+    ) -> dict:
+        normalized_provider = (provider or "local").strip().lower()
+        if normalized_provider == "local":
+            return {"enabled": False, "reason": "local_provider"}
+        if normalized_provider != "gitlab":
+            return {"enabled": False, "reason": "provider_not_supported", "provider": normalized_provider}
+        if not settings.merge_request_auto_push_enabled:
+            return {"enabled": False, "reason": "disabled"}
+
+        remote = settings.merge_request_git_remote.strip()
+        if not remote:
+            raise BadRequestException("MERGE_REQUEST_GIT_REMOTE is required when auto push is enabled")
+        if not record.source_branch:
+            raise BadRequestException("Merge request has no source branch for repair push")
+        if not run.worktree_path:
+            raise BadRequestException("Repair execution run has no worktree path for remote branch push")
+
+        repair_branch = run.branch_name or self._dispatch_evidence_value(run, "branch_name")
+        if not repair_branch:
+            raise BadRequestException("Repair execution run has no source branch for remote branch push")
+
+        worktree_path = Path(run.worktree_path).expanduser()
+        if not worktree_path.exists() or not worktree_path.is_dir():
+            raise BadRequestException(f"Repair execution worktree does not exist: {run.worktree_path}")
+
+        try:
+            completed = await asyncio.to_thread(
+                self._run_git_push_refspec,
+                worktree_path,
+                remote,
+                repair_branch,
+                record.source_branch,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise BadRequestException(
+                "Git push timed out while updating merge request repair: "
+                f"{self._safe_tail(exc.stderr) or self._safe_tail(exc.stdout)}"
+            ) from exc
+        stdout_tail = self._safe_tail(completed.stdout)
+        stderr_tail = self._safe_tail(completed.stderr)
+        if completed.returncode != 0:
+            detail = stderr_tail or stdout_tail or "git push failed"
+            raise BadRequestException(f"Git push failed while updating merge request repair: {detail}")
+
+        return {
+            "enabled": True,
+            "provider": normalized_provider,
+            "remote": remote,
+            "source_branch": repair_branch,
+            "target_branch": record.source_branch,
+            "timeout_seconds": settings.merge_request_push_timeout_seconds,
+            "stdout_tail": stdout_tail,
+            "stderr_tail": stderr_tail,
+        }
+
+    async def _mark_merge_request_repair_pushed(
+        self,
+        *,
+        db: AsyncSession,
+        record: MergeRequestRecord,
+        repaired_run: ExecutionRun,
+        push_evidence: dict,
+        project_id: int | None,
+        actor_user_id: int | None,
+        actor_ref: str | None,
+    ) -> None:
+        evidence = {
+            **(record.evidence_json or {}),
+            "latest_repair_run_id": repaired_run.id,
+            "latest_repair_commit_sha": repaired_run.commit_sha or self._dispatch_evidence_value(repaired_run, "commit_sha"),
+            "latest_repair_push": redact_value(push_evidence),
+        }
+        await delivery_repository.update_merge_request_record(
+            db,
+            record,
+            status=MergeRequestStatus.REVIEWING,
+            review_status=ReviewStatus.PENDING,
+            review_summary="Repair changes were pushed; remote review should be synced again.",
+            evidence_json=evidence,
+        )
+        await audit_repository.create_event(
+            db,
+            action="delivery.merge_request_repair_pushed",
+            entity_type="merge_request",
+            entity_id=record.id,
+            project_id=project_id,
+            actor_user_id=actor_user_id,
+            actor_ref=actor_ref or "system",
+            summary="Merge request repair changes pushed.",
+            metadata={
+                "merge_request_id": record.id,
+                "repair_run_id": repaired_run.id,
+                "source_branch": push_evidence.get("source_branch"),
+                "target_branch": push_evidence.get("target_branch"),
+                "enabled": push_evidence.get("enabled"),
+            },
+        )
+
     def _run_git_push(
         self,
         worktree_path: Path,
         remote: str,
         source_branch: str,
+    ) -> subprocess.CompletedProcess[str]:
+        return self._run_git_push_refspec(
+            worktree_path,
+            remote,
+            source_branch,
+            source_branch,
+        )
+
+    def _run_git_push_refspec(
+        self,
+        worktree_path: Path,
+        remote: str,
+        source_ref: str,
+        target_ref: str,
     ) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
             [
@@ -2104,7 +2236,7 @@ class DeliveryService:
                 "push",
                 "--set-upstream",
                 remote,
-                f"{source_branch}:{source_branch}",
+                f"{source_ref}:{target_ref}",
             ],
             capture_output=True,
             text=True,
