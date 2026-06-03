@@ -138,7 +138,7 @@ export interface DeliveryExecutionLog {
 export interface DeliveryExecutionRun {
   id: number;
   coding_task_id: number;
-  status: 'queued' | 'running' | 'blocked' | 'failed' | 'succeeded';
+  status: 'queued' | 'running' | 'paused' | 'cancelled' | 'blocked' | 'failed' | 'succeeded';
   executor_type: string;
   trigger_mode: string;
   worktree_path: string | null;

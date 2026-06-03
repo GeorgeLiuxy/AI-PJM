@@ -43,6 +43,7 @@ SYMPHONY_BRIDGE_DEFAULT_LEASE_SECONDS=300
 | `SYMPHONY_WORKER_ID` | `symphony-worker-<随机后缀>` | worker 标识，会写入 execution evidence，建议生产或长期运行环境使用稳定值。 |
 | `SYMPHONY_WORKSPACE` | 当前工作目录 | worker 运行 runner command 和 required checks 的工作区。建议使用仓库根目录，便于按仓库相对路径回写 changed files。 |
 | `SYMPHONY_WORKER_RUNTIME_DIR` | `.runtime/symphony-worker` | worker 保存 task package 和 prompt 文件的本地运行目录。 |
+| `SYMPHONY_WORKER_STATUS_FILE` | 空 | 可选 JSON 状态文件路径；通过启动脚本运行时默认写入 `.runtime/symphony-worker/worker-status.json`。 |
 | `SYMPHONY_RUNNER_COMMAND` | 空 | 可选本地执行命令模板。支持 `{run_id}`、`{workspace}`、`{workspace_q}`、`{task_package_file}`、`{task_package_file_q}`、`{task_prompt_file}`、`{task_prompt_file_q}`。 |
 | `SYMPHONY_WORKER_COMMAND_TIMEOUT_SECONDS` | `1800` | worker 执行 runner command 和 required checks 时，每条本地命令的超时时间。 |
 | `SYMPHONY_WORKER_LEASE_SECONDS` | `2100` | worker claim 和 heartbeat 时请求的租约秒数。默认比命令超时多 300 秒。 |
@@ -164,16 +165,23 @@ python -m pytest tests/test_delivery_v2_units.py tests/test_delivery_v2.py tests
 
 - 未带 token 不允许访问内部接口
 - 只返回 `executor_type=symphony` 的 queued run
+- `/dispatch` 对 `executor_type=symphony` 保持 queued，等待 worker claim
+- pause 后 run 不再被 worker claim，resume 后重新进入 queued
+- cancel 后 run 进入 cancelled，worker late complete 会被拒绝
+- 同一 coding task 已有 queued/running/paused run 时，重复创建会返回现有 active run
 - task package 可读取执行上下文
 - claim 后状态进入 running
 - 重复 claim 被拒绝
 - event 和 complete evidence 会脱敏
 - heartbeat 会刷新 lease
+- lease 过期的 running run 会被恢复为 failed，避免永久卡住
 - complete 会写入最终 run 状态和 self-test gate
 
 ## 7. 下一步
 
-S2 不应把 Symphony 执行塞回现有 HTTP dispatch 长请求。当前已经增加一个最小命令行 worker：
+S2 已完成首版：`get_execution_executor("symphony")` 会返回 `SymphonyBridgeExecutor`。`/api/v2/execution-runs/{id}/dispatch` 对 `executor_type=symphony` 的 run 只做后台投递记录，保持 `queued`，不会退回本地检查执行器，也不会在 HTTP 请求里长时间运行。最终成功或失败只能由 worker 通过 `/complete` 回写后由 AI PJM 校验决定。内部队列查询会顺手恢复 lease 过期的 running run，将其标记为 failed 并保留 worker、lease 和恢复时间证据。
+
+当前也已经增加一个最小命令行 worker：
 
 ```text
 backend/scripts/symphony_worker.py
@@ -205,3 +213,43 @@ python scripts/symphony_worker.py `
 路径里包含空格时，runner command 应优先使用 `{workspace_q}`、`{task_prompt_file_q}`、`{task_package_file_q}` 这类已转义占位符。
 
 后续接真实 Symphony 时，优先把 `--runner-command` 替换为 Symphony/Codex 的本地执行入口；不要让前端页面或 `/dispatch` HTTP 请求承担长任务执行。
+
+## 8. 本地常驻 worker
+
+本地开发和试点环境可以用独立脚本启动 worker，不把长任务塞进 FastAPI 进程：
+
+```powershell
+$env:SYMPHONY_BRIDGE_TOKEN="dev-bridge-token"
+.\scripts\start-symphony-worker.ps1
+```
+
+常用参数：
+
+```powershell
+.\scripts\start-symphony-worker.ps1 `
+  -ApiBaseUrl http://127.0.0.1:8010/api/v2 `
+  -WorkerId symphony-worker-local `
+  -Workspace "D:\projects\AI PJM" `
+  -PollSeconds 5
+```
+
+如果希望启动前后端时同时启动 worker：
+
+```powershell
+$env:SYMPHONY_BRIDGE_TOKEN="dev-bridge-token"
+.\scripts\start-dev.ps1 -WithWorker
+```
+
+停止 worker：
+
+```powershell
+.\scripts\stop-symphony-worker.ps1
+```
+
+`.\scripts\stop-dev.ps1` 也会同时停止 worker。运行时文件：
+
+- PID：`.runtime/symphony-worker.pid`
+- 状态：`.runtime/symphony-worker/worker-status.json`
+- 日志：`.runtime/logs/symphony-worker.out.log` 和 `.runtime/logs/symphony-worker.err.log`
+
+status 文件包含 `worker_id`、`state`、`run_id`、`message`、`workspace`、`updated_at`，用于本地确认 worker 是否 idle、running、succeeded 或 failed。

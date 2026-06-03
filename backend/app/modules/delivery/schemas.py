@@ -205,6 +205,12 @@ class AutoRepairExecutionRequest(BaseModel):
     max_attempts: int | None = Field(default=None, ge=1, le=3)
 
 
+class ExecutionRunControlRequest(BaseModel):
+    """Operator control request for a queued or running execution run."""
+
+    reason: Optional[str] = Field(default=None, max_length=1000)
+
+
 class MergeRequestCreateRequest(BaseModel):
     """Create or register a merge request for a completed coding task."""
 

@@ -53,11 +53,23 @@ class Settings(BaseSettings):
     execution_auto_repair_max_attempts: int = 1
     execution_max_concurrency: int = 1
     merge_request_default_target_branch: str = "main"
+    merge_request_auto_push_enabled: bool = True
+    merge_request_git_remote: str = "origin"
+    merge_request_push_timeout_seconds: int = 120
+    gitlab_api_base_url: str = ""
+    gitlab_project_id: str = ""
+    gitlab_token: str = ""
+    gitlab_token_secret_name: str = "gitlab_token"
+    deploy_webhook_url: str = ""
+    deploy_token: str = ""
+    deploy_token_secret_name: str = "deploy_token"
     symphony_bridge_token: str = ""
     symphony_bridge_default_lease_seconds: int = 300
 
     # AI API (reserved)
     anthropic_api_key: str = ""
+    openai_api_key: str = ""
+    openai_api_key_secret_name: str = "openai_api_key"
     ai_workflow_provider: str = "local"
     dify_api_base_url: str = ""
     dify_api_key: str = ""

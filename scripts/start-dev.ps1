@@ -1,5 +1,6 @@
 param(
     [switch]$NoFrontend,
+    [switch]$WithWorker,
     [int]$BackendPort = 8010,
     [int]$FrontendPort = 5173,
     [switch]$BackendReload
@@ -82,6 +83,7 @@ function Get-AvailablePort {
 
 Stop-FromPidFile -Path (Join-Path $RuntimeDir "backend.pid")
 Stop-FromPidFile -Path (Join-Path $RuntimeDir "frontend.pid")
+Stop-FromPidFile -Path (Join-Path $RuntimeDir "symphony-worker.pid")
 Stop-WorkspaceListeners -Ports @($BackendPort, $FrontendPort, ($FrontendPort + 1), ($FrontendPort + 2), ($FrontendPort + 3))
 Start-Sleep -Seconds 1
 
@@ -150,6 +152,12 @@ if (-not $backendReady) {
     throw "Backend did not become healthy at $healthUrl. See logs: $LogDir"
 }
 
+if ($WithWorker) {
+    & (Join-Path $PSScriptRoot "start-symphony-worker.ps1") `
+        -ApiBaseUrl "http://127.0.0.1:$BackendPort/api/v2" `
+        -Workspace $Root
+}
+
 if (-not $NoFrontend) {
     $frontendOut = Join-Path $LogDir "frontend.out.log"
     $frontendErr = Join-Path $LogDir "frontend.err.log"
@@ -175,5 +183,8 @@ Write-Host "Backend:  http://127.0.0.1:$BackendPort/docs"
 if (-not $NoFrontend) {
     Write-Host "Frontend: http://127.0.0.1:$FrontendPort"
     Write-Host "Delivery: http://127.0.0.1:$FrontendPort"
+}
+if ($WithWorker) {
+    Write-Host "Worker:   $RuntimeDir\symphony-worker\worker-status.json"
 }
 Write-Host "Logs:     $LogDir"

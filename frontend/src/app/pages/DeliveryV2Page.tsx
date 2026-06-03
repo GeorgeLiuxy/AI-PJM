@@ -1896,7 +1896,8 @@ function shouldRunExecution(result: DeliveryResult): boolean {
     result.task.status === 'blocked' ||
     result.run.status === 'queued' ||
     result.run.status === 'blocked' ||
-    result.run.status === 'failed'
+    result.run.status === 'failed' ||
+    result.run.status === 'cancelled'
   );
 }
 
@@ -1911,11 +1912,14 @@ function stepFromTask(task: DeliveryCodingTask): StepState {
 }
 
 function stepFromRun(run: DeliveryExecutionRun): StepState {
-  if (run.status === 'failed' || run.status === 'blocked') {
+  if (run.status === 'failed' || run.status === 'blocked' || run.status === 'cancelled') {
     return 'failed';
   }
   if (run.status === 'running' || run.status === 'queued') {
     return 'running';
+  }
+  if (run.status === 'paused') {
+    return 'idle';
   }
   return 'done';
 }
@@ -2066,6 +2070,8 @@ function formatStatusLabel(value?: string | number | null): string {
     ready: '就绪',
     insufficient: '信息不足',
     queued: '排队中',
+    paused: '已暂停',
+    cancelled: '已取消',
     blocked: '已阻塞',
     completed: '已完成',
     created: '已创建',
@@ -2182,7 +2188,7 @@ function localizeText(value: string): string {
     [/Change login permission logic and migrate production user tokens\./g, '调整登录权限逻辑并迁移生产用户令牌。'],
     [/Required checks passed \((\d+)\/(\d+)\)\./g, '必要检查通过（$1/$2）。'],
     [/Required checks failed \((\d+)\/(\d+) passed\)\./g, '必要检查失败（$1/$2 通过）。'],
-    [/Execution (queued|running|blocked|failed|succeeded|completed)/g, '执行状态：$1'],
+    [/Execution (queued|running|paused|cancelled|blocked|failed|succeeded|completed)/g, '执行状态：$1'],
     [/As a product or delivery owner, I want this request to be converted into a scoped engineering change so that an AI coding executor can implement it with clear acceptance criteria\. Original input:/g, '作为产品或交付负责人，我希望该需求被转化为边界清晰的工程变更，让 AI 编码执行器可以依据明确验收标准完成实现。原始输入：'],
     [/Implement the smallest safe change that satisfies the accepted user story\./g, '在满足已确认用户故事的前提下，实施最小且安全的变更。'],
     [/The requested behavior is implemented and demonstrable\./g, '已实现并可演示所请求的行为。'],
@@ -2289,6 +2295,8 @@ function localizeText(value: string): string {
     passed: '通过',
     succeeded: '成功',
     queued: '排队中',
+    paused: '已暂停',
+    cancelled: '已取消',
     approved: '已确认',
     planned: '已规划',
     completed: '已完成',

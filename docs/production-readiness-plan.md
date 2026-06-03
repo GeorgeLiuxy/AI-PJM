@@ -72,14 +72,14 @@ AI PJM 的生产级目标：
 - 人工动作操作者结构化落库首版：人工审批、MR 创建/评审、测试部署、验收记录已写入业务表操作者字段，并保留审计事件。
 - 审计查询增强首版：审计 API 和工作台页签支持操作者、动作、对象、时间范围、关键词筛选，并支持 CSV 导出。
 - 审计事件首版：创建需求、人工审批、创建 MR、记录评审、测试部署、验收、创建项目、创建用户等动作已落库，并可在工作台审计页签查看。
-- 密钥管理首版：项目级凭证已通过服务端加密存储，API 和访问管理页只返回掩码，不返回明文，并记录创建/轮换审计事件；Dify API Key 已可按项目从 SecretStore 读取。
+- 密钥管理首版：项目级凭证已通过服务端加密存储，API 和访问管理页只返回掩码，不返回明文，并记录创建/轮换审计事件；Dify、GitLab MR 和 webhook 部署 provider 已可按项目从 SecretStore 读取凭证。
 
 当前仍不是生产级：
 
 - 权限仍是本地首版，但当前阶段只需要最小角色模型；企业 SSO、复杂组织角色和审计报表平台化不作为近期主线。
-- 密钥和 Token 已有本地加密存储、健康检查和过期提示首版，Dify API Key 已接入项目级消费；尚未接 Vault/KMS、集中轮换策略和 GitLab/OpenAI/部署 Provider 消费链路。
-- 没有真实 GitLab/GitHub MR 创建和评论同步。
-- 没有真实测试环境部署 Provider。
+- 密钥和 Token 已有本地加密存储、健康检查和过期提示首版，Dify、GitLab MR 和 webhook 部署已接入项目级消费；尚未接 Vault/KMS、集中轮换策略和 OpenAI Provider 消费链路。
+- GitLab MR 创建 client 和源分支自动推送已有首版，但仍缺远端评审评论同步和阻塞意见闭环。
+- webhook 测试部署 client 已有首版，但仍缺 CI/CD 状态轮询、重新部署和环境级配置。
 - 没有 Symphony Bridge、后台 worker 和可靠任务队列。
 - 没有数据库迁移体系和生产数据库方案。
 - 没有完整审计、告警和运行指标。
@@ -231,7 +231,7 @@ AI 不允许直接决定：
 
 目标：让 Git、AI、部署系统凭证可安全使用。
 
-当前状态：已完成本地首版。已有 `SecretStore` 服务端接口、项目级密钥表、Fernet 加密存储、密钥掩码响应、创建/轮换审计事件、访问管理页配置入口和基础权限测试。Dify Provider 会优先按项目读取 `dify_api_key`，未配置项目密钥时回退到全局 `DIFY_API_KEY`。主密钥通过 `SECRET_STORE_MASTER_KEY` 注入，未配置时禁止写入密钥。执行日志、执行证据和自测门禁证据已在持久化前进行敏感信息脱敏。密钥列表和健康检查接口已支持过期时间、健康状态、可解密性检查和最近使用时间展示。
+当前状态：已完成本地首版。已有 `SecretStore` 服务端接口、项目级密钥表、Fernet 加密存储、密钥掩码响应、创建/轮换审计事件、访问管理页配置入口和基础权限测试。Dify Provider 会优先按项目读取 `dify_api_key`，GitLab MR provider 会读取 `gitlab_token`，webhook 部署 provider 会读取 `deploy_token`；项目未配置时分别回退到全局 `DIFY_API_KEY`、`GITLAB_TOKEN`、`DEPLOY_TOKEN`。主密钥通过 `SECRET_STORE_MASTER_KEY` 注入，未配置时禁止写入密钥。执行日志、执行证据和自测门禁证据已在持久化前进行敏感信息脱敏。密钥列表和健康检查接口已支持过期时间、健康状态、可解密性检查和最近使用时间展示。
 
 实施内容：
 
@@ -239,20 +239,20 @@ AI 不允许直接决定：
 - 本地开发支持 `.env`，生产必须接 Vault、云密钥服务或数据库加密存储。（本地加密存储首版已完成）
 - 密钥只在服务端使用，不进入前端。（首版已完成）
 - 日志和证据链做脱敏。（API 响应、运行日志和执行证据首版已完成）
-- Token 配置支持项目级隔离。（存储首版已完成，Provider 消费仍需接入）
+- Token 配置支持项目级隔离。（Dify/GitLab/webhook 部署消费首版已完成，OpenAI 待实现）
 - 增加凭证健康检查和过期提示。（首版已完成）
 
 验收标准：
 
 - 前端和 API 响应不会返回明文密钥。（首版已验证）
 - 日志中不会出现 Token。（首版已增加回归用例）
-- GitLab/Dify/OpenAI/部署凭证可按项目配置。（已可保存；Dify 已读取使用，GitLab/OpenAI/部署待接入）
+- GitLab/Dify/部署凭证可按项目配置并由 provider 服务端消费；OpenAI 凭证口径已预留，OpenAI Provider 待实现。
 - 凭证失效时页面显示明确错误和修复入口。（健康状态展示已完成，轮换修复入口待增强）
 
 剩余工作：
 
 - 接入 Vault/KMS 或生产级密钥后端，支持主密钥轮换。
-- 让 GitLab/OpenAI/部署 Provider 按项目读取密钥，不再依赖全局环境变量；Dify 已完成首版项目级读取。
+- 增加 OpenAI Provider 的项目级凭证消费；GitLab/Dify/webhook 部署已完成首版项目级读取。
 - 扩展密钥健康检查，增加 Provider 级远端可用性探测、最近失败原因自动写入和过期告警。
 - 扩展日志/证据敏感信息扫描规则，增加更多 Provider 凭证格式和持续扫描告警。
 - 增加密钥轮换 UI、禁用/删除策略和审批门禁。
@@ -291,17 +291,19 @@ AI 不允许直接决定：
 
 目标：复用 OpenAI Symphony 的 Codex 编排模式，让长任务脱离页面请求，支持稳定批量执行。
 
+当前状态：已完成首版 internal bridge API、最小命令行 worker、`SymphonyBridgeExecutor`、lease 过期失败恢复、暂停/恢复/取消控制、同一任务活跃 run 幂等保护，以及本地常驻 worker 启停脚本和 status 文件。`executor_type=symphony` 的执行记录可以保持 queued，等待 worker claim；worker complete 后由 AI PJM 校验 required checks、allowed paths 和必要变更证据，再决定最终门禁。运行中 worker 如果超过 lease 未 heartbeat，会被标记 failed 并保留恢复证据，避免永久卡在 running。操作者可以暂停 queued run、恢复 paused run、取消 queued/paused/running run；取消后的 worker late complete 会被拒绝。尚未完成失败重试幂等锁增强和真实 Symphony daemon 替换。
+
 实施内容：
 
-- 按 [symphony-integration-plan.md](symphony-integration-plan.md) 完成 S0-S3。
-- 增加 AI PJM internal execution bridge API：claim、heartbeat、event、complete。
-- 增加 `SymphonyBridgeExecutor`，支持 `executor_type = symphony`。
+- 按 [symphony-integration-plan.md](symphony-integration-plan.md) 完成 S0-S3。（S0-S2 已完成，S3 已有最小 worker、lease 过期失败恢复和本地常驻启停脚本）
+- 增加 AI PJM internal execution bridge API：claim、heartbeat、event、complete。（已完成首版）
+- 增加 `SymphonyBridgeExecutor`，支持 `executor_type = symphony`。（已完成首版）
 - 引入 Symphony daemon 或兼容 adapter。
-- 执行任务入队，不在 HTTP 请求里长时间运行。
-- 支持排队、运行、成功、失败、取消、暂停、恢复、超时。
+- 执行任务入队，不在 HTTP 请求里长时间运行。（symphony executor 首版已完成）
+- 支持排队、运行、成功、失败、取消、暂停、恢复、超时。（取消/暂停/恢复和 lease 过期失败恢复首版已完成）
 - 支持最大并发、项目级并发、任务级超时。
-- 支持失败重试和幂等锁。
-- worker 异常退出后能恢复 running 状态。
+- 支持失败重试和幂等锁。（同一任务活跃 run 幂等保护首版已完成，失败重试幂等锁仍需增强）
+- worker 异常退出后能恢复 running 状态。（lease 过期标记 failed 首版已完成）
 
 建议技术方案：
 
@@ -351,22 +353,24 @@ AI 不允许直接决定：
 
 目标：让自测通过的代码进入真实代码评审系统。
 
+当前状态：GitLab `MergeRequestClient` 首版已实现，可用项目级 `gitlab_token` 或全局 `GITLAB_TOKEN` 调用 GitLab API 创建 MR，并把远端 URL、iid、源分支、目标分支和凭据来源写入证据。创建 MR 前可自动 `git push` 执行分支到配置的远端，push 失败会阻断 MR 创建并保留脱敏错误。远端评审同步首版已实现，可通过 `POST /api/v2/merge-requests/{id}/sync-review` 拉取 GitLab MR 状态、讨论评论和 commit CI 状态，写回 MR 状态、`review_passed` 门禁、审计事件和脱敏证据。reviewer/label 配置、阻塞意见自动修复、GitLab webhook 减少轮询、页面同步入口仍待实现。GitHub provider 未实现。
+
 实施内容：
 
-- 增加 GitLab/GitHub `MergeRequestClient`。
-- 创建真实 MR/PR。
+- 增加 GitLab/GitHub `MergeRequestClient`。（GitLab 首版已完成，GitHub 待实现）
+- 创建真实 MR/PR。（GitLab 首版已完成，源分支自动 push 首版已完成）
 - 设置标题、描述、源分支、目标分支、标签、reviewer。
-- MR 描述自动包含需求、风险、变更范围、检查结果、证据链接。
-- 同步 CI 状态。
-- 拉取评论和阻塞意见。
-- 阻塞意见进入自动修复或人工处理。
+- MR 描述自动包含需求、风险、变更范围、检查结果、证据链接。（需求、风险、分支、commit、检查结果、变更文件首版已完成，证据链接待补）
+- 同步 CI 状态。（GitLab 手动同步接口首版已完成）
+- 拉取评论和阻塞意见。（GitLab 手动同步接口首版已完成）
+- 阻塞意见进入自动修复或人工处理。（状态和门禁回写已完成，自动修复串联待实现）
 - 支持 webhook，减少轮询。
 
 验收标准：
 
 - 自测通过后可创建真实 MR。
 - 页面展示真实 MR 链接和远端状态。
-- 远端阻塞评论能进入平台证据链。
+- 远端阻塞评论能进入平台证据链。（GitLab 手动同步接口首版已完成）
 - 修复后能重新推送并更新 MR。
 - 没有 Token 或权限不足时明确失败。
 
@@ -378,10 +382,12 @@ AI 不允许直接决定：
 
 目标：让 MR 后的结果进入可验证环境。
 
+当前状态：`DeployClient` 边界和 `webhook` 部署 provider 首版已实现，可用项目级 `deploy_token` 或全局 `DEPLOY_TOKEN` 调用外部 webhook，并把部署 URL、状态、commit 和凭据来源写入 `DeployRecord` 证据。失败状态会写入失败门禁，不会推进验收。环境级配置、CI/CD 状态轮询、重新部署、部署日志归档仍待实现。
+
 实施内容：
 
-- 增加 `DeployClient` 接口。
-- 对接现有 CI/CD、测试环境平台或脚本入口。
+- 增加 `DeployClient` 接口。（已完成首版）
+- 对接现有 CI/CD、测试环境平台或脚本入口。（webhook 首版已完成）
 - 支持按项目配置部署环境。
 - 记录部署 URL、版本、commit、日志、状态。
 - 部署失败保留日志并阻断验收。
@@ -633,7 +639,7 @@ AI 不允许直接决定：
 1. 校准文档口径，明确项目不是企业治理平台。
 2. 按 `docs/symphony-integration-plan.md` 做 S0：拉通 Symphony 本地运行和 Codex 调用方式。
 3. 做 S1/S2：实现 AI PJM internal execution bridge API 和 `SymphonyBridgeExecutor`。
-4. 完善 SecretStore Provider 消费：GitLab/OpenAI/部署 Provider 按项目读取凭证。
+4. 完善 SecretStore Provider 消费：Dify/GitLab/webhook 部署已完成首版项目级读取，OpenAI Provider 待实现。
 5. 做 S3/S4：用 Symphony 执行低风险任务，并创建真实 GitLab/GitHub MR。
 6. 做 S5：接入真实测试环境部署 Provider。
 7. 做 S6：补 PostgreSQL、队列恢复和最小可观测性。

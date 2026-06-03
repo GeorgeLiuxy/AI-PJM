@@ -338,6 +338,24 @@ export const deliveryApi = {
       body: JSON.stringify({}),
     });
   },
+  pauseExecutionRun: (executionRunId: number, reason?: string) => {
+    return fetchAPI<DeliveryExecutionRun>(`/api/v2/execution-runs/${executionRunId}/pause`, {
+      method: 'POST',
+      body: JSON.stringify({ reason }),
+    });
+  },
+  resumeExecutionRun: (executionRunId: number, reason?: string) => {
+    return fetchAPI<DeliveryExecutionRun>(`/api/v2/execution-runs/${executionRunId}/resume`, {
+      method: 'POST',
+      body: JSON.stringify({ reason }),
+    });
+  },
+  cancelExecutionRun: (executionRunId: number, reason?: string) => {
+    return fetchAPI<DeliveryExecutionRun>(`/api/v2/execution-runs/${executionRunId}/cancel`, {
+      method: 'POST',
+      body: JSON.stringify({ reason }),
+    });
+  },
   retryCodingTaskExecution: (codingTaskId: number) => {
     return fetchAPI<DeliveryExecutionRun>(`/api/v2/coding-tasks/${codingTaskId}/retry`, {
       method: 'POST',
@@ -394,6 +412,12 @@ export const deliveryApi = {
         blocking_issues: [],
         ...params,
       }),
+    });
+  },
+  syncMergeRequestReview: (mergeRequestId: number) => {
+    return fetchAPI<DeliveryMergeRequestRecord>(`/api/v2/merge-requests/${mergeRequestId}/sync-review`, {
+      method: 'POST',
+      body: JSON.stringify({}),
     });
   },
   createDeployRecord: (

@@ -18,7 +18,7 @@
 - 低风险自动修复闭环首版。
 - 本地 MR/PR 记录、评审门禁、测试环境记录和验收记录。
 - 执行队列可见性和基础并发上限保护。
-- Dify Provider 边界首版，Dify API Key 可按项目从 SecretStore 读取。
+- Dify Provider、GitLab MR provider、webhook 部署 provider 边界首版，相关凭证可按项目从 SecretStore 读取。
 - 本地认证、Bearer Token、项目成员、用户维护和交付 API 权限保护首版。
 - 前端按钮级权限首版，工作台动作和权限管理入口按角色显示或拦截。
 - 人工审批、MR 创建/评审、测试部署、验收的操作者已写入业务表结构化字段。
@@ -28,7 +28,7 @@
 - 中文化交付工作台页面。
 - 前后端启动/关闭脚本。
 
-当前是“本地 MVP 闭环”，不是完整生产级系统。近期生产化缺口集中在主链路：Symphony Bridge、真实 GitLab/GitHub MR、真实部署 Provider、生产数据库和 Provider 凭证消费。企业 SSO、复杂业务角色和审计报表平台化不是近期主线。
+当前是“本地 MVP 闭环”，不是完整生产级系统。近期生产化缺口集中在主链路：真实 Symphony daemon/worker 替换、GitLab/GitHub 评审同步、部署状态轮询、生产数据库和 OpenAI Provider。企业 SSO、复杂业务角色和审计报表平台化不是近期主线。
 
 ## 2. 总体目标
 
@@ -165,14 +165,14 @@
 
 目标：把通过自测的结果交给代码评审系统。
 
-状态：首版已实现本地 MR/PR 记录与评审门禁。当前默认 `local` Provider 不依赖 GitLab/GitHub Token，会记录源分支、目标分支、执行记录、链接占位、评审状态和 `review_passed` 门禁；真实 GitLab/GitHub 创建、评论拉取和阻塞意见同步仍作为后续 Provider 增强项。
+状态：首版已实现本地 MR/PR 记录与评审门禁。当前默认 `local` Provider 不依赖 GitLab/GitHub Token，会记录源分支、目标分支、执行记录、链接占位、评审状态和 `review_passed` 门禁；`gitlab` Provider 已可按项目读取 `gitlab_token`，创建 MR 前自动推送执行分支，并调用 GitLab API 创建 MR。GitLab 远端评审同步首版已实现，可拉取 MR 状态、讨论评论和 commit CI 状态，并写回 MR、门禁、审计和证据链。GitHub provider、自动修复串联、GitLab webhook 和页面同步入口仍作为后续增强项。
 
 任务：
 
 - 增加 `MergeRequestRecord` 数据模型。（已完成）
-- 实现 GitLab/GitHub Client 边界，优先 GitLab。（已建立 Provider 边界，当前仅启用 local）
-- 支持创建 MR、记录 URL、源分支、目标分支、状态。（local 首版已完成）
-- 支持拉取 MR 评论和阻塞性评审意见。（远端 Provider 待实现）
+- 实现 GitLab/GitHub Client 边界，优先 GitLab。（GitLab 首版已完成，GitHub 待实现）
+- 支持创建 MR、记录 URL、源分支、目标分支、状态。（local/GitLab 首版已完成）
+- 支持拉取 MR 评论和阻塞性评审意见。（GitLab 手动同步接口首版已完成，GitHub 待实现）
 - 将 `review_passed` 做成门禁。（已完成）
 
 完成标准：
@@ -186,12 +186,12 @@
 
 目标：MR 后能进入测试环境验证，而不是停在代码层。
 
-状态：首版已实现本地测试环境记录与验收记录。当前 `local` 模式只记录测试环境 URL、环境名、验收状态和证据链接，不执行真实部署；真实测试环境部署入口后续通过 Deploy Provider 接入。
+状态：首版已实现本地测试环境记录与验收记录。当前 `local` 模式只记录测试环境 URL、环境名、验收状态和证据链接；`webhook` 部署 Provider 已可按项目读取 `deploy_token` 调用外部部署入口，并把部署 URL、状态和证据写入 `DeployRecord`。环境级配置、CI/CD 状态轮询和重新部署仍待实现。
 
 任务：
 
 - 增加 `DeployRecord` 和 `VerificationRecord`。（已完成）
-- 对接测试环境部署入口，初期可先记录外部部署 URL。（local 记录已完成，真实部署待接入）
+- 对接测试环境部署入口，初期可先记录外部部署 URL。（local 记录和 webhook 部署首版已完成）
 - 支持人工验收：通过、拒绝、备注、截图或证据链接。（通过/失败和链接记录已完成）
 - 将 `test_deployed`、`verification_passed` 做成门禁。（已完成）
 
@@ -205,16 +205,17 @@
 
 目标：通过 Symphony Bridge 把执行从 HTTP 请求迁移到后台编排，并支撑批量任务能力。
 
-状态：首版已实现执行队列可见性和并发上限保护。当前可查询最近执行记录、按状态筛选，并在页面“队列”页签查看；`EXECUTION_MAX_CONCURRENCY` 会阻止超过上限的 dispatch，让执行记录保持 queued。Symphony Bridge、后台自动 worker、取消、暂停、恢复和真正并行调度仍待实现。
+状态：首版已实现执行队列可见性、并发上限保护、Symphony internal bridge API、最小命令行 worker、`SymphonyBridgeExecutor`、lease 过期失败恢复、暂停/恢复/取消控制、同一任务活跃 run 幂等保护，以及本地常驻 worker 启停脚本和 status 文件。`executor_type=symphony` 的 dispatch 不再退回本地检查，也不会在 HTTP 请求中长时间执行；它会保持 queued，等待 worker claim 后通过 bridge complete 回写最终状态。失败重试幂等锁增强、真实 Symphony daemon 替换和真正并行调度仍待实现。
 
 任务：
 
-- 按 `docs/symphony-integration-plan.md` 完成 S0-S3。
+- 按 `docs/symphony-integration-plan.md` 完成 S0-S3。（S0-S2 已完成，S3 已有最小 worker、lease 过期失败恢复和本地常驻启停脚本）
 - 引入任务队列和运行中状态管理。（执行记录队列查询已完成）
-- 增加 internal claim、heartbeat、event、complete API。
-- 增加 `SymphonyBridgeExecutor`，支持 `executor_type = symphony`。
+- 增加 internal claim、heartbeat、event、complete API。（已完成首版）
+- 增加 `SymphonyBridgeExecutor`，支持 `executor_type = symphony`。（已完成首版）
 - 限制最大并发数，避免本地 CPU/内存被打满。（dispatch 并发保护已完成）
-- 支持取消、暂停、恢复。（待实现）
+- 支持取消、暂停、恢复。（首版已完成）
+- 同一任务活跃执行记录幂等保护，避免重复入队。（首版已完成）
 - 页面增加多任务执行看板。（队列页签已完成）
 
 完成标准：
@@ -285,9 +286,9 @@ V2 主链路已经完成本地 MVP 闭环，下一步应转入生产化基础建
 1. 完成文档口径清理，让 README、路线图、蓝图、交互说明和生产化计划一致。
 2. 按 `docs/symphony-integration-plan.md` 做 S0：拉通 Symphony 本地运行和 Codex 调用方式。
 3. 做 S1/S2：实现 AI PJM internal execution bridge API 和 `SymphonyBridgeExecutor`。
-4. 完善 SecretStore Provider 消费：让 GitLab/OpenAI/部署 Provider 按项目安全读取凭证。
-5. 做 S3/S4：用 Symphony 执行低风险任务，并创建真实 GitLab/GitHub MR。
-6. 做 S5：接真实测试环境部署 Provider，MR 后能生成可验收地址。
+4. 完善 SecretStore Provider 消费：让 GitLab/OpenAI/部署 Provider 按项目安全读取凭证。（Dify/GitLab/webhook 部署已完成首版，OpenAI 待实现）
+5. 做 S3/S4：用 Symphony 执行低风险任务，创建真实 GitLab/GitHub MR，并补远端评审同步。
+6. 做 S5：增强真实测试环境部署 Provider，补环境配置、状态轮询和重新部署。
 7. 再补 PostgreSQL/Alembic、队列恢复、生产级 Dify/OpenAI 质量评估和产品化交互。
 
 原因：生产使用时最大的风险不是缺少复杂组织治理，而是主链路仍需人工搬运、真实 MR/部署没有打通、执行和证据不够可靠。先补这些直接影响交付效率的能力，平台才能真实减少人工介入。

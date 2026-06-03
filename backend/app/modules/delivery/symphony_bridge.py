@@ -6,7 +6,7 @@ without taking ownership of delivery gates or final business state.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -38,12 +38,82 @@ class SymphonyBridgeService:
         db: AsyncSession,
         limit: int = 10,
     ) -> list[ExecutionRun]:
+        await self.recover_expired_running_runs(db)
         return await delivery_repository.list_execution_runs(
             db=db,
             statuses=[ExecutionRunStatus.QUEUED],
             executor_types=[SYMPHONY_EXECUTOR_TYPE],
             limit=min(max(limit, 1), 50),
         )
+
+    async def recover_expired_running_runs(
+        self,
+        db: AsyncSession,
+        limit: int = 100,
+    ) -> list[ExecutionRun]:
+        now = utc_now()
+        running_runs = await delivery_repository.list_execution_runs(
+            db=db,
+            statuses=[ExecutionRunStatus.RUNNING],
+            executor_types=[SYMPHONY_EXECUTOR_TYPE],
+            limit=min(max(limit, 1), 500),
+        )
+        recovered: list[ExecutionRun] = []
+
+        for run in running_runs:
+            if not self._lease_expired(run, now):
+                continue
+
+            evidence = dict(run.evidence_json or {})
+            bridge_metadata = dict(evidence.get(SYMPHONY_EVIDENCE_KEY) or {})
+            bridge_metadata.update(
+                {
+                    "status": "lease_expired",
+                    "recovered_at": now.isoformat(),
+                }
+            )
+            evidence[SYMPHONY_EVIDENCE_KEY] = bridge_metadata
+            summary = "Symphony worker lease expired; run was marked failed for recovery."
+
+            await delivery_repository.update_execution_run(
+                db,
+                run,
+                status=ExecutionRunStatus.FAILED,
+                finished_at=now,
+                result_summary=summary,
+                evidence_json=redact_value(evidence),
+            )
+            if run.coding_task:
+                await delivery_repository.update_coding_task_status(db, run.coding_task, CodingTaskStatus.BLOCKED)
+                await delivery_repository.create_gate_check(
+                    db=db,
+                    demand_id=run.coding_task.demand_id,
+                    gate_type=GateType.SELF_TEST_PASSED,
+                    status=GateStatus.FAILED,
+                    reason=summary,
+                    evidence_json={
+                        "execution_run_id": run.id,
+                        "worker_id": bridge_metadata.get("worker_id"),
+                        "lease_expires_at": bridge_metadata.get("lease_expires_at"),
+                    },
+                )
+            await delivery_repository.create_execution_log(
+                db=db,
+                execution_run_id=run.id,
+                level=ExecutionLogLevel.ERROR,
+                message=summary,
+                event_json=redact_value(
+                    {
+                        "worker_id": bridge_metadata.get("worker_id"),
+                        "lease_expires_at": bridge_metadata.get("lease_expires_at"),
+                    }
+                ),
+            )
+            recovered.append(run)
+
+        if recovered:
+            await db.commit()
+        return recovered
 
     async def get_task_package(self, db: AsyncSession, execution_run_id: int) -> dict[str, Any]:
         run = await delivery_repository.get_execution_run_for_dispatch(db, execution_run_id)
@@ -336,6 +406,22 @@ class SymphonyBridgeService:
             current_bridge["heartbeat_at"] = heartbeat_at.isoformat()
         current[SYMPHONY_EVIDENCE_KEY] = current_bridge
         return redact_value(current)
+
+    def _lease_expired(self, run: ExecutionRun, now: datetime) -> bool:
+        evidence = run.evidence_json or {}
+        bridge_metadata = evidence.get(SYMPHONY_EVIDENCE_KEY) if isinstance(evidence, dict) else {}
+        if not isinstance(bridge_metadata, dict):
+            return False
+        raw_expires_at = bridge_metadata.get("lease_expires_at")
+        if not isinstance(raw_expires_at, str) or not raw_expires_at.strip():
+            return False
+        try:
+            expires_at = datetime.fromisoformat(raw_expires_at.replace("Z", "+00:00"))
+        except ValueError:
+            return False
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        return expires_at <= now
 
     def _execution_allowed_evidence(self, evidence: dict[str, Any]) -> dict[str, Any]:
         if "execution_allowed" in evidence and isinstance(evidence["execution_allowed"], dict):

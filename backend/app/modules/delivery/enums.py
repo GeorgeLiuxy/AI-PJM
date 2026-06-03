@@ -85,6 +85,8 @@ class ExecutionRunStatus(str, Enum):
 
     QUEUED = "queued"
     RUNNING = "running"
+    PAUSED = "paused"
+    CANCELLED = "cancelled"
     BLOCKED = "blocked"
     FAILED = "failed"
     SUCCEEDED = "succeeded"

@@ -1,5 +1,9 @@
 """Delivery v2 business logic."""
 
+import asyncio
+import subprocess
+from pathlib import Path
+
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -24,6 +28,7 @@ from app.modules.delivery.enums import (
 )
 from app.modules.delivery.executors import get_execution_executor
 from app.modules.delivery.gates import DeliveryGateEngine, gate_engine
+from app.modules.delivery.deployments import get_deploy_client
 from app.modules.delivery.models import (
     CodingTask,
     DeployRecord,
@@ -36,11 +41,15 @@ from app.modules.delivery.models import (
     VerificationRecord,
 )
 from app.modules.delivery.merge_requests import get_merge_request_client
+from app.modules.delivery.provider_credentials import (
+    ProviderCredential,
+    require_provider_credential,
+    resolve_provider_credential,
+)
 from app.modules.delivery.providers import WorkflowProvider, get_workflow_provider
 from app.modules.delivery.providers.dify import DifyWorkflowProvider
 from app.modules.delivery.redaction import redact_text, redact_value
 from app.modules.delivery.repository import delivery_repository
-from app.modules.secrets.service import secret_store_service
 
 
 class DeliveryService:
@@ -65,25 +74,72 @@ class DeliveryService:
         if not isinstance(provider, DifyWorkflowProvider) or demand.project_id is None:
             return provider
 
-        secret_name = settings.dify_api_key_secret_name.strip()
-        if not secret_name:
-            return provider
-
-        try:
-            api_key = await secret_store_service.resolve_secret_by_name(
-                db,
-                project_id=demand.project_id,
-                name=secret_name,
-            )
-        except NotFoundException:
+        credential = await resolve_provider_credential(
+            db,
+            project_id=demand.project_id,
+            provider="dify",
+            secret_name=settings.dify_api_key_secret_name,
+            settings_value=settings.dify_api_key,
+        )
+        if not credential or credential.source != "secret_store":
             return provider
 
         return DifyWorkflowProvider(
-            api_key=api_key,
-            credential_source="secret_store",
-            credential_project_id=demand.project_id,
-            api_key_secret_name=secret_name,
+            api_key=credential.value,
+            credential_source=credential.source,
+            credential_project_id=credential.project_id,
+            api_key_secret_name=credential.secret_name,
         )
+
+    async def _merge_request_credential_for_provider(
+        self,
+        db: AsyncSession,
+        demand: DemandItem,
+        provider: str,
+    ) -> ProviderCredential | None:
+        normalized = (provider or "local").strip().lower()
+        if normalized == "local":
+            return None
+        if normalized == "gitlab":
+            credential = await resolve_provider_credential(
+                db,
+                project_id=demand.project_id,
+                provider=normalized,
+                secret_name=settings.gitlab_token_secret_name,
+                settings_value=settings.gitlab_token,
+            )
+            return require_provider_credential(
+                credential,
+                provider=normalized,
+                secret_name=settings.gitlab_token_secret_name,
+                settings_name="GITLAB_TOKEN",
+            )
+        return None
+
+    async def _deployment_credential_for_provider(
+        self,
+        db: AsyncSession,
+        demand: DemandItem,
+        provider: str,
+    ) -> ProviderCredential | None:
+        normalized = (provider or "local").strip().lower()
+        if normalized == "local":
+            return None
+        if normalized == "webhook":
+            credential = await resolve_provider_credential(
+                db,
+                project_id=demand.project_id,
+                provider=normalized,
+                secret_name=settings.deploy_token_secret_name,
+                settings_value=settings.deploy_token,
+            )
+            return require_provider_credential(
+                credential,
+                provider=normalized,
+                secret_name=settings.deploy_token_secret_name,
+                settings_name="DEPLOY_TOKEN",
+            )
+        return None
 
     async def create_demand(
         self,
@@ -567,6 +623,26 @@ class DeliveryService:
             if gate.status == GateStatus.PASSED
             else ExecutionRunStatus.BLOCKED
         )
+        active_run = self._active_execution_run(task)
+        if run_status == ExecutionRunStatus.QUEUED and active_run:
+            await delivery_repository.create_execution_log(
+                db=db,
+                execution_run_id=active_run.id,
+                level=ExecutionLogLevel.INFO,
+                message="Active execution run already exists; returning existing run.",
+                event_json={
+                    "coding_task_id": task.id,
+                    "active_status": active_run.status,
+                    "requested_executor_type": executor_type,
+                    "requested_trigger_mode": trigger_mode,
+                },
+            )
+            await db.commit()
+            loaded_active_run = await delivery_repository.get_execution_run(db, active_run.id)
+            if not loaded_active_run:
+                raise NotFoundException(f"Execution run {active_run.id} not found")
+            return loaded_active_run
+
         run = await delivery_repository.create_execution_run(
             db=db,
             coding_task_id=task.id,
@@ -732,11 +808,25 @@ class DeliveryService:
 
         resolved_target_branch = target_branch or settings.merge_request_default_target_branch
         resolved_title = title or task.title
-        client = get_merge_request_client(provider)
+        credential = await self._merge_request_credential_for_provider(db, demand, provider)
+        git_push_evidence = await self._push_source_branch_for_provider(
+            provider=provider,
+            run=run,
+            source_branch=source_branch,
+        )
+        description = self._build_merge_request_description(
+            demand=demand,
+            task=task,
+            run=run,
+            source_branch=source_branch,
+            target_branch=resolved_target_branch,
+        )
+        client = get_merge_request_client(provider, credential=credential)
         draft = await client.create_merge_request(
             task=task,
             run=run,
             title=resolved_title,
+            description=description,
             source_branch=source_branch,
             target_branch=resolved_target_branch,
             url=url,
@@ -749,6 +839,7 @@ class DeliveryService:
             "target_branch": resolved_target_branch,
             "created_by_user_id": actor_user_id,
             "created_by_ref": actor_ref or "system",
+            "git_push": git_push_evidence,
             "provider_evidence": draft.evidence,
         }
         record = await delivery_repository.create_merge_request_record(
@@ -893,6 +984,91 @@ class DeliveryService:
             raise NotFoundException(f"Merge request record {record.id} not found")
         return loaded_record
 
+    async def sync_merge_request_remote_review(
+        self,
+        db: AsyncSession,
+        merge_request_id: int,
+        actor_user_id: int | None = None,
+        actor_ref: str | None = None,
+    ) -> MergeRequestRecord:
+        record = await delivery_repository.get_merge_request_record(db, merge_request_id)
+        if not record:
+            raise NotFoundException(f"Merge request record {merge_request_id} not found")
+
+        task = await delivery_repository.get_coding_task(db, record.coding_task_id)
+        if not task:
+            raise NotFoundException(f"Coding task {record.coding_task_id} not found")
+        demand = await delivery_repository.get_demand(db, task.demand_id)
+        if not demand:
+            raise NotFoundException(f"Demand {task.demand_id} not found")
+
+        credential = await self._merge_request_credential_for_provider(db, demand, record.provider)
+        client = get_merge_request_client(record.provider, credential=credential)
+        remote_review = await client.fetch_remote_review(
+            record=record,
+            commit_sha=self._merge_request_commit_sha(record, task),
+        )
+        review_status_value = self._enum_or_str(remote_review.review_status)
+        status_value = self._enum_or_str(remote_review.status)
+        reviewed_at = utc_now()
+        summary = redact_text(remote_review.summary)
+        comments = redact_value(remote_review.comments)
+        blockers = [redact_text(item) for item in remote_review.blocking_issues]
+        remote_evidence = redact_value(remote_review.evidence)
+        evidence = {
+            **(record.evidence_json or {}),
+            "remote_review": remote_evidence,
+            "remote_review_synced_at": reviewed_at.isoformat(),
+            "remote_review_synced_by_user_id": actor_user_id,
+            "remote_review_synced_by_ref": actor_ref or "system",
+        }
+
+        await delivery_repository.update_merge_request_record(
+            db,
+            record,
+            status=status_value,
+            review_status=review_status_value,
+            review_summary=summary,
+            review_comments_json=comments,
+            evidence_json=evidence,
+            reviewed_by_user_id=actor_user_id,
+            reviewed_by_ref=actor_ref or "system",
+            reviewed_at=reviewed_at,
+        )
+        await delivery_repository.create_gate_check(
+            db=db,
+            demand_id=demand.id,
+            gate_type=GateType.REVIEW_PASSED,
+            status=self._review_gate_status(review_status_value),
+            reason=summary,
+            evidence_json={
+                "merge_request_id": record.id,
+                "review_status": review_status_value,
+                "blocking_issues": blockers,
+                "remote_review": remote_evidence,
+            },
+        )
+        await audit_repository.create_event(
+            db,
+            action="delivery.merge_request_remote_review_synced",
+            entity_type="merge_request",
+            entity_id=record.id,
+            project_id=demand.project_id,
+            actor_user_id=actor_user_id,
+            actor_ref=actor_ref or "system",
+            summary=summary,
+            metadata={
+                "review_status": review_status_value,
+                "blocking_issues": blockers,
+                "provider": record.provider,
+            },
+        )
+        await db.commit()
+        loaded_record = await delivery_repository.get_merge_request_record(db, record.id)
+        if not loaded_record:
+            raise NotFoundException(f"Merge request record {record.id} not found")
+        return loaded_record
+
     async def create_deploy_record(
         self,
         db: AsyncSession,
@@ -916,29 +1092,37 @@ class DeliveryService:
         if not demand:
             raise NotFoundException(f"Demand {task.demand_id} not found")
 
-        status = self._enum_or_str(DeploymentStatus.DEPLOYED)
+        credential = await self._deployment_credential_for_provider(db, demand, provider)
+        client = get_deploy_client(provider, credential=credential)
+        draft = await client.create_deployment(
+            task=task,
+            merge_request=merge_request,
+            environment=environment,
+            url=url,
+        )
+        status = self._enum_or_str(draft.status)
         evidence = {
-            "mode": "local_record",
             "merge_request_id": merge_request.id,
             "coding_task_id": task.id,
             "environment": environment,
-            "provider": provider,
+            "provider": draft.provider,
             "created_by_user_id": actor_user_id,
             "created_by_ref": actor_ref or "system",
+            "provider_evidence": draft.evidence,
         }
         deploy_record = await delivery_repository.create_deploy_record(
             db=db,
             merge_request_id=merge_request.id,
             coding_task_id=task.id,
-            provider=provider,
+            provider=draft.provider,
             status=status,
             environment=environment,
-            url=url,
+            url=draft.url,
             evidence_json=evidence,
             created_by_user_id=actor_user_id,
             created_by_ref=actor_ref or "system",
         )
-        if provider == "local" and not deploy_record.url:
+        if draft.provider == "local" and not deploy_record.url:
             await delivery_repository.update_deploy_record(
                 db,
                 deploy_record,
@@ -949,8 +1133,12 @@ class DeliveryService:
             db=db,
             demand_id=demand.id,
             gate_type=GateType.TEST_DEPLOYED,
-            status=GateStatus.PASSED,
-            reason="Test deployment record was created.",
+            status=GateStatus.PASSED if status == self._enum_or_str(DeploymentStatus.DEPLOYED) else GateStatus.FAILED,
+            reason=(
+                "Test deployment record was created."
+                if status == self._enum_or_str(DeploymentStatus.DEPLOYED)
+                else "Test deployment provider reported failure."
+            ),
             evidence_json={
                 "deploy_record_id": deploy_record.id,
                 "merge_request_id": merge_request.id,
@@ -1071,6 +1259,15 @@ class DeliveryService:
         if not demand:
             raise NotFoundException(f"Demand {task.demand_id} not found")
 
+        executor = get_execution_executor(run.executor_type)
+        if getattr(executor, "deferred", False):
+            return await self._dispatch_deferred_execution_run(
+                db=db,
+                run=run,
+                task=task,
+                executor=executor,
+            )
+
         running_count = await delivery_repository.count_running_execution_runs(
             db,
             exclude_run_id=run.id,
@@ -1110,12 +1307,17 @@ class DeliveryService:
         )
         await db.commit()
 
-        executor = get_execution_executor(run.executor_type)
         result = await executor.dispatch(
             run=run,
             task=task,
             timeout_seconds=settings.execution_command_timeout_seconds,
         )
+        await db.refresh(run)
+        if run.status == ExecutionRunStatus.CANCELLED:
+            loaded_run = await delivery_repository.get_execution_run(db, run.id)
+            if not loaded_run:
+                raise NotFoundException(f"Execution run {run.id} not found")
+            return loaded_run
 
         final_status = (
             ExecutionRunStatus.SUCCEEDED
@@ -1172,6 +1374,275 @@ class DeliveryService:
         if not loaded_run:
             raise NotFoundException(f"Execution run {run.id} not found")
         return loaded_run
+
+    async def _dispatch_deferred_execution_run(
+        self,
+        *,
+        db: AsyncSession,
+        run: ExecutionRun,
+        task: CodingTask,
+        executor,
+    ) -> ExecutionRun:
+        result = await executor.dispatch(
+            run=run,
+            task=task,
+            timeout_seconds=settings.execution_command_timeout_seconds,
+        )
+        existing_evidence = run.evidence_json or {}
+        safe_summary = redact_text(result.summary)
+        safe_evidence = redact_value(result.evidence)
+
+        await delivery_repository.update_execution_run(
+            db,
+            run,
+            status=ExecutionRunStatus.QUEUED,
+            result_summary=safe_summary,
+            evidence_json={
+                "execution_allowed": self._execution_allowed_evidence(existing_evidence),
+                "dispatch": safe_evidence,
+            },
+        )
+
+        for level, message, event_json in result.logs:
+            await delivery_repository.create_execution_log(
+                db=db,
+                execution_run_id=run.id,
+                level=level,
+                message=redact_text(message),
+                event_json=redact_value(event_json) if event_json is not None else None,
+            )
+
+        await db.commit()
+        loaded_run = await delivery_repository.get_execution_run(db, run.id)
+        if not loaded_run:
+            raise NotFoundException(f"Execution run {run.id} not found")
+        return loaded_run
+
+    async def pause_execution_run(
+        self,
+        db: AsyncSession,
+        execution_run_id: int,
+        reason: str | None = None,
+        actor_user_id: int | None = None,
+        actor_ref: str | None = None,
+    ) -> ExecutionRun:
+        run = await delivery_repository.get_execution_run_with_task(db, execution_run_id)
+        if not run:
+            raise NotFoundException(f"Execution run {execution_run_id} not found")
+        if run.status != ExecutionRunStatus.QUEUED:
+            raise BadRequestException("Only queued execution runs can be paused")
+
+        summary = "Execution run paused by operator."
+        evidence_json = self._control_evidence(
+            run,
+            action="paused",
+            reason=reason,
+            actor_ref=actor_ref,
+        )
+        await delivery_repository.update_execution_run(
+            db,
+            run,
+            status=ExecutionRunStatus.PAUSED,
+            result_summary=summary,
+            evidence_json=evidence_json,
+        )
+        if run.coding_task:
+            await delivery_repository.update_coding_task_status(db, run.coding_task, CodingTaskStatus.READY)
+        await self._record_execution_control(
+            db=db,
+            run=run,
+            action="paused",
+            summary=summary,
+            reason=reason,
+            actor_user_id=actor_user_id,
+            actor_ref=actor_ref,
+            level=ExecutionLogLevel.INFO,
+        )
+        await db.commit()
+        return await self._reload_execution_run(db, run.id)
+
+    async def resume_execution_run(
+        self,
+        db: AsyncSession,
+        execution_run_id: int,
+        reason: str | None = None,
+        actor_user_id: int | None = None,
+        actor_ref: str | None = None,
+    ) -> ExecutionRun:
+        run = await delivery_repository.get_execution_run_with_task(db, execution_run_id)
+        if not run:
+            raise NotFoundException(f"Execution run {execution_run_id} not found")
+        if run.status != ExecutionRunStatus.PAUSED:
+            raise BadRequestException("Only paused execution runs can be resumed")
+
+        summary = "Execution run resumed and returned to queue."
+        evidence_json = self._control_evidence(
+            run,
+            action="resumed",
+            reason=reason,
+            actor_ref=actor_ref,
+        )
+        await delivery_repository.update_execution_run(
+            db,
+            run,
+            status=ExecutionRunStatus.QUEUED,
+            result_summary=summary,
+            evidence_json=evidence_json,
+        )
+        if run.coding_task:
+            await delivery_repository.update_coding_task_status(db, run.coding_task, CodingTaskStatus.READY)
+        await self._record_execution_control(
+            db=db,
+            run=run,
+            action="resumed",
+            summary=summary,
+            reason=reason,
+            actor_user_id=actor_user_id,
+            actor_ref=actor_ref,
+            level=ExecutionLogLevel.INFO,
+        )
+        await db.commit()
+        return await self._reload_execution_run(db, run.id)
+
+    async def cancel_execution_run(
+        self,
+        db: AsyncSession,
+        execution_run_id: int,
+        reason: str | None = None,
+        actor_user_id: int | None = None,
+        actor_ref: str | None = None,
+    ) -> ExecutionRun:
+        run = await delivery_repository.get_execution_run_with_task(db, execution_run_id)
+        if not run:
+            raise NotFoundException(f"Execution run {execution_run_id} not found")
+        if run.status not in {
+            ExecutionRunStatus.QUEUED,
+            ExecutionRunStatus.PAUSED,
+            ExecutionRunStatus.RUNNING,
+        }:
+            raise BadRequestException("Only queued, paused or running execution runs can be cancelled")
+
+        previous_status = run.status
+        summary = "Execution run cancelled by operator."
+        evidence_json = self._control_evidence(
+            run,
+            action="cancelled",
+            reason=reason,
+            actor_ref=actor_ref,
+        )
+        await delivery_repository.update_execution_run(
+            db,
+            run,
+            status=ExecutionRunStatus.CANCELLED,
+            finished_at=utc_now(),
+            result_summary=summary,
+            evidence_json=evidence_json,
+        )
+        if run.coding_task:
+            next_task_status = (
+                CodingTaskStatus.BLOCKED
+                if previous_status == ExecutionRunStatus.RUNNING
+                else CodingTaskStatus.READY
+            )
+            await delivery_repository.update_coding_task_status(db, run.coding_task, next_task_status)
+            if previous_status == ExecutionRunStatus.RUNNING:
+                await delivery_repository.create_gate_check(
+                    db=db,
+                    demand_id=run.coding_task.demand_id,
+                    gate_type=GateType.SELF_TEST_PASSED,
+                    status=GateStatus.FAILED,
+                    reason=summary,
+                    evidence_json={
+                        "execution_run_id": run.id,
+                        "previous_status": previous_status,
+                        "reason": reason,
+                    },
+                )
+        await self._record_execution_control(
+            db=db,
+            run=run,
+            action="cancelled",
+            summary=summary,
+            reason=reason,
+            actor_user_id=actor_user_id,
+            actor_ref=actor_ref,
+            level=ExecutionLogLevel.WARNING,
+            extra={"previous_status": previous_status},
+        )
+        await db.commit()
+        return await self._reload_execution_run(db, run.id)
+
+    async def _reload_execution_run(self, db: AsyncSession, execution_run_id: int) -> ExecutionRun:
+        loaded_run = await delivery_repository.get_execution_run(db, execution_run_id)
+        if not loaded_run:
+            raise NotFoundException(f"Execution run {execution_run_id} not found")
+        return loaded_run
+
+    def _control_evidence(
+        self,
+        run: ExecutionRun,
+        *,
+        action: str,
+        reason: str | None,
+        actor_ref: str | None,
+    ) -> dict:
+        evidence = dict(run.evidence_json or {})
+        controls = list(evidence.get("controls") or [])
+        controls.append(
+            redact_value(
+                {
+                    "action": action,
+                    "reason": reason,
+                    "actor_ref": actor_ref or "system",
+                    "recorded_at": utc_now().isoformat(),
+                }
+            )
+        )
+        evidence["controls"] = controls
+        evidence["last_control"] = controls[-1]
+        return redact_value(evidence)
+
+    async def _record_execution_control(
+        self,
+        *,
+        db: AsyncSession,
+        run: ExecutionRun,
+        action: str,
+        summary: str,
+        reason: str | None,
+        actor_user_id: int | None,
+        actor_ref: str | None,
+        level: str,
+        extra: dict | None = None,
+    ) -> None:
+        event_json = redact_value(
+            {
+                "action": action,
+                "reason": reason,
+                "actor_ref": actor_ref or "system",
+                **(extra or {}),
+            }
+        )
+        await delivery_repository.create_execution_log(
+            db=db,
+            execution_run_id=run.id,
+            level=level,
+            message=summary,
+            event_json=event_json,
+        )
+        task = run.coding_task
+        demand = task.demand if task else None
+        await audit_repository.create_event(
+            db,
+            action=f"delivery.execution_{action}",
+            entity_type="execution_run",
+            entity_id=run.id,
+            project_id=demand.project_id if demand else None,
+            actor_user_id=actor_user_id,
+            actor_ref=actor_ref or "system",
+            summary=summary,
+            metadata=event_json,
+        )
 
     def _derive_title(self, raw_input: str) -> str:
         compact = " ".join(raw_input.split())
@@ -1323,6 +1794,204 @@ class DeliveryService:
             return None
         value = dispatch.get(key)
         return str(value) if value else None
+
+    def _merge_request_commit_sha(self, record: MergeRequestRecord, task: CodingTask) -> str | None:
+        evidence = record.evidence_json or {}
+        if isinstance(evidence, dict):
+            value = evidence.get("commit_sha")
+            if value:
+                return str(value)
+            provider_evidence = evidence.get("provider_evidence")
+            if isinstance(provider_evidence, dict):
+                value = provider_evidence.get("commit_sha")
+                if value:
+                    return str(value)
+
+        for run in task.execution_runs or []:
+            if run.id == record.execution_run_id:
+                return run.commit_sha or self._dispatch_evidence_value(run, "commit_sha")
+        return None
+
+    def _review_gate_status(self, review_status: str) -> GateStatus:
+        if review_status == self._enum_or_str(ReviewStatus.PASSED):
+            return GateStatus.PASSED
+        if review_status == self._enum_or_str(ReviewStatus.BLOCKING):
+            return GateStatus.FAILED
+        return GateStatus.MANUAL_REQUIRED
+
+    async def _push_source_branch_for_provider(
+        self,
+        *,
+        provider: str,
+        run: ExecutionRun,
+        source_branch: str,
+    ) -> dict:
+        normalized_provider = (provider or "local").strip().lower()
+        if normalized_provider == "local":
+            return {"enabled": False, "reason": "local_provider"}
+        if normalized_provider != "gitlab":
+            return {"enabled": False, "reason": "provider_not_supported", "provider": normalized_provider}
+        if not settings.merge_request_auto_push_enabled:
+            return {"enabled": False, "reason": "disabled"}
+
+        remote = settings.merge_request_git_remote.strip()
+        if not remote:
+            raise BadRequestException("MERGE_REQUEST_GIT_REMOTE is required when auto push is enabled")
+        if not run.worktree_path:
+            raise BadRequestException("Execution run has no worktree path for remote branch push")
+
+        worktree_path = Path(run.worktree_path).expanduser()
+        if not worktree_path.exists() or not worktree_path.is_dir():
+            raise BadRequestException(f"Execution worktree does not exist: {run.worktree_path}")
+
+        try:
+            completed = await asyncio.to_thread(
+                self._run_git_push,
+                worktree_path,
+                remote,
+                source_branch,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise BadRequestException(
+                "Git push timed out before merge request creation: "
+                f"{self._safe_tail(exc.stderr) or self._safe_tail(exc.stdout)}"
+            ) from exc
+        stdout_tail = self._safe_tail(completed.stdout)
+        stderr_tail = self._safe_tail(completed.stderr)
+        if completed.returncode != 0:
+            detail = stderr_tail or stdout_tail or "git push failed"
+            raise BadRequestException(f"Git push failed before merge request creation: {detail}")
+
+        return {
+            "enabled": True,
+            "provider": normalized_provider,
+            "remote": remote,
+            "branch": source_branch,
+            "timeout_seconds": settings.merge_request_push_timeout_seconds,
+            "stdout_tail": stdout_tail,
+            "stderr_tail": stderr_tail,
+        }
+
+    def _run_git_push(
+        self,
+        worktree_path: Path,
+        remote: str,
+        source_branch: str,
+    ) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [
+                "git",
+                "-C",
+                str(worktree_path),
+                "push",
+                "--set-upstream",
+                remote,
+                f"{source_branch}:{source_branch}",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=settings.merge_request_push_timeout_seconds,
+            check=False,
+        )
+
+    def _safe_tail(self, value: str | bytes | None, limit: int = 2000) -> str:
+        if value is None:
+            return ""
+        text = value.decode("utf-8", errors="replace") if isinstance(value, bytes) else str(value)
+        text = redact_text(text).strip()
+        if len(text) <= limit:
+            return text
+        return text[-limit:]
+
+    def _build_merge_request_description(
+        self,
+        *,
+        demand: DemandItem,
+        task: CodingTask,
+        run: ExecutionRun,
+        source_branch: str,
+        target_branch: str,
+    ) -> str:
+        evidence = run.evidence_json or {}
+        dispatch = evidence.get("dispatch") if isinstance(evidence, dict) else {}
+        if not isinstance(dispatch, dict):
+            dispatch = {}
+
+        changed_files = self._string_items(dispatch.get("changed_files"))
+        check_results = self._check_result_lines(dispatch)
+        lines = [
+            "## AI PJM Delivery Summary",
+            "",
+            "### Demand",
+            f"- Demand ID: {demand.id}",
+            f"- Title: {demand.title or task.title}",
+            f"- Risk level: {demand.risk_level or 'unknown'}",
+            "",
+            "### Task",
+            f"- Task ID: {task.id}",
+            f"- Execution run ID: {run.id}",
+            f"- Source branch: {source_branch}",
+            f"- Target branch: {target_branch}",
+            f"- Commit: {run.commit_sha or self._dispatch_evidence_value(run, 'commit_sha') or 'unknown'}",
+            f"- Result: {run.result_summary or 'No execution summary recorded.'}",
+            "",
+            "### Required Checks",
+        ]
+        lines.extend(self._markdown_items(task.required_checks_json or [], empty="No required checks recorded."))
+        lines.extend(["", "### Check Results"])
+        lines.extend(self._markdown_items(check_results, empty="No check results recorded."))
+        lines.extend(["", "### Changed Files"])
+        lines.extend(self._markdown_items(changed_files, empty="No changed files recorded."))
+        lines.extend(["", "### Allowed Paths"])
+        lines.extend(self._markdown_items(task.allowed_paths_json or [], empty="No allowed paths recorded."))
+        return redact_text("\n".join(lines))
+
+    def _check_result_lines(self, dispatch: dict) -> list[str]:
+        raw_results = dispatch.get("check_results")
+        if not isinstance(raw_results, list):
+            raw_results = dispatch.get("command_results")
+        if not isinstance(raw_results, list):
+            return []
+        results: list[str] = []
+        for raw_result in raw_results:
+            if not isinstance(raw_result, dict):
+                continue
+            command = str(raw_result.get("command") or raw_result.get("name") or "unknown")
+            status = str(raw_result.get("status") or "unknown")
+            exit_code = raw_result.get("exit_code")
+            suffix = f", exit {exit_code}" if exit_code is not None else ""
+            results.append(f"{command}: {status}{suffix}")
+        return results
+
+    def _string_items(self, value) -> list[str]:
+        if isinstance(value, list):
+            return [str(item) for item in value if str(item).strip()]
+        if isinstance(value, str) and value.strip():
+            return [value.strip()]
+        return []
+
+    def _markdown_items(self, values: list[str], *, empty: str) -> list[str]:
+        items = [str(value).strip() for value in values if str(value).strip()]
+        if not items:
+            return [f"- {empty}"]
+        return [f"- {item}" for item in items]
+
+    def _execution_allowed_evidence(self, evidence: dict) -> dict:
+        if "execution_allowed" in evidence and isinstance(evidence["execution_allowed"], dict):
+            return redact_value(evidence["execution_allowed"])
+        return redact_value({key: value for key, value in evidence.items() if key != "dispatch"})
+
+    def _active_execution_run(self, task: CodingTask) -> ExecutionRun | None:
+        active_statuses = {
+            ExecutionRunStatus.QUEUED,
+            ExecutionRunStatus.RUNNING,
+            ExecutionRunStatus.PAUSED,
+        }
+        active_runs = [
+            run for run in (task.execution_runs or [])
+            if run.status in active_statuses
+        ]
+        return self._latest_by_created_at(active_runs)
 
     def _enum_or_str(self, value) -> str:
         return str(value.value) if hasattr(value, "value") else str(value)

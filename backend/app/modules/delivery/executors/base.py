@@ -28,6 +28,7 @@ class ExecutionDispatchResult:
     summary: str
     evidence: dict
     logs: list[tuple[str, str, dict | None]] = field(default_factory=list)
+    deferred: bool = False
 
 
 class ExecutionExecutor(Protocol):

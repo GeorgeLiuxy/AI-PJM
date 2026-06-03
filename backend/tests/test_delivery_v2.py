@@ -4,6 +4,7 @@ import json
 import os
 import shutil
 import subprocess
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -157,6 +158,44 @@ async def create_review_passed_merge_request(client, generated_worktrees) -> tup
 
 
 @pytest.mark.asyncio
+async def test_symphony_dispatch_keeps_run_queued_for_worker(client, monkeypatch):
+    monkeypatch.setattr(settings, "symphony_bridge_token", "bridge-token")
+
+    task_data = await create_ready_coding_task(client, allowed_paths=["backend/app"])
+    run_response = await client.post(
+        f"/api/v2/coding-tasks/{task_data['id']}/runs",
+        json={"executor_type": "symphony", "trigger_mode": "background"},
+    )
+    assert run_response.status_code == 201
+    run_data = run_response.json()["data"]
+
+    dispatch_response = await client.post(f"/api/v2/execution-runs/{run_data['id']}/dispatch")
+    assert dispatch_response.status_code == 200
+    dispatched = dispatch_response.json()["data"]
+    assert dispatched["status"] == ExecutionRunStatus.QUEUED
+    assert dispatched["result_summary"] == "Execution is queued for Symphony worker claim."
+    assert dispatched["evidence_json"]["dispatch"]["executor"] == "symphony_bridge"
+    assert dispatched["evidence_json"]["dispatch"]["deferred"] is True
+
+    task_response = await client.get(f"/api/v2/coding-tasks/{task_data['id']}")
+    assert task_response.status_code == 200
+    assert task_response.json()["data"]["status"] == "ready"
+
+    headers = {"X-Symphony-Bridge-Token": "bridge-token"}
+    queue_response = await client.get("/api/v2/internal/symphony/execution-runs", headers=headers)
+    assert queue_response.status_code == 200
+    assert [item["id"] for item in queue_response.json()["data"]] == [run_data["id"]]
+
+    claim_response = await client.post(
+        f"/api/v2/internal/symphony/execution-runs/{run_data['id']}/claim",
+        json={"worker_id": "worker-a", "lease_seconds": 90},
+        headers=headers,
+    )
+    assert claim_response.status_code == 200
+    assert claim_response.json()["data"]["status"] == ExecutionRunStatus.RUNNING
+
+
+@pytest.mark.asyncio
 async def test_symphony_bridge_claim_event_heartbeat_and_complete(client, monkeypatch):
     monkeypatch.setattr(settings, "symphony_bridge_token", "bridge-token")
     monkeypatch.setattr(settings, "symphony_bridge_default_lease_seconds", 120)
@@ -253,6 +292,145 @@ async def test_symphony_bridge_claim_event_heartbeat_and_complete(client, monkey
     assert completed["status"] == ExecutionRunStatus.SUCCEEDED
     assert completed["worktree_path"].endswith("/.runtime/worktrees/example")
     assert completed["evidence_json"]["dispatch"]["api_key"] == "[REDACTED]"
+
+
+@pytest.mark.asyncio
+async def test_symphony_bridge_recovers_expired_worker_lease(client, db_session, monkeypatch):
+    monkeypatch.setattr(settings, "symphony_bridge_token", "bridge-token")
+
+    task_data = await create_ready_coding_task(client, allowed_paths=["backend/app"])
+    run_response = await client.post(
+        f"/api/v2/coding-tasks/{task_data['id']}/runs",
+        json={"executor_type": "symphony", "trigger_mode": "background"},
+    )
+    assert run_response.status_code == 201
+    run_id = run_response.json()["data"]["id"]
+
+    headers = {"X-Symphony-Bridge-Token": "bridge-token"}
+    claim_response = await client.post(
+        f"/api/v2/internal/symphony/execution-runs/{run_id}/claim",
+        json={"worker_id": "worker-expired", "lease_seconds": 90},
+        headers=headers,
+    )
+    assert claim_response.status_code == 200
+
+    run = await delivery_repository.get_execution_run(db_session, run_id)
+    expired_evidence = dict(run.evidence_json or {})
+    bridge_metadata = dict(expired_evidence["symphony_bridge"])
+    bridge_metadata["lease_expires_at"] = datetime(2000, 1, 1, tzinfo=timezone.utc).isoformat()
+    expired_evidence["symphony_bridge"] = bridge_metadata
+    await delivery_repository.update_execution_run(db_session, run, evidence_json=expired_evidence)
+    await db_session.commit()
+
+    queue_response = await client.get("/api/v2/internal/symphony/execution-runs", headers=headers)
+    assert queue_response.status_code == 200
+    assert queue_response.json()["data"] == []
+
+    recovered_response = await client.get(f"/api/v2/execution-runs/{run_id}")
+    assert recovered_response.status_code == 200
+    recovered = recovered_response.json()["data"]
+    assert recovered["status"] == ExecutionRunStatus.FAILED
+    assert recovered["evidence_json"]["symphony_bridge"]["status"] == "lease_expired"
+    assert recovered["result_summary"] == "Symphony worker lease expired; run was marked failed for recovery."
+
+    task_response = await client.get(f"/api/v2/coding-tasks/{task_data['id']}")
+    assert task_response.status_code == 200
+    assert task_response.json()["data"]["status"] == "blocked"
+
+
+@pytest.mark.asyncio
+async def test_execution_run_pause_and_resume_control_symphony_queue(client, monkeypatch):
+    monkeypatch.setattr(settings, "symphony_bridge_token", "bridge-token")
+
+    task_data = await create_ready_coding_task(client, allowed_paths=["backend/app"])
+    run_response = await client.post(
+        f"/api/v2/coding-tasks/{task_data['id']}/runs",
+        json={"executor_type": "symphony", "trigger_mode": "background"},
+    )
+    assert run_response.status_code == 201
+    run_id = run_response.json()["data"]["id"]
+
+    dispatch_response = await client.post(f"/api/v2/execution-runs/{run_id}/dispatch")
+    assert dispatch_response.status_code == 200
+
+    pause_response = await client.post(
+        f"/api/v2/execution-runs/{run_id}/pause",
+        json={"reason": "Hold for operator check."},
+    )
+    assert pause_response.status_code == 200
+    paused = pause_response.json()["data"]
+    assert paused["status"] == ExecutionRunStatus.PAUSED
+    assert paused["evidence_json"]["last_control"]["action"] == "paused"
+
+    headers = {"X-Symphony-Bridge-Token": "bridge-token"}
+    queue_response = await client.get("/api/v2/internal/symphony/execution-runs", headers=headers)
+    assert queue_response.status_code == 200
+    assert queue_response.json()["data"] == []
+
+    resume_response = await client.post(
+        f"/api/v2/execution-runs/{run_id}/resume",
+        json={"reason": "Operator check passed."},
+    )
+    assert resume_response.status_code == 200
+    resumed = resume_response.json()["data"]
+    assert resumed["status"] == ExecutionRunStatus.QUEUED
+    assert resumed["evidence_json"]["last_control"]["action"] == "resumed"
+
+    resumed_queue_response = await client.get("/api/v2/internal/symphony/execution-runs", headers=headers)
+    assert resumed_queue_response.status_code == 200
+    assert [item["id"] for item in resumed_queue_response.json()["data"]] == [run_id]
+
+
+@pytest.mark.asyncio
+async def test_execution_run_cancel_blocks_late_symphony_completion(client, monkeypatch):
+    monkeypatch.setattr(settings, "symphony_bridge_token", "bridge-token")
+
+    task_data = await create_ready_coding_task(client, allowed_paths=["backend/app"])
+    run_response = await client.post(
+        f"/api/v2/coding-tasks/{task_data['id']}/runs",
+        json={"executor_type": "symphony", "trigger_mode": "background"},
+    )
+    assert run_response.status_code == 201
+    run_id = run_response.json()["data"]["id"]
+
+    headers = {"X-Symphony-Bridge-Token": "bridge-token"}
+    claim_response = await client.post(
+        f"/api/v2/internal/symphony/execution-runs/{run_id}/claim",
+        json={"worker_id": "worker-cancel", "lease_seconds": 90},
+        headers=headers,
+    )
+    assert claim_response.status_code == 200
+
+    cancel_response = await client.post(
+        f"/api/v2/execution-runs/{run_id}/cancel",
+        json={"reason": "Operator cancelled stale task."},
+    )
+    assert cancel_response.status_code == 200
+    cancelled = cancel_response.json()["data"]
+    assert cancelled["status"] == ExecutionRunStatus.CANCELLED
+    assert cancelled["evidence_json"]["last_control"]["action"] == "cancelled"
+
+    task_response = await client.get(f"/api/v2/coding-tasks/{task_data['id']}")
+    assert task_response.status_code == 200
+    assert task_response.json()["data"]["status"] == "blocked"
+
+    complete_response = await client.post(
+        f"/api/v2/internal/symphony/execution-runs/{run_id}/complete",
+        json={
+            "worker_id": "worker-cancel",
+            "status": "succeeded",
+            "summary": "Late worker completion.",
+            "evidence": {
+                "changed_files": ["backend/app/modules/delivery/symphony_bridge.py"],
+                "command_results": [
+                    {"command": "python -m compileall app", "status": "passed", "exit_code": 0}
+                ],
+            },
+        },
+        headers=headers,
+    )
+    assert complete_response.status_code == 409
+    assert "not running" in complete_response.json()["message"]
 
 
 @pytest.mark.asyncio
@@ -542,6 +720,22 @@ async def test_delivery_v2_records_merge_request_review_gate(client, generated_w
 
 
 @pytest.mark.asyncio
+async def test_delivery_v2_rejects_remote_review_sync_for_local_merge_request(client, generated_worktrees):
+    task_data, _run_data = await create_succeeded_execution(client, generated_worktrees)
+    mr_response = await client.post(
+        f"/api/v2/coding-tasks/{task_data['id']}/merge-request",
+        json={"provider": "local"},
+    )
+    assert mr_response.status_code == 201
+    mr_data = mr_response.json()["data"]
+
+    sync_response = await client.post(f"/api/v2/merge-requests/{mr_data['id']}/sync-review")
+
+    assert sync_response.status_code == 400
+    assert "does not support remote review sync" in sync_response.json()["message"]
+
+
+@pytest.mark.asyncio
 async def test_delivery_v2_creates_deployment_after_review_passes(client, generated_worktrees):
     task_data, _run_data, mr_data = await create_review_passed_merge_request(client, generated_worktrees)
 
@@ -641,7 +835,7 @@ async def test_delivery_v2_lists_execution_queue(client):
 
 
 @pytest.mark.asyncio
-async def test_delivery_v2_dispatch_respects_concurrency_limit(client, db_session):
+async def test_delivery_v2_create_execution_run_is_idempotent_for_active_task(client):
     task_data = await create_ready_coding_task(client)
     first_response = await client.post(
         f"/api/v2/coding-tasks/{task_data['id']}/runs",
@@ -649,6 +843,31 @@ async def test_delivery_v2_dispatch_respects_concurrency_limit(client, db_sessio
     )
     second_response = await client.post(
         f"/api/v2/coding-tasks/{task_data['id']}/runs",
+        json={"executor_type": "codex", "trigger_mode": "manual"},
+    )
+    assert first_response.status_code == 201
+    assert second_response.status_code == 201
+    assert second_response.json()["data"]["id"] == first_response.json()["data"]["id"]
+
+    queue_response = await client.get("/api/v2/execution-runs?statuses=queued&limit=10")
+    assert queue_response.status_code == 200
+    matching = [
+        item for item in queue_response.json()["data"]
+        if item["coding_task_id"] == task_data["id"]
+    ]
+    assert len(matching) == 1
+
+
+@pytest.mark.asyncio
+async def test_delivery_v2_dispatch_respects_concurrency_limit(client, db_session):
+    first_task_data = await create_ready_coding_task(client)
+    second_task_data = await create_ready_coding_task(client)
+    first_response = await client.post(
+        f"/api/v2/coding-tasks/{first_task_data['id']}/runs",
+        json={"executor_type": "codex", "trigger_mode": "manual"},
+    )
+    second_response = await client.post(
+        f"/api/v2/coding-tasks/{second_task_data['id']}/runs",
         json={"executor_type": "codex", "trigger_mode": "manual"},
     )
     assert first_response.status_code == 201

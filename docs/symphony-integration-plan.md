@@ -275,12 +275,14 @@ AI PJM 收到完成事件后再执行：
 
 目标：让 `executor_type = symphony` 的执行记录交给 Symphony。
 
+状态：已完成首版。`get_execution_executor("symphony")` 已返回 `SymphonyBridgeExecutor`；HTTP dispatch 只记录后台投递并保持 run 为 queued，等待 worker claim，不直接运行 Codex 或本地检查。lease 过期的 running run 会被标记 failed，避免 worker 异常退出后永久卡住。平台已提供暂停、恢复、取消控制；同一 coding task 的 queued/running/paused run 会复用现有 active run，避免重复入队。
+
 任务：
 
-- 增加 `SymphonyBridgeExecutor`。
-- `get_execution_executor("symphony")` 返回桥接执行器。
-- 桥接执行器只负责投递/等待/收集结果，不直接跑 Codex。
-- 支持超时、失败、取消和状态回收。
+- 增加 `SymphonyBridgeExecutor`。（已完成首版）
+- `get_execution_executor("symphony")` 返回桥接执行器。（已完成首版）
+- 桥接执行器只负责投递/等待/收集结果，不直接跑 Codex。（已完成投递部分；等待/收集由 worker complete 回写负责）
+- 支持超时、失败、取消和状态回收。（lease 过期失败恢复、暂停、恢复、取消已完成首版；常驻 worker 待完成）
 
 完成标准：
 
@@ -307,12 +309,14 @@ AI PJM 收到完成事件后再执行：
 
 目标：自测通过后自动创建真实 GitLab/GitHub MR。
 
+状态：GitLab MR provider 首版已实现，可通过 AI PJM 服务端按项目读取 `gitlab_token`，创建 MR 前自动 push 执行分支，并创建 MR。GitLab 远端评审同步首版已实现，可拉取 MR 状态、讨论评论和 commit CI 状态，并回写 MR、门禁、审计和证据链。后续重点是把阻塞意见串入自动修复、支持 GitLab webhook、补 GitHub provider 和页面同步入口。
+
 任务：
 
-- GitLab/GitHub Provider 从项目 SecretStore 读取凭证。
-- Symphony 或 AI PJM 推送分支。
+- GitLab/GitHub Provider 从项目 SecretStore 读取凭证。（GitLab 首版已完成，GitHub 待实现）
+- Symphony 或 AI PJM 推送分支。（AI PJM 服务端自动 push 首版已完成）
 - AI PJM 创建 `MergeRequestRecord` 并记录远端 URL。
-- 远端失败原因回写证据。
+- 远端失败原因、评论和 CI 状态回写证据。（GitLab 手动同步接口首版已完成）
 
 完成标准：
 
@@ -322,11 +326,13 @@ AI PJM 收到完成事件后再执行：
 
 目标：MR 后进入测试环境，完成业务验收。
 
+状态：`DeployClient` 和 webhook 部署 provider 首版已实现，可通过 AI PJM 服务端按项目读取 `deploy_token` 并回写 `DeployRecord`；环境级配置、CI/CD 状态轮询、重新部署和日志归档待实现。
+
 任务：
 
-- 增加 DeployClient。
-- 支持脚本型、本地 webhook 型或 CI/CD 型部署入口。
-- 部署结果回写 DeployRecord。
+- 增加 DeployClient。（已完成首版）
+- 支持脚本型、本地 webhook 型或 CI/CD 型部署入口。（webhook 首版已完成）
+- 部署结果回写 DeployRecord。（首版已完成）
 - 验收失败回到修复或人工处理。
 
 完成标准：

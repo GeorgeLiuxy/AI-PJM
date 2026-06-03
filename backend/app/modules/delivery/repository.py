@@ -243,6 +243,22 @@ class DeliveryRepository:
         )
         return result.scalar_one_or_none()
 
+    async def get_execution_run_with_task(
+        self,
+        db: AsyncSession,
+        execution_run_id: int,
+    ) -> Optional[ExecutionRun]:
+        result = await db.execute(
+            select(ExecutionRun)
+            .options(
+                selectinload(ExecutionRun.logs),
+                selectinload(ExecutionRun.coding_task).selectinload(CodingTask.demand),
+            )
+            .where(ExecutionRun.id == execution_run_id)
+            .execution_options(populate_existing=True)
+        )
+        return result.scalar_one_or_none()
+
     async def list_execution_runs(
         self,
         db: AsyncSession,

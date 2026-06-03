@@ -11,9 +11,13 @@ DemandItem
 -> ImpactAnalysis
 -> CodingTask
 -> ExecutionRun
+-> MergeRequestRecord
+-> DeployRecord
+-> VerificationRecord
 ```
 
 The backend owns workflow state, gate checks, and evidence records. AI providers return structured drafts through the delivery provider boundary.
+External providers must consume credentials server-side through project SecretStore or backend settings; plaintext secrets are not returned to the frontend or persisted in evidence.
 
 ## Local Development
 
@@ -30,6 +34,13 @@ Start the full local stack from the repository root:
 .\scripts\start-dev.ps1
 ```
 
+Start the stack with the local Symphony worker:
+
+```powershell
+$env:SYMPHONY_BRIDGE_TOKEN="dev-bridge-token"
+.\scripts\start-dev.ps1 -WithWorker
+```
+
 Stop services:
 
 ```powershell
@@ -42,6 +53,16 @@ Local URLs:
 - Health: http://localhost:8010/health
 
 The default local database is SQLite at `backend/data/ai_pjm_dev.db`.
+
+Provider credential defaults:
+
+- Dify: `dify_api_key`, fallback `DIFY_API_KEY`
+- GitLab MR: `gitlab_token`, fallback `GITLAB_TOKEN`
+- Webhook deployment: `deploy_token`, fallback `DEPLOY_TOKEN`
+- OpenAI: `openai_api_key` is reserved for the future OpenAI provider
+
+GitLab MR creation pushes the execution branch before calling the GitLab API when `MERGE_REQUEST_AUTO_PUSH_ENABLED=true`.
+After a GitLab MR is created, `POST /api/v2/merge-requests/{id}/sync-review` can pull remote MR state, discussion comments, and commit CI statuses back into the delivery MR record, review gate, audit log, and redacted evidence.
 
 ## Verification
 

@@ -18,6 +18,7 @@ import urllib.parse
 import urllib.request
 import uuid
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -85,6 +86,7 @@ def main() -> int:
         worker_id=args.worker_id,
         workspace=Path(args.workspace).resolve(),
         runtime_dir=Path(args.runtime_dir).resolve(),
+        status_file=Path(args.status_file).resolve() if args.status_file else None,
         runner_command=args.runner_command,
         timeout_seconds=args.command_timeout_seconds,
         lease_seconds=args.lease_seconds,
@@ -126,6 +128,11 @@ def parse_args() -> argparse.Namespace:
         "--runtime-dir",
         default=os.environ.get("SYMPHONY_WORKER_RUNTIME_DIR", ".runtime/symphony-worker"),
         help="Directory used for task package and prompt files.",
+    )
+    parser.add_argument(
+        "--status-file",
+        default=os.environ.get("SYMPHONY_WORKER_STATUS_FILE", ""),
+        help="Optional JSON status file updated by the worker loop.",
     )
     parser.add_argument(
         "--runner-command",
@@ -175,28 +182,34 @@ class Worker:
         timeout_seconds: int,
         lease_seconds: int,
         skip_required_checks: bool,
+        status_file: Path | None = None,
     ) -> None:
         self.client = client
         self.worker_id = worker_id
         self.workspace = workspace
         self.runtime_dir = runtime_dir
+        self.status_file = status_file
         self.runner_command = runner_command.strip()
         self.timeout_seconds = timeout_seconds
         self.lease_seconds = lease_seconds
         self.skip_required_checks = skip_required_checks
 
     def run_once(self) -> bool:
+        self._write_status("polling", message="Polling for queued execution runs.")
         queue = self.client.get("/internal/symphony/execution-runs", {"limit": 1})
         items = queue.get("data") or []
         if not items:
+            self._write_status("idle", message="No queued Symphony execution runs.")
             print("No queued Symphony execution runs.")
             return False
 
         run_id = int(items[0]["id"])
+        self._write_status("claiming", run_id=run_id, message="Claiming execution run.")
         self.client.post(
             f"/internal/symphony/execution-runs/{run_id}/claim",
             {"worker_id": self.worker_id, "lease_seconds": self.lease_seconds},
         )
+        self._write_status("running", run_id=run_id, message="Execution run claimed.")
         package = self.client.get(f"/internal/symphony/execution-runs/{run_id}/task-package")["data"]
         package_files = self._write_package_files(run_id, package)
         self._event(run_id, "info", "Task package loaded.", {"package_files": package_files})
@@ -242,10 +255,12 @@ class Worker:
                     },
                 },
             )
+            self._write_status(status, run_id=run_id, message=summary)
             print(f"Execution run {run_id} completed with status {status}.")
             return True
         except Exception as exc:
             self._safe_complete_failed(run_id, command_results, exc)
+            self._write_status("failed", run_id=run_id, message=str(exc))
             raise
 
     def _run_command(self, run_id: int, command: str, command_type: str) -> CommandResult:
@@ -437,6 +452,7 @@ class Worker:
             f"/internal/symphony/execution-runs/{run_id}/heartbeat",
             {"worker_id": self.worker_id, "lease_seconds": self.lease_seconds},
         )
+        self._write_status("running", run_id=run_id, message="Heartbeat sent.")
 
     def _safe_complete_failed(
         self,
@@ -465,6 +481,23 @@ class Worker:
             )
         except Exception as complete_error:
             print(f"Failed to write completion error for run {run_id}: {complete_error}", file=sys.stderr)
+
+    def _write_status(self, state: str, run_id: int | None = None, message: str | None = None) -> None:
+        if not self.status_file:
+            return
+        payload = {
+            "worker_id": self.worker_id,
+            "state": state,
+            "run_id": run_id,
+            "message": message,
+            "workspace": str(self.workspace),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        try:
+            self.status_file.parent.mkdir(parents=True, exist_ok=True)
+            self.status_file.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        except OSError as exc:
+            print(f"Failed to write worker status file {self.status_file}: {exc}", file=sys.stderr)
 
 
 def tail(value: str | bytes | None) -> str:
