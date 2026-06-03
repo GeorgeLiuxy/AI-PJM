@@ -201,6 +201,15 @@ export default function DeliveryV2Page() {
       !busy &&
       canReviewCurrent,
   );
+  const canAutoRepairReview = Boolean(
+    result.task &&
+      result.mergeRequest &&
+      result.mergeRequest.review_status === 'blocking' &&
+      !manualApprovalRequired &&
+      !isHighRiskResult(result) &&
+      !busy &&
+      canOperateCurrent,
+  );
   const canCreateDeployment = Boolean(
     result.mergeRequest &&
       result.mergeRequest.review_status === 'passed' &&
@@ -659,6 +668,41 @@ export default function DeliveryV2Page() {
     }
   };
 
+  const autoRepairReview = async () => {
+    if (!result.task || !result.mergeRequest || !canAutoRepairReview) {
+      return;
+    }
+
+    setRecovering(true);
+    setError(null);
+    setActiveTab('execution');
+    setStep('run', 'running');
+
+    try {
+      const runs = (await deliveryApi.autoRepairMergeRequestReview(result.mergeRequest.id, { max_attempts: 1 })).data;
+      const latestRun = runs[runs.length - 1];
+      const refreshedTask = (await deliveryApi.getCodingTask(result.task.id)).data;
+      setResult((current) => ({ ...current, run: latestRun || current.run, task: refreshedTask }));
+      setSteps((current) => ({
+        ...current,
+        task: stepFromTask(refreshedTask),
+        run: latestRun ? stepFromRun(latestRun) : 'failed',
+      }));
+      await loadDemandList(result.task.demand_id, 'execution');
+      if (!latestRun) {
+        setError('评审修复没有产生新的执行记录。');
+      } else if (latestRun.status !== 'succeeded') {
+        setError(latestRun.result_summary || `执行状态：${formatStatusLabel(latestRun.status)}`);
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '评审修复失败';
+      setError(localizeText(message));
+      setStep('run', 'failed');
+    } finally {
+      setRecovering(false);
+    }
+  };
+
   const createDeployment = async () => {
     if (!result.mergeRequest || !canCreateDeployment) {
       return;
@@ -824,6 +868,15 @@ export default function DeliveryV2Page() {
                   >
                     {recovering ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
                     同步评审
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void autoRepairReview()}
+                    disabled={!canAutoRepairReview}
+                    className={`h-8 items-center gap-1.5 rounded border border-slate-200 bg-white px-2.5 text-sm text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 ${canAutoRepairReview ? 'inline-flex' : 'hidden'}`}
+                  >
+                    {recovering ? <Loader2 className="h-4 w-4 animate-spin" /> : <Wrench className="h-4 w-4" />}
+                    修复评审
                   </button>
                   <button
                     type="button"
@@ -2184,6 +2237,7 @@ function formatAuditAction(value: string): string {
     'delivery.merge_request_created': '创建 MR',
     'delivery.merge_request_review_recorded': '记录评审',
     'delivery.merge_request_remote_review_synced': '同步远端评审',
+    'delivery.merge_request_review_repair_started': '启动评审修复',
     'delivery.test_deployment_created': '测试部署',
     'delivery.verification_recorded': '记录验收',
     'auth.project_created': '创建项目',
@@ -2227,6 +2281,7 @@ function localizeText(value: string): string {
     'Merge request record created': '合并请求记录已创建',
     'Merge request review recorded': '合并请求评审结果已记录',
     'Merge request remote review synced': '远端评审已同步',
+    'Merge request review repair completed': '评审修复已完成',
     'Deployment record created': '测试环境记录已创建',
     'Verification record created': '验收结果已记录',
   };
@@ -2324,6 +2379,10 @@ function localizeText(value: string): string {
     [/Execution run has no source branch for merge request creation/g, '执行记录缺少可创建合并请求的源分支'],
     [/Merge request review passed\./g, '合并请求评审已通过。'],
     [/Merge request review has blocking issues\./g, '合并请求评审存在阻塞问题。'],
+    [/Merge request review repair requires blocking review status/g, '评审修复需要合并请求处于阻塞评审状态'],
+    [/Automatic review repair is blocked for L2\/L3 risk tasks/g, 'L2/L3 风险任务不能自动执行评审修复'],
+    [/Merge request review repair requires the source execution run/g, '评审修复需要找到来源执行记录'],
+    [/Merge request review repair requires blocking review evidence/g, '评审修复需要阻塞评审证据'],
     [/GitLab review sync found (\d+) blocking issue\(s\)\./g, 'GitLab 远端评审发现 $1 个阻塞问题。'],
     [/GitLab review sync completed: MR ([^,]+), (\d+) CI status item\(s\)\./g, 'GitLab 远端评审同步完成：MR 状态 $1，CI 状态 $2 项。'],
     [/GitLab review sync completed: MR ([^,]+), detailed status ([^.]+)\./g, 'GitLab 远端评审同步完成：MR 状态 $1，详细状态 $2。'],

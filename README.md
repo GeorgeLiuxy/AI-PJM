@@ -50,7 +50,7 @@ AI PJM 是一个 AI 辅助工程交付编排平台。它不是通用项目管理
 - 真实本地代码上下文收集和任务范围推断已有首版，仍待增强语义匹配和历史需求读取。
 - OpenAI Provider 尚未实现；Dify Provider 仍需生产联调、质量评估、降级策略和监控。
 - Codex CLI 首版已可用，但仍需继续做自动修复闭环、性能优化和生产化运维配置。本机 WindowsApps 下的 `codex.exe` 仍会返回 `Access is denied`，当前使用全局 npm 版 `@openai/codex`。
-- 当前 MR/PR、测试环境部署和验收默认仍是本地记录闭环；GitLab MR 和 webhook 部署已有首版 provider，GitLab MR 创建前可自动推送执行分支，并可手动同步远端评审评论和 commit CI 状态；部署状态轮询、失败重试、评审阻塞自动修复串联仍待补齐。
+- 当前 MR/PR、测试环境部署和验收默认仍是本地记录闭环；GitLab MR 和 webhook 部署已有首版 provider，GitLab MR 创建前可自动推送执行分支，并可手动同步远端评审评论和 commit CI 状态；评审阻塞可触发自动修复 run。部署状态轮询、重新部署、修复后重新推送并更新原 MR 仍待补齐。
 - Symphony Bridge 已完成首版 internal API、最小 worker、lease 恢复和暂停/恢复/取消控制；真实 Symphony daemon 替换和更强队列恢复仍待实现。
 - 认证授权和项目权限保留最小角色模型；企业 SSO、复杂业务角色和审计报表平台化不作为近期主线。
 - 密钥管理已有本地加密存储、健康检查和执行证据脱敏首版，Dify/GitLab/部署 provider 已可按项目消费凭证；OpenAI Provider 仍待实现。

@@ -773,6 +773,105 @@ class DeliveryService:
 
         return repair_runs
 
+    async def auto_repair_merge_request_review(
+        self,
+        db: AsyncSession,
+        merge_request_id: int,
+        executor_type: str = "codex",
+        max_attempts: int | None = None,
+        actor_user_id: int | None = None,
+        actor_ref: str | None = None,
+    ) -> list[ExecutionRun]:
+        record = await delivery_repository.get_merge_request_record(db, merge_request_id)
+        if not record:
+            raise NotFoundException(f"Merge request record {merge_request_id} not found")
+
+        task = await delivery_repository.get_coding_task(db, record.coding_task_id)
+        if not task:
+            raise NotFoundException(f"Coding task {record.coding_task_id} not found")
+        demand = await delivery_repository.get_demand(db, task.demand_id)
+        if not demand:
+            raise NotFoundException(f"Demand {task.demand_id} not found")
+
+        if record.review_status != ReviewStatus.BLOCKING and record.status != MergeRequestStatus.REVIEW_BLOCKED:
+            raise BadRequestException("Merge request review repair requires blocking review status")
+        if demand.risk_level in {DeliveryRiskLevel.L2, DeliveryRiskLevel.L3}:
+            raise BadRequestException("Automatic review repair is blocked for L2/L3 risk tasks")
+        if task.status == CodingTaskStatus.RUNNING:
+            raise BadRequestException(f"Coding task {task.id} is already running")
+        if task.status == CodingTaskStatus.DRAFT:
+            raise BadRequestException(f"Coding task {task.id} is not ready for review repair")
+
+        source_run = self._merge_request_source_run(record, task)
+        if not source_run:
+            raise BadRequestException("Merge request review repair requires the source execution run")
+        review_issues = self._merge_request_review_issues(record)
+        if not review_issues:
+            raise BadRequestException("Merge request review repair requires blocking review evidence")
+
+        attempts_limit = max_attempts or settings.execution_auto_repair_max_attempts
+        attempts_limit = min(max(attempts_limit, 1), 3)
+        repair_runs: list[ExecutionRun] = []
+        current_failure: ExecutionRun | None = None
+
+        for attempt in range(1, attempts_limit + 1):
+            if task.status in {CodingTaskStatus.BLOCKED, CodingTaskStatus.COMPLETED}:
+                await delivery_repository.update_coding_task_status(db, task, CodingTaskStatus.READY)
+                await db.commit()
+
+            if current_failure and self._has_failed_check_evidence(current_failure):
+                repair_context = self._build_repair_context(
+                    source_run=current_failure,
+                    attempt=attempt,
+                    max_attempts=attempts_limit,
+                )
+            else:
+                repair_context = self._build_review_repair_context(
+                    record=record,
+                    source_run=source_run,
+                    review_issues=review_issues,
+                    attempt=attempt,
+                    max_attempts=attempts_limit,
+                )
+
+            queued_run = await self.create_execution_run(
+                db=db,
+                coding_task_id=task.id,
+                executor_type=executor_type,
+                trigger_mode="auto_repair",
+                extra_evidence={"repair_context": repair_context},
+            )
+            if queued_run.status != ExecutionRunStatus.QUEUED:
+                repair_runs.append(queued_run)
+                break
+
+            repaired_run = await self.dispatch_execution_run(db, queued_run.id)
+            repair_runs.append(repaired_run)
+            if repaired_run.status == ExecutionRunStatus.SUCCEEDED:
+                break
+            if self._has_changed_file_violations(repaired_run) or not self._has_failed_check_evidence(repaired_run):
+                break
+            current_failure = repaired_run
+
+        await audit_repository.create_event(
+            db,
+            action="delivery.merge_request_review_repair_started",
+            entity_type="merge_request",
+            entity_id=record.id,
+            project_id=demand.project_id,
+            actor_user_id=actor_user_id,
+            actor_ref=actor_ref or "system",
+            summary=f"Merge request review repair started: {len(repair_runs)} run(s)",
+            metadata={
+                "coding_task_id": task.id,
+                "merge_request_id": record.id,
+                "execution_run_ids": [run.id for run in repair_runs],
+                "review_issue_count": len(review_issues),
+            },
+        )
+        await db.commit()
+        return repair_runs
+
     async def create_merge_request_record(
         self,
         db: AsyncSession,
@@ -1812,6 +1911,41 @@ class DeliveryService:
                 return run.commit_sha or self._dispatch_evidence_value(run, "commit_sha")
         return None
 
+    def _merge_request_source_run(self, record: MergeRequestRecord, task: CodingTask) -> ExecutionRun | None:
+        for run in task.execution_runs or []:
+            if run.id == record.execution_run_id:
+                return run
+        return None
+
+    def _merge_request_review_issues(self, record: MergeRequestRecord) -> list[str]:
+        issues: list[str] = []
+        evidence = record.evidence_json or {}
+        if isinstance(evidence, dict):
+            remote_review = evidence.get("remote_review")
+            if isinstance(remote_review, dict):
+                issues.extend(self._string_items(remote_review.get("blocking_issues")))
+            issues.extend(self._string_items(evidence.get("blocking_issues")))
+
+        for comment in record.review_comments_json or []:
+            if not isinstance(comment, dict):
+                continue
+            body = str(comment.get("body") or "").strip()
+            if body:
+                issues.append(body)
+
+        if not issues and record.review_summary:
+            issues.append(record.review_summary)
+
+        deduped: list[str] = []
+        seen: set[str] = set()
+        for issue in issues:
+            text = redact_text(str(issue)).strip()
+            if not text or text in seen:
+                continue
+            deduped.append(text[:1000])
+            seen.add(text)
+        return deduped
+
     def _review_gate_status(self, review_status: str) -> GateStatus:
         if review_status == self._enum_or_str(ReviewStatus.PASSED):
             return GateStatus.PASSED
@@ -2032,6 +2166,27 @@ class DeliveryService:
             "failure_summary": source_run.result_summary,
             "failed_checks": failed_checks,
             "repair_chain": [*previous_chain, source_run.id],
+        }
+
+    def _build_review_repair_context(
+        self,
+        *,
+        record: MergeRequestRecord,
+        source_run: ExecutionRun,
+        review_issues: list[str],
+        attempt: int,
+        max_attempts: int,
+    ) -> dict:
+        return {
+            "source": "merge_request_review",
+            "source_run_id": source_run.id,
+            "source_merge_request_id": record.id,
+            "attempt": attempt,
+            "max_attempts": max_attempts,
+            "failure_summary": record.review_summary or "Merge request review has blocking issues.",
+            "failed_checks": [],
+            "review_issues": review_issues,
+            "repair_chain": [source_run.id],
         }
 
     def _has_failed_check_evidence(self, run: ExecutionRun) -> bool:

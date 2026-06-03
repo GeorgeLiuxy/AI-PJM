@@ -165,7 +165,7 @@
 
 目标：把通过自测的结果交给代码评审系统。
 
-状态：首版已实现本地 MR/PR 记录与评审门禁。当前默认 `local` Provider 不依赖 GitLab/GitHub Token，会记录源分支、目标分支、执行记录、链接占位、评审状态和 `review_passed` 门禁；`gitlab` Provider 已可按项目读取 `gitlab_token`，创建 MR 前自动推送执行分支，并调用 GitLab API 创建 MR。GitLab 远端评审同步首版已实现，可拉取 MR 状态、讨论评论和 commit CI 状态，并写回 MR、门禁、审计和证据链；交付工作台已提供远端 MR 的“同步评审”入口，本地 MR 保留人工评审通过入口。GitHub provider、自动修复串联和 GitLab webhook 仍作为后续增强项。
+状态：首版已实现本地 MR/PR 记录与评审门禁。当前默认 `local` Provider 不依赖 GitLab/GitHub Token，会记录源分支、目标分支、执行记录、链接占位、评审状态和 `review_passed` 门禁；`gitlab` Provider 已可按项目读取 `gitlab_token`，创建 MR 前自动推送执行分支，并调用 GitLab API 创建 MR。GitLab 远端评审同步首版已实现，可拉取 MR 状态、讨论评论和 commit CI 状态，并写回 MR、门禁、审计和证据链；交付工作台已提供远端 MR 的“同步评审”入口，本地 MR 保留人工评审通过入口。评审阻塞自动修复串联首版已实现，可把远端阻塞项写入修复 run 的 `repair_context.review_issues`。GitHub provider、修复后更新原 MR 和 GitLab webhook 仍作为后续增强项。
 
 任务：
 
@@ -173,6 +173,7 @@
 - 实现 GitLab/GitHub Client 边界，优先 GitLab。（GitLab 首版已完成，GitHub 待实现）
 - 支持创建 MR、记录 URL、源分支、目标分支、状态。（local/GitLab 首版已完成）
 - 支持拉取 MR 评论和阻塞性评审意见。（GitLab 手动同步接口首版已完成，GitHub 待实现）
+- 支持评审阻塞自动修复。（首版已完成，修复后更新原 MR 待实现）
 - 将 `review_passed` 做成门禁。（已完成）
 
 完成标准：

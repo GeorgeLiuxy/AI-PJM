@@ -389,6 +389,7 @@ class Worker:
             "## Impact Summary",
             str(package.get("impact_summary") or "No impact summary was provided."),
             "",
+            *format_repair_context(package.get("execution_evidence")),
             "## Execution Rules",
             "- Modify only files inside the allowed paths.",
             "- Do not perform forbidden actions.",
@@ -519,6 +520,58 @@ def format_list(value: Any) -> list[str]:
     if not isinstance(value, list) or not value:
         return ["- None"]
     return [f"- {item}" for item in value]
+
+
+def format_repair_context(evidence: Any) -> list[str]:
+    if not isinstance(evidence, dict):
+        return []
+    repair_context = evidence.get("repair_context")
+    if not isinstance(repair_context, dict):
+        return []
+
+    lines = [
+        "## Repair Context",
+        f"Repair attempt: {repair_context.get('attempt')} / {repair_context.get('max_attempts')}",
+        f"Source run: {repair_context.get('source_run_id')}",
+        f"Failure summary: {repair_context.get('failure_summary')}",
+        "",
+    ]
+    failed_checks = repair_context.get("failed_checks")
+    if isinstance(failed_checks, list) and failed_checks:
+        lines.append("Failed checks:")
+        for check in failed_checks:
+            if not isinstance(check, dict):
+                continue
+            lines.extend(
+                [
+                    f"- Command: {check.get('command')}",
+                    f"  Status: {check.get('status')}",
+                    f"  Exit code: {check.get('exit_code')}",
+                    f"  Error: {check.get('error') or ''}",
+                    f"  Stdout tail: {check.get('stdout_tail') or ''}",
+                    f"  Stderr tail: {check.get('stderr_tail') or ''}",
+                ]
+            )
+
+    review_issues = repair_context.get("review_issues")
+    if isinstance(review_issues, list) and review_issues:
+        lines.extend(["", "Review blocking issues:"])
+        for issue in review_issues:
+            text = str(issue).strip()
+            if text:
+                lines.append(f"- {text}")
+
+    lines.extend(
+        [
+            "",
+            "Repair instructions:",
+            "- Fix only the failure described above.",
+            "- Keep changes inside the allowed paths.",
+            "- Re-run the required checks before finishing.",
+            "",
+        ]
+    )
+    return lines
 
 
 def quote_arg(value: str) -> str:

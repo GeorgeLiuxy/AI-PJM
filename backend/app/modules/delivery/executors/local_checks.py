@@ -752,6 +752,14 @@ class WorktreeChecksExecutor(LocalChecksExecutor):
         else:
             lines.append("- No structured failed check output was recorded.")
 
+        review_issues = repair_context.get("review_issues")
+        if isinstance(review_issues, list) and review_issues:
+            lines.extend(["", "Review blocking issues:"])
+            for issue in review_issues:
+                text = str(issue).strip()
+                if text:
+                    lines.append(f"- {text}")
+
         lines.extend(
             [
                 "",

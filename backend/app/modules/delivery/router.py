@@ -446,6 +446,29 @@ async def sync_merge_request_remote_review(
     )
 
 
+@router.post("/merge-requests/{merge_request_id}/auto-repair", response_model=dict)
+async def auto_repair_merge_request_review(
+    merge_request_id: int,
+    request: AutoRepairExecutionRequest | None = None,
+    db: AsyncSession = Depends(get_db),
+    principal: AuthPrincipal = Depends(get_current_principal),
+):
+    await _require_merge_request_permission(db, merge_request_id, principal, "operate")
+    payload = request or AutoRepairExecutionRequest()
+    runs = await delivery_service.auto_repair_merge_request_review(
+        db=db,
+        merge_request_id=merge_request_id,
+        executor_type=payload.executor_type,
+        max_attempts=payload.max_attempts,
+        actor_user_id=principal.user_id,
+        actor_ref=principal.username,
+    )
+    return success_response(
+        data=[ExecutionRunResponse.model_validate(run).model_dump() for run in runs],
+        message="Merge request review repair completed",
+    )
+
+
 @router.post("/merge-requests/{merge_request_id}/deployments", response_model=dict, status_code=status.HTTP_201_CREATED)
 async def create_deploy_record(
     merge_request_id: int,

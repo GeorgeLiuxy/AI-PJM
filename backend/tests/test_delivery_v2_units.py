@@ -1070,6 +1070,125 @@ async def test_delivery_service_syncs_gitlab_remote_review_gate_and_audit(db_ses
 
 
 @pytest.mark.asyncio
+async def test_delivery_service_auto_repairs_blocking_merge_request_review(db_session):
+    project = await auth_repository.create_project(
+        db_session,
+        key="review-repair-project",
+        name="Review Repair Project",
+    )
+    demand = await delivery_repository.create_demand(
+        db_session,
+        raw_input="Add a status badge to the delivery dashboard.",
+        source_type="new_requirement",
+        title="Add status badge",
+        project_id=project.id,
+    )
+    spec = await delivery_repository.create_spec_card(
+        db_session,
+        demand_id=demand.id,
+        status=SpecStatus.APPROVED,
+        title="Add status badge",
+        user_story="As an operator, I can see delivery status.",
+        scope="Dashboard badge only.",
+        acceptance_criteria=["Badge is visible."],
+        constraints=["Do not expose secrets."],
+        risks=["Low risk."],
+        open_questions=[],
+    )
+    task = await delivery_repository.create_coding_task(
+        db_session,
+        demand_id=demand.id,
+        spec_card_id=spec.id,
+        status=CodingTaskStatus.COMPLETED,
+        title="Add status badge",
+        task_prompt="Add a compact execution status badge.",
+        allowed_paths=["frontend/src/app/pages/DeliveryV2Page.tsx"],
+        forbidden_actions=["Do not expose secrets."],
+        required_checks=["npm run build"],
+        expected_evidence=["build output"],
+    )
+    source_run = await delivery_repository.create_execution_run(
+        db_session,
+        coding_task_id=task.id,
+        status=ExecutionRunStatus.SUCCEEDED,
+        executor_type="codex",
+        trigger_mode="manual",
+        result_summary="Implemented.",
+        evidence_json={"dispatch": {"branch_name": "codex/status-badge", "commit_sha": "abc123"}},
+    )
+    record = await delivery_repository.create_merge_request_record(
+        db_session,
+        coding_task_id=task.id,
+        execution_run_id=source_run.id,
+        provider="gitlab",
+        status=MergeRequestStatus.REVIEW_BLOCKED,
+        review_status=ReviewStatus.BLOCKING,
+        title="Add status badge",
+        source_branch="codex/status-badge",
+        target_branch="main",
+        external_id="12",
+        url="https://gitlab.example/group/demo/-/merge_requests/12",
+        review_summary="GitLab review sync found 1 blocking issue(s).",
+        review_comments=[{"body": "Fix the failing build before merging."}],
+        evidence_json={
+            "remote_review": {
+                "blocking_issues": ["Fix the failing build before merging."],
+            },
+        },
+    )
+    await db_session.commit()
+
+    service = DeliveryService()
+
+    async def fake_dispatch(db, execution_run_id):
+        run = await delivery_repository.get_execution_run(db, execution_run_id)
+        await delivery_repository.update_execution_run(
+            db,
+            run,
+            status=ExecutionRunStatus.SUCCEEDED,
+            result_summary="Review issue fixed.",
+            evidence_json={
+                **(run.evidence_json or {}),
+                "dispatch": {
+                    "check_results": [{"command": "npm run build", "status": "passed", "exit_code": 0}],
+                    "changed_files": ["frontend/src/app/pages/DeliveryV2Page.tsx"],
+                },
+            },
+        )
+        await db.commit()
+        loaded = await delivery_repository.get_execution_run(db, execution_run_id)
+        assert loaded is not None
+        return loaded
+
+    service.dispatch_execution_run = fake_dispatch
+
+    repair_runs = await service.auto_repair_merge_request_review(
+        db_session,
+        record.id,
+        actor_ref="operator",
+    )
+
+    assert len(repair_runs) == 1
+    repair_run = repair_runs[0]
+    assert repair_run.status == ExecutionRunStatus.SUCCEEDED
+    assert repair_run.trigger_mode == "auto_repair"
+    repair_context = repair_run.evidence_json["repair_context"]
+    assert repair_context["source"] == "merge_request_review"
+    assert repair_context["source_run_id"] == source_run.id
+    assert repair_context["source_merge_request_id"] == record.id
+    assert repair_context["review_issues"] == ["Fix the failing build before merging."]
+
+    audit_events = await audit_repository.list_events(
+        db_session,
+        project_id=project.id,
+        action="delivery.merge_request_review_repair_started",
+    )
+    assert audit_events
+    assert audit_events[0].actor_ref == "operator"
+    assert audit_events[0].metadata_json["execution_run_ids"] == [repair_run.id]
+
+
+@pytest.mark.asyncio
 async def test_delivery_service_blocks_gitlab_merge_request_when_push_fails(monkeypatch, tmp_path):
     monkeypatch.setattr(settings, "merge_request_auto_push_enabled", True)
     monkeypatch.setattr(settings, "merge_request_git_remote", "origin")

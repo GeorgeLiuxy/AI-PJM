@@ -420,6 +420,19 @@ export const deliveryApi = {
       body: JSON.stringify({}),
     });
   },
+  autoRepairMergeRequestReview: (
+    mergeRequestId: number,
+    params: { executor_type?: string; max_attempts?: number } = {},
+  ) => {
+    return fetchAPI<DeliveryExecutionRun[]>(`/api/v2/merge-requests/${mergeRequestId}/auto-repair`, {
+      method: 'POST',
+      body: JSON.stringify({
+        executor_type: 'codex',
+        max_attempts: 1,
+        ...params,
+      }),
+    });
+  },
   createDeployRecord: (
     mergeRequestId: number,
     params: {
