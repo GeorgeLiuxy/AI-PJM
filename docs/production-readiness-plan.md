@@ -353,7 +353,7 @@ AI 不允许直接决定：
 
 目标：让自测通过的代码进入真实代码评审系统。
 
-当前状态：GitLab `MergeRequestClient` 首版已实现，可用项目级 `gitlab_token` 或全局 `GITLAB_TOKEN` 调用 GitLab API 创建 MR，并把远端 URL、iid、源分支、目标分支和凭据来源写入证据。创建 MR 前可自动 `git push` 执行分支到配置的远端，push 失败会阻断 MR 创建并保留脱敏错误。远端评审同步首版已实现，可通过 `POST /api/v2/merge-requests/{id}/sync-review` 拉取 GitLab MR 状态、讨论评论和 commit CI 状态，写回 MR 状态、`review_passed` 门禁、审计事件和脱敏证据。reviewer/label 配置、阻塞意见自动修复、GitLab webhook 减少轮询、页面同步入口仍待实现。GitHub provider 未实现。
+当前状态：GitLab `MergeRequestClient` 首版已实现，可用项目级 `gitlab_token` 或全局 `GITLAB_TOKEN` 调用 GitLab API 创建 MR，并把远端 URL、iid、源分支、目标分支和凭据来源写入证据。创建 MR 前可自动 `git push` 执行分支到配置的远端，push 失败会阻断 MR 创建并保留脱敏错误。远端评审同步首版已实现，可通过 `POST /api/v2/merge-requests/{id}/sync-review` 拉取 GitLab MR 状态、讨论评论和 commit CI 状态，写回 MR 状态、`review_passed` 门禁、审计事件和脱敏证据；交付工作台已提供远端 MR 的“同步评审”入口，本地 MR 仍保留人工评审通过入口。reviewer/label 配置、阻塞意见自动修复、GitLab webhook 减少轮询仍待实现。GitHub provider 未实现。
 
 实施内容：
 

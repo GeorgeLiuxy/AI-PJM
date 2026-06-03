@@ -309,7 +309,7 @@ AI PJM 收到完成事件后再执行：
 
 目标：自测通过后自动创建真实 GitLab/GitHub MR。
 
-状态：GitLab MR provider 首版已实现，可通过 AI PJM 服务端按项目读取 `gitlab_token`，创建 MR 前自动 push 执行分支，并创建 MR。GitLab 远端评审同步首版已实现，可拉取 MR 状态、讨论评论和 commit CI 状态，并回写 MR、门禁、审计和证据链。后续重点是把阻塞意见串入自动修复、支持 GitLab webhook、补 GitHub provider 和页面同步入口。
+状态：GitLab MR provider 首版已实现，可通过 AI PJM 服务端按项目读取 `gitlab_token`，创建 MR 前自动 push 执行分支，并创建 MR。GitLab 远端评审同步首版已实现，可拉取 MR 状态、讨论评论和 commit CI 状态，并回写 MR、门禁、审计和证据链；交付工作台已提供远端 MR 的“同步评审”入口。后续重点是把阻塞意见串入自动修复、支持 GitLab webhook 和补 GitHub provider。
 
 任务：
 

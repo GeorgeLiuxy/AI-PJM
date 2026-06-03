@@ -188,7 +188,15 @@ export default function DeliveryV2Page() {
   );
   const canMarkReviewPassed = Boolean(
     result.mergeRequest &&
+      result.mergeRequest.provider === 'local' &&
       result.mergeRequest.review_status !== 'passed' &&
+      result.mergeRequest.status !== 'closed' &&
+      !busy &&
+      canReviewCurrent,
+  );
+  const canSyncRemoteReview = Boolean(
+    result.mergeRequest &&
+      result.mergeRequest.provider !== 'local' &&
       result.mergeRequest.status !== 'closed' &&
       !busy &&
       canReviewCurrent,
@@ -625,6 +633,32 @@ export default function DeliveryV2Page() {
     }
   };
 
+  const syncRemoteReview = async () => {
+    if (!result.mergeRequest || !canSyncRemoteReview) {
+      return;
+    }
+
+    setRecovering(true);
+    setError(null);
+    setActiveTab('evidence');
+
+    try {
+      const mergeRequest = (await deliveryApi.syncMergeRequestReview(result.mergeRequest.id)).data;
+      setResult((current) => ({ ...current, mergeRequest }));
+      setStep('mr', stepFromMergeRequest(mergeRequest));
+      await loadDemandList(result.task?.demand_id || result.demand?.id, 'evidence');
+      if (mergeRequest.review_status === 'blocking') {
+        setError(localizeText(mergeRequest.review_summary || '远端评审存在阻塞问题。'));
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '同步远端评审失败';
+      setError(localizeText(message));
+      setStep('mr', 'failed');
+    } finally {
+      setRecovering(false);
+    }
+  };
+
   const createDeployment = async () => {
     if (!result.mergeRequest || !canCreateDeployment) {
       return;
@@ -781,6 +815,15 @@ export default function DeliveryV2Page() {
                   >
                     {recovering ? <Loader2 className="h-4 w-4 animate-spin" /> : <GitPullRequest className="h-4 w-4" />}
                     创建 MR
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void syncRemoteReview()}
+                    disabled={!canSyncRemoteReview}
+                    className={`h-8 items-center gap-1.5 rounded border border-slate-200 bg-white px-2.5 text-sm text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 ${canSyncRemoteReview ? 'inline-flex' : 'hidden'}`}
+                  >
+                    {recovering ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                    同步评审
                   </button>
                   <button
                     type="button"
@@ -1202,8 +1245,17 @@ function MergeRequestSummary({ mergeRequest }: { mergeRequest?: DeliveryMergeReq
         <div className="flex flex-wrap items-center gap-2">
           <StatusBadge value={mergeRequest.status} />
           <StatusBadge value={mergeRequest.review_status} />
+          <span className="rounded border border-slate-200 bg-white px-1.5 py-0.5 text-xs text-slate-500">
+            {mergeRequest.provider}
+          </span>
         </div>
         <div className="break-words text-sm text-slate-700">{localizeText(mergeRequest.title)}</div>
+        {mergeRequest.review_summary ? (
+          <div className="break-words text-xs text-slate-600">{localizeText(mergeRequest.review_summary)}</div>
+        ) : null}
+        {(mergeRequest.review_comments_json || []).length > 0 ? (
+          <div className="text-xs text-slate-500">评审意见 {(mergeRequest.review_comments_json || []).length} 条</div>
+        ) : null}
         <div className="break-words font-mono text-xs text-slate-500">
           {mergeRequest.source_branch}
           {' -> '}
@@ -2131,6 +2183,7 @@ function formatAuditAction(value: string): string {
     'delivery.manual_approval_recorded': '人工审批',
     'delivery.merge_request_created': '创建 MR',
     'delivery.merge_request_review_recorded': '记录评审',
+    'delivery.merge_request_remote_review_synced': '同步远端评审',
     'delivery.test_deployment_created': '测试部署',
     'delivery.verification_recorded': '记录验收',
     'auth.project_created': '创建项目',
@@ -2173,6 +2226,7 @@ function localizeText(value: string): string {
     'Manual approval failed': '人工审批提交失败',
     'Merge request record created': '合并请求记录已创建',
     'Merge request review recorded': '合并请求评审结果已记录',
+    'Merge request remote review synced': '远端评审已同步',
     'Deployment record created': '测试环境记录已创建',
     'Verification record created': '验收结果已记录',
   };
@@ -2270,6 +2324,9 @@ function localizeText(value: string): string {
     [/Execution run has no source branch for merge request creation/g, '执行记录缺少可创建合并请求的源分支'],
     [/Merge request review passed\./g, '合并请求评审已通过。'],
     [/Merge request review has blocking issues\./g, '合并请求评审存在阻塞问题。'],
+    [/GitLab review sync found (\d+) blocking issue\(s\)\./g, 'GitLab 远端评审发现 $1 个阻塞问题。'],
+    [/GitLab review sync completed: MR ([^,]+), (\d+) CI status item\(s\)\./g, 'GitLab 远端评审同步完成：MR 状态 $1，CI 状态 $2 项。'],
+    [/GitLab review sync completed: MR ([^,]+), detailed status ([^.]+)\./g, 'GitLab 远端评审同步完成：MR 状态 $1，详细状态 $2。'],
     [/A passed merge request review is required before test deployment/g, '创建测试环境记录前必须先通过合并请求评审'],
     [/Test deployment record was created\./g, '测试环境记录已创建。'],
     [/Test deployment verification passed\./g, '测试环境验收已通过。'],
