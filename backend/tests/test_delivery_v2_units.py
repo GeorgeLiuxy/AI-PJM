@@ -1433,6 +1433,109 @@ async def test_delivery_service_syncs_webhook_deployment_status_gate_and_audit(d
 
 
 @pytest.mark.asyncio
+async def test_delivery_service_redeploys_failed_deployment_with_source_evidence(db_session):
+    project = await auth_repository.create_project(
+        db_session,
+        key="redeploy-project",
+        name="Redeploy Project",
+    )
+    demand = await delivery_repository.create_demand(
+        db_session,
+        raw_input="Add a status badge to the delivery dashboard.",
+        source_type="new_requirement",
+        title="Add status badge",
+        project_id=project.id,
+    )
+    spec = await delivery_repository.create_spec_card(
+        db_session,
+        demand_id=demand.id,
+        status=SpecStatus.APPROVED,
+        title="Add status badge",
+        user_story="As an operator, I can see delivery status.",
+        scope="Dashboard badge only.",
+        acceptance_criteria=["Badge is visible."],
+        constraints=["Do not expose secrets."],
+        risks=["Low risk."],
+        open_questions=[],
+    )
+    task = await delivery_repository.create_coding_task(
+        db_session,
+        demand_id=demand.id,
+        spec_card_id=spec.id,
+        status=CodingTaskStatus.COMPLETED,
+        title="Add status badge",
+        task_prompt="Add a compact execution status badge.",
+        allowed_paths=["frontend/src/app/pages/DeliveryV2Page.tsx"],
+        forbidden_actions=["Do not expose secrets."],
+        required_checks=["npm run build"],
+        expected_evidence=["build output"],
+    )
+    run = await delivery_repository.create_execution_run(
+        db_session,
+        coding_task_id=task.id,
+        status=ExecutionRunStatus.SUCCEEDED,
+        executor_type="codex",
+        trigger_mode="manual",
+        result_summary="Implemented.",
+        evidence_json={"dispatch": {"branch_name": "codex/status-badge", "commit_sha": "abc123"}},
+    )
+    merge_request = await delivery_repository.create_merge_request_record(
+        db_session,
+        coding_task_id=task.id,
+        execution_run_id=run.id,
+        provider="local",
+        status=MergeRequestStatus.REVIEW_PASSED,
+        review_status=ReviewStatus.PASSED,
+        title="Add status badge",
+        source_branch="codex/status-badge",
+        target_branch="main",
+        external_id="12",
+        url="local://merge-requests/12",
+        evidence_json={"commit_sha": "abc123"},
+    )
+    failed_deploy = await delivery_repository.create_deploy_record(
+        db_session,
+        merge_request_id=merge_request.id,
+        coding_task_id=task.id,
+        provider="local",
+        status=DeploymentStatus.FAILED,
+        environment="test",
+        url="local://deployments/failed",
+        evidence_json={"reason": "previous deployment failed"},
+    )
+    await db_session.commit()
+
+    redeployed = await DeliveryService().redeploy_deploy_record(
+        db_session,
+        failed_deploy.id,
+        actor_ref="operator",
+    )
+
+    assert redeployed.id != failed_deploy.id
+    assert redeployed.merge_request_id == merge_request.id
+    assert redeployed.provider == "local"
+    assert redeployed.environment == "test"
+    assert redeployed.status == DeploymentStatus.DEPLOYED
+    assert redeployed.url == f"local://deployments/{redeployed.id}"
+    assert redeployed.evidence_json["redeploy_from_deploy_record_id"] == failed_deploy.id
+    assert redeployed.evidence_json["redeployed_by_ref"] == "operator"
+
+    detail = await delivery_repository.get_demand_detail(db_session, demand.id)
+    deploy_gates = [gate for gate in detail.gate_checks if gate.gate_type == GateType.TEST_DEPLOYED]
+    assert deploy_gates[-1].status == GateStatus.PASSED
+
+    audit_events = await audit_repository.list_events(
+        db_session,
+        project_id=project.id,
+        action="delivery.test_deployment_redeployed",
+    )
+    assert audit_events
+    assert audit_events[0].actor_ref == "operator"
+    assert audit_events[0].metadata_json["source_deploy_record_id"] == failed_deploy.id
+    assert audit_events[0].metadata_json["new_deploy_record_id"] == redeployed.id
+
+
+@pytest.mark.asyncio
 async def test_delivery_service_blocks_gitlab_merge_request_when_push_fails(monkeypatch, tmp_path):
     monkeypatch.setattr(settings, "merge_request_auto_push_enabled", True)
     monkeypatch.setattr(settings, "merge_request_git_remote", "origin")

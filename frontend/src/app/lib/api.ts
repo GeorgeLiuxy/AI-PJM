@@ -456,6 +456,12 @@ export const deliveryApi = {
       body: JSON.stringify({}),
     });
   },
+  redeployDeployRecord: (deployRecordId: number) => {
+    return fetchAPI<DeliveryDeployRecord>(`/api/v2/deployments/${deployRecordId}/redeploy`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    });
+  },
   recordVerification: (
     deployRecordId: number,
     params: {

@@ -79,7 +79,7 @@ AI PJM 的生产级目标：
 - 权限仍是本地首版，但当前阶段只需要最小角色模型；企业 SSO、复杂组织角色和审计报表平台化不作为近期主线。
 - 密钥和 Token 已有本地加密存储、健康检查和过期提示首版，Dify、GitLab MR 和 webhook 部署已接入项目级消费；尚未接 Vault/KMS、集中轮换策略和 OpenAI Provider 消费链路。
 - GitLab MR 创建 client 和源分支自动推送已有首版，但仍缺远端评审评论同步和阻塞意见闭环。
-- webhook 测试部署 client 已有首版，但仍缺 CI/CD 状态轮询、重新部署和环境级配置。
+- webhook 测试部署 client 已有首版，失败部署重新部署入口已完成；仍缺 CI/CD 状态轮询和环境级配置。
 - 没有 Symphony Bridge、后台 worker 和可靠任务队列。
 - 没有数据库迁移体系和生产数据库方案。
 - 没有完整审计、告警和运行指标。
@@ -382,7 +382,7 @@ AI 不允许直接决定：
 
 目标：让 MR 后的结果进入可验证环境。
 
-当前状态：`DeployClient` 边界和 `webhook` 部署 provider 首版已实现，可用项目级 `deploy_token` 或全局 `DEPLOY_TOKEN` 调用外部 webhook，并把部署 URL、状态、commit 和凭据来源写入 `DeployRecord` 证据。webhook 返回 `status_url` 时，可通过 `POST /api/v2/deployments/{id}/sync-status` 手动同步部署状态，并写回 `test_deployed` 门禁、审计事件和脱敏证据。失败状态会写入失败门禁，不会推进验收。自动轮询、重新部署、环境级配置、部署日志归档仍待实现。
+当前状态：`DeployClient` 边界和 `webhook` 部署 provider 首版已实现，可用项目级 `deploy_token` 或全局 `DEPLOY_TOKEN` 调用外部 webhook，并把部署 URL、状态、commit 和凭据来源写入 `DeployRecord` 证据。webhook 返回 `status_url` 时，可通过 `POST /api/v2/deployments/{id}/sync-status` 手动同步部署状态，并写回 `test_deployed` 门禁、审计事件和脱敏证据。失败状态会写入失败门禁，不会推进验收；失败部署可通过 `POST /api/v2/deployments/{id}/redeploy` 创建新部署记录并保留来源证据。自动轮询、环境级配置、部署日志归档仍待实现。
 
 实施内容：
 
@@ -392,7 +392,7 @@ AI 不允许直接决定：
 - 记录部署 URL、版本、commit、日志、状态。
 - webhook `status_url` 手动同步部署状态。（首版已完成，自动轮询待实现）
 - 部署失败保留日志并阻断验收。
-- 支持重新部署。
+- 支持重新部署。（失败部署重新部署首版已完成）
 
 验收标准：
 

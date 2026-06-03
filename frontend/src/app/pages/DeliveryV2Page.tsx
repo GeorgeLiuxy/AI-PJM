@@ -225,6 +225,12 @@ export default function DeliveryV2Page() {
       !busy &&
       canOperateCurrent,
   );
+  const canRedeployDeployment = Boolean(
+    result.deployRecord &&
+      (result.deployRecord.status === 'failed' || result.verificationRecord?.status === 'failed') &&
+      !busy &&
+      canOperateCurrent,
+  );
   const canRecordVerification = Boolean(
     result.deployRecord &&
       result.deployRecord.status === 'deployed' &&
@@ -762,6 +768,36 @@ export default function DeliveryV2Page() {
     }
   };
 
+  const redeployDeployment = async () => {
+    if (!result.deployRecord || !canRedeployDeployment) {
+      return;
+    }
+
+    setRecovering(true);
+    setError(null);
+    setActiveTab('evidence');
+
+    try {
+      const deployRecord = (await deliveryApi.redeployDeployRecord(result.deployRecord.id)).data;
+      setResult((current) => ({ ...current, deployRecord, verificationRecord: undefined }));
+      setSteps((current) => ({
+        ...current,
+        deploy: stepFromDeployRecord(deployRecord),
+        verify: 'idle',
+      }));
+      await loadDemandList(result.task?.demand_id || result.demand?.id, 'evidence');
+      if (deployRecord.status === 'failed') {
+        setError('重新部署失败。');
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '重新部署失败';
+      setError(localizeText(message));
+      setStep('deploy', 'failed');
+    } finally {
+      setRecovering(false);
+    }
+  };
+
   const recordVerification = async (status: 'passed' | 'failed') => {
     if (!result.deployRecord || !canRecordVerification) {
       return;
@@ -937,6 +973,15 @@ export default function DeliveryV2Page() {
                   >
                     {recovering ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
                     同步部署
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void redeployDeployment()}
+                    disabled={!canRedeployDeployment}
+                    className={`h-8 items-center gap-1.5 rounded border border-slate-200 bg-white px-2.5 text-sm text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 ${canRedeployDeployment ? 'inline-flex' : 'hidden'}`}
+                  >
+                    {recovering ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                    重新部署
                   </button>
                   <button
                     type="button"
@@ -2285,6 +2330,7 @@ function formatAuditAction(value: string): string {
     'delivery.merge_request_review_repair_started': '启动评审修复',
     'delivery.test_deployment_created': '测试部署',
     'delivery.test_deployment_status_synced': '同步部署状态',
+    'delivery.test_deployment_redeployed': '重新部署',
     'delivery.verification_recorded': '记录验收',
     'auth.project_created': '创建项目',
     'auth.user_created': '创建用户',
@@ -2330,6 +2376,7 @@ function localizeText(value: string): string {
     'Merge request review repair completed': '评审修复已完成',
     'Deployment record created': '测试环境记录已创建',
     'Deployment status synced': '部署状态已同步',
+    'Deployment redeployed': '重新部署已创建',
     'Verification record created': '验收结果已记录',
   };
   const trimmed = output.trim();
@@ -2437,6 +2484,7 @@ function localizeText(value: string): string {
     [/Test deployment record was created\./g, '测试环境记录已创建。'],
     [/Test deployment is pending\./g, '测试环境部署中。'],
     [/Deployment status is (pending|deployed|failed)\./g, '部署状态：$1。'],
+    [/Pending deployment must be synced or completed before redeploying/g, '部署仍在进行中，请先同步或等待完成后再重新部署'],
     [/Test deployment verification passed\./g, '测试环境验收已通过。'],
     [/Test deployment verification failed\./g, '测试环境验收未通过。'],
     [/Execution workspace preparation failed:/g, '执行工作区准备失败：'],

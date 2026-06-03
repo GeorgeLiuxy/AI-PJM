@@ -187,7 +187,7 @@
 
 目标：MR 后能进入测试环境验证，而不是停在代码层。
 
-状态：首版已实现本地测试环境记录与验收记录。当前 `local` 模式只记录测试环境 URL、环境名、验收状态和证据链接；`webhook` 部署 Provider 已可按项目读取 `deploy_token` 调用外部部署入口，并把部署 URL、状态和证据写入 `DeployRecord`。webhook 返回 `status_url` 时，工作台可手动同步部署状态并回写门禁、审计和证据。环境级配置、自动状态轮询和重新部署仍待实现。
+状态：首版已实现本地测试环境记录与验收记录。当前 `local` 模式只记录测试环境 URL、环境名、验收状态和证据链接；`webhook` 部署 Provider 已可按项目读取 `deploy_token` 调用外部部署入口，并把部署 URL、状态和证据写入 `DeployRecord`。webhook 返回 `status_url` 时，工作台可手动同步部署状态并回写门禁、审计和证据；失败部署可从工作台重新部署并保留来源证据。环境级配置和自动状态轮询仍待实现。
 
 任务：
 
@@ -290,7 +290,7 @@ V2 主链路已经完成本地 MVP 闭环，下一步应转入生产化基础建
 3. 做 S1/S2：实现 AI PJM internal execution bridge API 和 `SymphonyBridgeExecutor`。
 4. 完善 SecretStore Provider 消费：让 GitLab/OpenAI/部署 Provider 按项目安全读取凭证。（Dify/GitLab/webhook 部署已完成首版，OpenAI 待实现）
 5. 做 S3/S4：用 Symphony 执行低风险任务，创建真实 GitLab/GitHub MR，并补远端评审同步。
-6. 做 S5：增强真实测试环境部署 Provider，补环境配置、状态轮询和重新部署。
+6. 做 S5：增强真实测试环境部署 Provider，补环境配置和自动状态轮询；重新部署入口首版已完成。
 7. 再补 PostgreSQL/Alembic、队列恢复、生产级 Dify/OpenAI 质量评估和产品化交互。
 
 原因：生产使用时最大的风险不是缺少复杂组织治理，而是主链路仍需人工搬运、真实 MR/部署没有打通、执行和证据不够可靠。先补这些直接影响交付效率的能力，平台才能真实减少人工介入。

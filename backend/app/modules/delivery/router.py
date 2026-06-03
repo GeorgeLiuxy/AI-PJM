@@ -527,6 +527,26 @@ async def sync_deploy_record_status(
     )
 
 
+@router.post("/deployments/{deploy_record_id}/redeploy", response_model=dict, status_code=status.HTTP_201_CREATED)
+async def redeploy_deploy_record(
+    deploy_record_id: int,
+    db: AsyncSession = Depends(get_db),
+    principal: AuthPrincipal = Depends(get_current_principal),
+):
+    await _require_deploy_record_permission(db, deploy_record_id, principal, "operate")
+    record = await delivery_service.redeploy_deploy_record(
+        db=db,
+        deploy_record_id=deploy_record_id,
+        actor_user_id=principal.user_id,
+        actor_ref=principal.username,
+    )
+    return success_response(
+        data=DeployRecordResponse.model_validate(record).model_dump(),
+        message="Deployment redeployed",
+        code=201,
+    )
+
+
 @router.post("/deployments/{deploy_record_id}/verification", response_model=dict, status_code=status.HTTP_201_CREATED)
 async def record_verification(
     deploy_record_id: int,

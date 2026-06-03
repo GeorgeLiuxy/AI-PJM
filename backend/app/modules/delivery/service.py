@@ -1279,6 +1279,66 @@ class DeliveryService:
             raise NotFoundException(f"Deploy record {deploy_record.id} not found")
         return loaded_record
 
+    async def redeploy_deploy_record(
+        self,
+        db: AsyncSession,
+        deploy_record_id: int,
+        actor_user_id: int | None = None,
+        actor_ref: str | None = None,
+    ) -> DeployRecord:
+        source_record = await delivery_repository.get_deploy_record(db, deploy_record_id)
+        if not source_record:
+            raise NotFoundException(f"Deploy record {deploy_record_id} not found")
+        if source_record.status == DeploymentStatus.PENDING:
+            raise BadRequestException("Pending deployment must be synced or completed before redeploying")
+
+        redeployed = await self.create_deploy_record(
+            db=db,
+            merge_request_id=source_record.merge_request_id,
+            provider=source_record.provider,
+            environment=source_record.environment,
+            url=None,
+            actor_user_id=actor_user_id,
+            actor_ref=actor_ref,
+        )
+        evidence = {
+            **(redeployed.evidence_json or {}),
+            "redeploy_from_deploy_record_id": source_record.id,
+            "redeployed_by_user_id": actor_user_id,
+            "redeployed_by_ref": actor_ref or "system",
+            "redeployed_at": utc_now().isoformat(),
+        }
+        await delivery_repository.update_deploy_record(
+            db,
+            redeployed,
+            evidence_json=evidence,
+        )
+
+        task = await delivery_repository.get_coding_task(db, redeployed.coding_task_id)
+        demand = await delivery_repository.get_demand(db, task.demand_id) if task else None
+        await audit_repository.create_event(
+            db,
+            action="delivery.test_deployment_redeployed",
+            entity_type="deployment",
+            entity_id=redeployed.id,
+            project_id=demand.project_id if demand else None,
+            actor_user_id=actor_user_id,
+            actor_ref=actor_ref or "system",
+            summary=f"Test deployment redeployed: {redeployed.environment}",
+            metadata={
+                "source_deploy_record_id": source_record.id,
+                "new_deploy_record_id": redeployed.id,
+                "merge_request_id": redeployed.merge_request_id,
+                "provider": redeployed.provider,
+                "environment": redeployed.environment,
+            },
+        )
+        await db.commit()
+        loaded_record = await delivery_repository.get_deploy_record(db, redeployed.id)
+        if not loaded_record:
+            raise NotFoundException(f"Deploy record {redeployed.id} not found")
+        return loaded_record
+
     async def sync_deploy_record_status(
         self,
         db: AsyncSession,
