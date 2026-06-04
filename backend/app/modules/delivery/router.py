@@ -511,6 +511,35 @@ async def create_deploy_record(
     )
 
 
+@router.post("/deployments/sync-pending", response_model=dict)
+async def sync_pending_deploy_records(
+    limit: int = 20,
+    db: AsyncSession = Depends(get_db),
+    principal: AuthPrincipal = Depends(get_current_principal),
+):
+    require_capability(principal, "operate")
+    result = await delivery_service.sync_pending_deploy_records(
+        db,
+        limit=limit,
+        project_ids=principal.accessible_project_ids,
+        actor_user_id=principal.user_id,
+        actor_ref=principal.username,
+    )
+    return success_response(
+        data={
+            "scanned": result["scanned"],
+            "synced_count": result["synced_count"],
+            "error_count": result["error_count"],
+            "synced": [
+                DeployRecordResponse.model_validate(record).model_dump()
+                for record in result["synced"]
+            ],
+            "errors": result["errors"],
+        },
+        message="Pending deployments synced",
+    )
+
+
 @router.get("/deployments/{deploy_record_id}", response_model=dict)
 async def get_deploy_record(
     deploy_record_id: int,

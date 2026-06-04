@@ -743,6 +743,7 @@ To be added:
 - GitLab/GitHub providers create real remote MR/PR and poll comments.
 - Real deployment provider triggers a real test environment.
 - Failed verification can automatically route back to repair once policy is defined.
+- A scheduler or worker periodically calls `POST /api/v2/deployments/sync-pending`.
 
 ### Slice 6: Queue and Parallel Control
 

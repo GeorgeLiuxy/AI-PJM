@@ -1612,6 +1612,50 @@ class DeliveryService:
             raise NotFoundException(f"Deploy record {deploy_record.id} not found")
         return loaded_record
 
+    async def sync_pending_deploy_records(
+        self,
+        db: AsyncSession,
+        *,
+        limit: int = 20,
+        project_ids: list[int] | None = None,
+        actor_user_id: int | None = None,
+        actor_ref: str | None = None,
+    ) -> dict:
+        records = await delivery_repository.list_deploy_records(
+            db,
+            statuses=[DeploymentStatus.PENDING],
+            limit=min(max(limit, 1), 100),
+            project_ids=project_ids,
+        )
+        synced: list[DeployRecord] = []
+        errors: list[dict] = []
+        for record in records:
+            try:
+                synced.append(
+                    await self.sync_deploy_record_status(
+                        db,
+                        record.id,
+                        actor_user_id=actor_user_id,
+                        actor_ref=actor_ref or "system",
+                    )
+                )
+            except (BadRequestException, NotFoundException) as exc:
+                errors.append(
+                    {
+                        "deploy_record_id": record.id,
+                        "provider": record.provider,
+                        "error_type": exc.__class__.__name__,
+                        "message": redact_text(str(exc))[:1000],
+                    }
+                )
+        return {
+            "scanned": len(records),
+            "synced_count": len(synced),
+            "error_count": len(errors),
+            "synced": synced,
+            "errors": errors,
+        }
+
     async def record_verification(
         self,
         db: AsyncSession,

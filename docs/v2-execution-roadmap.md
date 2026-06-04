@@ -187,13 +187,13 @@
 
 目标：MR 后能进入测试环境验证，而不是停在代码层。
 
-状态：首版已实现本地测试环境记录与验收记录。当前 `local` 模式只记录测试环境 URL、环境名、验收状态和证据链接；`webhook` 部署 Provider 已可按项目读取 `deploy_token` 调用外部部署入口，并把部署 URL、状态和证据写入 `DeployRecord`。webhook 返回 `status_url` 时，工作台可手动同步部署状态并回写门禁、审计和证据；失败部署可从工作台重新部署并保留来源证据。环境级配置和自动状态轮询仍待实现。
+状态：首版已实现本地测试环境记录与验收记录。当前 `local` 模式只记录测试环境 URL、环境名、验收状态和证据链接；`webhook` 部署 Provider 已可按项目读取 `deploy_token` 调用外部部署入口，并把部署 URL、状态和证据写入 `DeployRecord`。webhook 返回 `status_url` 时，工作台可手动同步单条部署状态并回写门禁、审计和证据；后端提供 `POST /api/v2/deployments/sync-pending` 批量同步 pending 部署，供后续 worker/定时器调用。失败部署可从工作台重新部署并保留来源证据。环境级配置和真正自动轮询调度仍待实现。
 
 任务：
 
 - 增加 `DeployRecord` 和 `VerificationRecord`。（已完成）
 - 对接测试环境部署入口，初期可先记录外部部署 URL。（local 记录和 webhook 部署首版已完成）
-- 支持 webhook 部署状态同步。（手动同步首版已完成，自动轮询待实现）
+- 支持 webhook 部署状态同步。（单条手动同步和 pending 批量同步入口已完成，自动调度待实现）
 - 支持人工验收：通过、拒绝、备注、截图或证据链接。（通过/失败和链接记录已完成）
 - 将 `test_deployed`、`verification_passed` 做成门禁。（已完成）
 

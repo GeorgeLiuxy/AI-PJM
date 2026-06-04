@@ -1839,6 +1839,36 @@ async def test_delivery_service_syncs_webhook_deployment_status_gate_and_audit(d
     assert audit_events
     assert audit_events[0].actor_ref == "operator"
 
+    second_deploy_record = await delivery_repository.create_deploy_record(
+        db_session,
+        merge_request_id=merge_request.id,
+        coding_task_id=task.id,
+        provider="webhook",
+        status=DeploymentStatus.PENDING,
+        environment="test",
+        url=None,
+        evidence_json={
+            "provider_evidence": {
+                "status_url": "https://deploy.example/status/deploy-456",
+                "credential": {"token_secret_name": "deploy_token"},
+            },
+        },
+    )
+    await db_session.commit()
+
+    batch = await DeliveryService().sync_pending_deploy_records(
+        db_session,
+        limit=10,
+        project_ids=[project.id],
+        actor_ref="worker",
+    )
+
+    assert batch["scanned"] == 1
+    assert batch["synced_count"] == 1
+    assert batch["error_count"] == 0
+    assert batch["synced"][0].id == second_deploy_record.id
+    assert batch["synced"][0].status == DeploymentStatus.DEPLOYED
+
 
 @pytest.mark.asyncio
 async def test_delivery_service_redeploys_failed_deployment_with_source_evidence(db_session):
