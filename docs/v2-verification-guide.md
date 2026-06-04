@@ -551,7 +551,46 @@ confidence_score: number between 0 and 1
 
 If required configuration or required output fields are missing, the provider must fail clearly and must not silently advance the workflow.
 
-## 13. Auth and Project Access Verification
+## 13. OpenAI Provider Configuration Verification
+
+OpenAI is not enabled by default. To test the provider boundary, configure:
+
+```powershell
+$env:AI_WORKFLOW_PROVIDER="openai"
+$env:OPENAI_API_BASE_URL="https://api.openai.com/v1"
+$env:OPENAI_API_KEY="<openai-api-key>"
+$env:OPENAI_API_KEY_SECRET_NAME="openai_api_key"
+$env:OPENAI_MODEL="gpt-4o-mini"
+$env:OPENAI_REQUEST_TIMEOUT_SECONDS="120"
+```
+
+For project-scoped credentials, store a project secret with:
+
+```text
+name = openai_api_key
+provider = openai
+value = <openai-api-key>
+```
+
+The OpenAI Provider resolves credentials in this order:
+
+```text
+project SecretStore value named by OPENAI_API_KEY_SECRET_NAME
+-> global OPENAI_API_KEY
+```
+
+Expected OpenAI behavior:
+
+```text
+Spec and impact analysis are requested through the Responses API with strict JSON Schema output.
+Repository context collection and coding task generation still use local rules.
+Provider metadata records provider, model, response id, and credential source only.
+Plaintext API keys must never be stored in provider metadata or frontend responses.
+```
+
+If required configuration, output text, valid JSON, required fields, risk level, or confidence score are missing, the provider must fail clearly and must not silently advance the workflow.
+
+## 14. Auth and Project Access Verification
 
 Local development keeps auth disabled unless `AUTH_ENABLED=true`.
 
@@ -578,7 +617,7 @@ Expected behavior:
 - Non-admin users cannot manage users or project membership.
 - The access management page can load project and user data without `failed to fetch`.
 
-## 14. SecretStore Verification
+## 15. SecretStore Verification
 
 SecretStore writes are disabled until a server-side master key is configured.
 
@@ -597,6 +636,7 @@ Expected behavior:
 - Project-scoped users cannot list or rotate secrets outside their project.
 - Secret creation and rotation create audit events.
 - Dify Provider can resolve `dify_api_key` from project SecretStore without returning the key to the frontend.
+- OpenAI Provider can resolve `openai_api_key` from project SecretStore without returning the key to the frontend.
 
 Manual local configuration:
 
@@ -616,7 +656,7 @@ The secret table shows only masked values, for example ****alue.
 Plaintext secret values never appear after save or refresh.
 ```
 
-## 15. Slice-level Acceptance Criteria
+## 16. Slice-level Acceptance Criteria
 
 ### Slice 0: Baseline
 
@@ -693,16 +733,17 @@ To be added:
 
 ### Slice 7: Provider Integration
 
-- Provider can be switched among `mock`, `local`, and `dify` through configuration.
+- Provider can be switched among `mock`, `local`, `dify`, and `openai` through configuration.
 - Dify outputs are parsed into structured drafts only.
 - Invalid or missing Dify configuration fails explicitly.
+- OpenAI Responses API outputs are parsed into structured drafts only.
+- Invalid or missing OpenAI configuration or malformed structured output fails explicitly.
 
 To be added:
 
-- OpenAI provider.
 - Retry and fallback policy for transient provider failures.
 
-## 16. Regression Checklist
+## 17. Regression Checklist
 
 Before every larger change:
 

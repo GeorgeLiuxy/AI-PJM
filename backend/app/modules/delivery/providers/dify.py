@@ -88,7 +88,7 @@ class DifyWorkflowProvider(LocalWorkflowProvider):
             impacted_areas=self._string_list(outputs, "impacted_areas"),
             affected_files=self._string_list(outputs, "affected_files", required=False),
             recommendations=self._string_list(outputs, "recommendations", required=False),
-            risk_level=self._required_str(outputs, "risk_level"),
+            risk_level=self._risk_level(outputs.get("risk_level")),
             confidence_score=self._confidence(outputs.get("confidence_score")),
             provider_metadata={
                 "provider": self.name,
@@ -188,6 +188,11 @@ class DifyWorkflowProvider(LocalWorkflowProvider):
         except (TypeError, ValueError) as exc:
             raise AIServiceException("Dify workflow output 'confidence_score' must be numeric") from exc
         return min(max(confidence, 0.0), 1.0)
+
+    def _risk_level(self, value: Any) -> str:
+        if not isinstance(value, str) or value.strip() not in {"L0", "L1", "L2", "L3"}:
+            raise AIServiceException("Dify workflow output 'risk_level' must be one of L0, L1, L2, L3")
+        return value.strip()
 
     def _spec_payload(self, spec: SpecCard | None) -> dict[str, Any] | None:
         if not spec:

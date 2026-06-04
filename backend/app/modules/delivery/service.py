@@ -49,6 +49,7 @@ from app.modules.delivery.provider_credentials import (
 )
 from app.modules.delivery.providers import WorkflowProvider, get_workflow_provider
 from app.modules.delivery.providers.dify import DifyWorkflowProvider
+from app.modules.delivery.providers.openai import OpenAIWorkflowProvider
 from app.modules.delivery.redaction import redact_text, redact_value
 from app.modules.delivery.repository import delivery_repository
 from app.modules.secrets.repository import secret_repository
@@ -74,7 +75,28 @@ class DeliveryService:
 
     async def _provider_for_demand(self, db: AsyncSession, demand: DemandItem) -> WorkflowProvider:
         provider = self.provider
-        if not isinstance(provider, DifyWorkflowProvider) or demand.project_id is None:
+        if demand.project_id is None:
+            return provider
+
+        if isinstance(provider, OpenAIWorkflowProvider):
+            credential = await resolve_provider_credential(
+                db,
+                project_id=demand.project_id,
+                provider="openai",
+                secret_name=settings.openai_api_key_secret_name,
+                settings_value=settings.openai_api_key,
+            )
+            if not credential or credential.source != "secret_store":
+                return provider
+
+            return OpenAIWorkflowProvider(
+                api_key=credential.value,
+                credential_source=credential.source,
+                credential_project_id=credential.project_id,
+                api_key_secret_name=credential.secret_name,
+            )
+
+        if not isinstance(provider, DifyWorkflowProvider):
             return provider
 
         credential = await resolve_provider_credential(

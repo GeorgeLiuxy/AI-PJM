@@ -74,6 +74,9 @@ class Settings(BaseSettings):
     # AI API (reserved)
     anthropic_api_key: str = ""
     openai_api_key: str = ""
+    openai_api_base_url: str = "https://api.openai.com/v1"
+    openai_model: str = "gpt-4o-mini"
+    openai_request_timeout_seconds: int = 120
     openai_api_key_secret_name: str = "openai_api_key"
     ai_workflow_provider: str = "local"
     dify_api_base_url: str = ""

@@ -77,7 +77,7 @@ AI PJM 的生产级目标：
 当前仍不是生产级：
 
 - 权限仍是本地首版，但当前阶段只需要最小角色模型；企业 SSO、复杂组织角色和审计报表平台化不作为近期主线。
-- 密钥和 Token 已有本地加密存储、健康检查和过期提示首版，Dify、GitLab MR 和 webhook 部署已接入项目级消费；尚未接 Vault/KMS、集中轮换策略和 OpenAI Provider 消费链路。
+- 密钥和 Token 已有本地加密存储、健康检查和过期提示首版，Dify、OpenAI、GitLab MR 和 webhook 部署已接入项目级消费；尚未接 Vault/KMS、集中轮换策略和 Provider 远端可用性探测。
 - GitLab MR 创建、源分支自动推送、远端评审同步和阻塞意见自动修复已有首版；GitHub provider、GitLab webhook 和 reviewer/label 配置仍待实现。
 - webhook 测试部署 client 已有首版，失败部署重新部署入口已完成；仍缺 CI/CD 状态轮询和环境级配置。
 - Symphony Bridge、最小 worker、lease 恢复和暂停/恢复/取消控制已有首版；真实 Symphony daemon、队列恢复增强和生产 worker 运维仍待实现。
@@ -231,7 +231,7 @@ AI 不允许直接决定：
 
 目标：让 Git、AI、部署系统凭证可安全使用。
 
-当前状态：已完成本地首版。已有 `SecretStore` 服务端接口、项目级密钥表、Fernet 加密存储、密钥掩码响应、创建/轮换审计事件、访问管理页配置入口和基础权限测试。Dify Provider 会优先按项目读取 `dify_api_key`，GitLab MR provider 会读取 `gitlab_token`，webhook 部署 provider 会读取 `deploy_token`；项目未配置时分别回退到全局 `DIFY_API_KEY`、`GITLAB_TOKEN`、`DEPLOY_TOKEN`。主密钥通过 `SECRET_STORE_MASTER_KEY` 注入，未配置时禁止写入密钥。执行日志、执行证据和自测门禁证据已在持久化前进行敏感信息脱敏。密钥列表和健康检查接口已支持过期时间、健康状态、可解密性检查和最近使用时间展示。
+当前状态：已完成本地首版。已有 `SecretStore` 服务端接口、项目级密钥表、Fernet 加密存储、密钥掩码响应、创建/轮换审计事件、访问管理页配置入口和基础权限测试。Dify Provider 会优先按项目读取 `dify_api_key`，OpenAI Provider 会优先按项目读取 `openai_api_key`，GitLab MR provider 会读取 `gitlab_token`，webhook 部署 provider 会读取 `deploy_token`；项目未配置时分别回退到全局 `DIFY_API_KEY`、`OPENAI_API_KEY`、`GITLAB_TOKEN`、`DEPLOY_TOKEN`。主密钥通过 `SECRET_STORE_MASTER_KEY` 注入，未配置时禁止写入密钥。执行日志、执行证据和自测门禁证据已在持久化前进行敏感信息脱敏。密钥列表和健康检查接口已支持过期时间、健康状态、可解密性检查和最近使用时间展示。
 
 实施内容：
 
@@ -239,20 +239,20 @@ AI 不允许直接决定：
 - 本地开发支持 `.env`，生产必须接 Vault、云密钥服务或数据库加密存储。（本地加密存储首版已完成）
 - 密钥只在服务端使用，不进入前端。（首版已完成）
 - 日志和证据链做脱敏。（API 响应、运行日志和执行证据首版已完成）
-- Token 配置支持项目级隔离。（Dify/GitLab/webhook 部署消费首版已完成，OpenAI 待实现）
+- Token 配置支持项目级隔离。（Dify/OpenAI/GitLab/webhook 部署消费首版已完成）
 - 增加凭证健康检查和过期提示。（首版已完成）
 
 验收标准：
 
 - 前端和 API 响应不会返回明文密钥。（首版已验证）
 - 日志中不会出现 Token。（首版已增加回归用例）
-- GitLab/Dify/部署凭证可按项目配置并由 provider 服务端消费；OpenAI 凭证口径已预留，OpenAI Provider 待实现。
+- GitLab/Dify/OpenAI/部署凭证可按项目配置并由 provider 服务端消费。
 - 凭证失效时页面显示明确错误和修复入口。（健康状态展示已完成，轮换修复入口待增强）
 
 剩余工作：
 
 - 接入 Vault/KMS 或生产级密钥后端，支持主密钥轮换。
-- 增加 OpenAI Provider 的项目级凭证消费；GitLab/Dify/webhook 部署已完成首版项目级读取。
+- 增加 Provider 远端可用性探测、最近失败原因写回和凭证失效告警联动。
 - 扩展密钥健康检查，增加 Provider 级远端可用性探测、最近失败原因自动写入和过期告警。
 - 扩展日志/证据敏感信息扫描规则，增加更多 Provider 凭证格式和持续扫描告警。
 - 增加密钥轮换 UI、禁用/删除策略和审批门禁。
@@ -453,21 +453,23 @@ AI 不允许直接决定：
 
 目标：让外部 AI 编排提高方案质量，而不是接管平台状态。
 
+当前状态：Dify/OpenAI Provider 首版已完成，默认不启用。Dify 使用配置的 workflow 生成 Spec/Impact 结构化草稿；OpenAI 使用 Responses API 的 JSON Schema 结构化输出生成 Spec/Impact 草稿。两者都只返回草稿，不直接改数据库状态、不执行代码、不绕过门禁。已具备必填字段、列表字段、风险等级和置信度校验；超时首版已完成，重试、降级、远端质量评估和 Provider 版本治理仍待实现。
+
 实施内容：
 
-- 固化 Dify Spec workflow schema。
-- 固化 Dify Impact workflow schema。
-- 增加 OpenAI Provider。
-- 增加 Provider 输出校验。
-- 增加超时、重试、降级策略。
-- 记录 workflow/model/prompt 版本。
-- 评估 Provider 输出质量。
+- 固化 Dify Spec workflow schema。（首版已完成）
+- 固化 Dify Impact workflow schema。（首版已完成）
+- 增加 OpenAI Provider。（首版已完成）
+- 增加 Provider 输出校验。（首版已完成）
+- 增加超时、重试、降级策略。（超时首版已完成，重试/降级待实现）
+- 记录 workflow/model/prompt 版本。（model/workflow id 首版已记录，prompt/schema 版本待补）
+- 评估 Provider 输出质量。（待实现）
 
 验收标准：
 
-- Provider 输出不合规时不会推进流程。
-- 同一需求可追溯使用了哪个 workflow/model。
-- Dify/OpenAI 不直接修改数据库状态。
+- Provider 输出不合规时不会推进流程。（首版已完成）
+- 同一需求可追溯使用了哪个 workflow/model。（首版已完成）
+- Dify/OpenAI 不直接修改数据库状态。（已按 Provider 合同约束）
 - Provider 失败可降级到本地规则或进入人工处理。
 
 不做风险：
@@ -642,7 +644,7 @@ AI 不允许直接决定：
 1. 校准文档口径，明确项目不是企业治理平台。
 2. 按 `docs/symphony-integration-plan.md` 做 S0：拉通 Symphony 本地运行和 Codex 调用方式。
 3. 做 S1/S2：实现 AI PJM internal execution bridge API 和 `SymphonyBridgeExecutor`。
-4. 完善 SecretStore Provider 消费：Dify/GitLab/webhook 部署已完成首版项目级读取，OpenAI Provider 待实现。
+4. 完善 SecretStore Provider 消费：Dify/OpenAI/GitLab/webhook 部署已完成首版项目级读取，下一步补 Provider 远端可用性探测和失败原因写回。
 5. 做 S3/S4：用 Symphony 执行低风险任务，并创建真实 GitLab/GitHub MR。
 6. 做 S5：接入真实测试环境部署 Provider。
 7. 做 S6：补 PostgreSQL、队列恢复和最小可观测性。

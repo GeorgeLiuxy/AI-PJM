@@ -6,6 +6,7 @@ from app.modules.delivery.providers.base import WorkflowProvider
 from app.modules.delivery.providers.dify import DifyWorkflowProvider
 from app.modules.delivery.providers.local import LocalWorkflowProvider
 from app.modules.delivery.providers.mock import MockWorkflowProvider
+from app.modules.delivery.providers.openai import OpenAIWorkflowProvider
 
 
 def get_workflow_provider(provider_name: str | None = None) -> WorkflowProvider:
@@ -22,5 +23,5 @@ def get_workflow_provider(provider_name: str | None = None) -> WorkflowProvider:
     if selected == "dify":
         return DifyWorkflowProvider()
     if selected == "openai":
-        raise AIServiceException("OpenAI workflow provider is configured but not implemented yet")
+        return OpenAIWorkflowProvider()
     raise AIServiceException(f"Unknown workflow provider: {selected}")

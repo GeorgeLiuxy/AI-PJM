@@ -8,10 +8,12 @@ from app.modules.delivery.providers.base import (
     WorkflowProvider,
 )
 from app.modules.delivery.providers.factory import get_workflow_provider
+from app.modules.delivery.providers.openai import OpenAIWorkflowProvider
 
 __all__ = [
     "CodingTaskDraft",
     "ImpactAnalysisDraft",
+    "OpenAIWorkflowProvider",
     "RepoContextDraft",
     "SpecDraft",
     "WorkflowProvider",

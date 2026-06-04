@@ -35,6 +35,7 @@ from app.modules.delivery.provider_credentials import ProviderCredential, resolv
 from app.modules.delivery.providers.dify import DifyWorkflowProvider
 from app.modules.delivery.providers.factory import get_workflow_provider
 from app.modules.delivery.providers.local import LocalWorkflowProvider
+from app.modules.delivery.providers.openai import OpenAIWorkflowProvider
 from app.modules.delivery.redaction import REDACTED, redact_text, redact_value
 from app.modules.delivery.repository import delivery_repository
 from app.modules.delivery.service import DeliveryService, delivery_service
@@ -344,6 +345,15 @@ def test_delivery_v2_dify_provider_resolves_when_configured(monkeypatch):
     assert provider.name == "dify"
 
 
+def test_delivery_v2_openai_provider_resolves_when_configured(monkeypatch):
+    monkeypatch.setattr(settings, "ai_workflow_provider", "openai")
+
+    provider = get_workflow_provider()
+
+    assert isinstance(provider, OpenAIWorkflowProvider)
+    assert provider.name == "openai"
+
+
 def test_delivery_v2_dify_provider_requires_base_config(monkeypatch):
     monkeypatch.setattr(settings, "dify_api_base_url", "")
     monkeypatch.setattr(settings, "dify_api_key", "")
@@ -370,6 +380,213 @@ def test_delivery_v2_dify_provider_accepts_injected_api_key(monkeypatch):
         "credential_project_id": 123,
         "api_key_secret_name": "dify_api_key",
     }
+
+
+def test_delivery_v2_dify_provider_rejects_invalid_risk_level():
+    provider = DifyWorkflowProvider()
+
+    with pytest.raises(AIServiceException, match="risk_level"):
+        provider._risk_level("critical")
+
+
+def test_delivery_v2_openai_provider_requires_base_config(monkeypatch):
+    monkeypatch.setattr(settings, "openai_api_base_url", "")
+    monkeypatch.setattr(settings, "openai_api_key", "")
+    monkeypatch.setattr(settings, "openai_model", "")
+
+    with pytest.raises(AIServiceException, match="OPENAI_API_BASE_URL"):
+        OpenAIWorkflowProvider()._require_base_config()
+
+
+def test_delivery_v2_openai_provider_accepts_injected_api_key(monkeypatch):
+    monkeypatch.setattr(settings, "openai_api_base_url", "https://api.openai.example/v1")
+    monkeypatch.setattr(settings, "openai_api_key", "")
+    monkeypatch.setattr(settings, "openai_model", "gpt-4o-mini")
+
+    provider = OpenAIWorkflowProvider(
+        api_key="project-openai-key",
+        credential_source="secret_store",
+        credential_project_id=123,
+        api_key_secret_name="openai_api_key",
+    )
+
+    provider._require_base_config()
+    assert provider._api_key() == "project-openai-key"
+    assert provider._credential_metadata() == {
+        "credential_source": "secret_store",
+        "credential_project_id": 123,
+        "api_key_secret_name": "openai_api_key",
+    }
+
+
+def test_delivery_v2_openai_provider_rejects_invalid_risk_level():
+    provider = OpenAIWorkflowProvider()
+
+    with pytest.raises(AIServiceException, match="risk_level"):
+        provider._risk_level("critical")
+
+
+@pytest.mark.asyncio
+async def test_delivery_v2_openai_provider_generates_spec_with_structured_outputs(monkeypatch):
+    monkeypatch.setattr(settings, "openai_api_base_url", "https://api.openai.example/v1")
+    monkeypatch.setattr(settings, "openai_api_key", "")
+    monkeypatch.setattr(settings, "openai_model", "gpt-4o-mini")
+    monkeypatch.setattr(settings, "openai_request_timeout_seconds", 12)
+    captured: dict[str, object] = {}
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "id": "resp_123",
+                "output_text": json.dumps(
+                    {
+                        "title": "Add status badge",
+                        "user_story": "As an operator, I can see execution status.",
+                        "scope": "Delivery dashboard status display.",
+                        "acceptance_criteria": ["Status badge is visible."],
+                        "constraints": ["Do not expose secrets."],
+                        "risks": ["Low UI risk."],
+                        "open_questions": [],
+                    }
+                ),
+            }
+
+    class FakeAsyncClient:
+        def __init__(self, timeout):
+            captured["timeout"] = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return None
+
+        async def post(self, url, headers, json):
+            captured["url"] = url
+            captured["headers"] = headers
+            captured["json"] = json
+            return FakeResponse()
+
+    monkeypatch.setattr("app.modules.delivery.providers.openai.httpx.AsyncClient", FakeAsyncClient)
+    provider = OpenAIWorkflowProvider(
+        api_key="project-openai-key",
+        credential_source="secret_store",
+        credential_project_id=123,
+        api_key_secret_name="openai_api_key",
+    )
+    demand = DemandItem(
+        id=1,
+        raw_input="Add a compact execution status badge to the delivery dashboard.",
+        source_type="new_requirement",
+        title="Add status badge",
+    )
+
+    spec = await provider.generate_spec(demand)
+
+    assert spec.title == "Add status badge"
+    assert spec.provider_metadata == {
+        "provider": "openai",
+        "model": "gpt-4o-mini",
+        "source": "openai_responses_api",
+        "response_id": "resp_123",
+        "credential_source": "secret_store",
+        "credential_project_id": 123,
+        "api_key_secret_name": "openai_api_key",
+    }
+    assert captured["timeout"] == 12
+    assert captured["url"] == "https://api.openai.example/v1/responses"
+    assert captured["headers"] == {
+        "Authorization": "Bearer project-openai-key",
+        "Content-Type": "application/json",
+    }
+    request_json = captured["json"]
+    assert isinstance(request_json, dict)
+    assert request_json["model"] == "gpt-4o-mini"
+    assert request_json["text"]["format"]["type"] == "json_schema"
+    assert request_json["text"]["format"]["strict"] is True
+    assert "project-openai-key" not in str(spec.provider_metadata)
+
+
+@pytest.mark.asyncio
+async def test_delivery_v2_openai_provider_analyzes_impact_from_output_items(monkeypatch):
+    monkeypatch.setattr(settings, "openai_api_base_url", "https://api.openai.example/v1")
+    monkeypatch.setattr(settings, "openai_api_key", "settings-openai-key")
+    monkeypatch.setattr(settings, "openai_model", "gpt-4o-mini")
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "id": "resp_impact",
+                "output": [
+                    {
+                        "type": "message",
+                        "content": [
+                            {
+                                "type": "output_text",
+                                "text": json.dumps(
+                                    {
+                                        "summary": "UI and delivery API are affected.",
+                                        "impacted_areas": ["frontend/src/app/pages", "backend/app/modules"],
+                                        "affected_files": [
+                                            "frontend/src/app/pages/DeliveryV2Page.tsx",
+                                        ],
+                                        "recommendations": ["Run frontend build."],
+                                        "risk_level": "L1",
+                                        "confidence_score": 1.2,
+                                    }
+                                ),
+                            }
+                        ],
+                    }
+                ],
+            }
+
+    class FakeAsyncClient:
+        def __init__(self, timeout):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return None
+
+        async def post(self, url, headers, json):
+            return FakeResponse()
+
+    monkeypatch.setattr("app.modules.delivery.providers.openai.httpx.AsyncClient", FakeAsyncClient)
+    demand = DemandItem(
+        id=1,
+        raw_input="Update delivery dashboard.",
+        source_type="new_requirement",
+        title="Update delivery dashboard",
+        risk_level=DeliveryRiskLevel.L1,
+    )
+    repo_context = RepoContext(
+        id=2,
+        demand_id=1,
+        status="ready",
+        provider="local",
+        summary="local",
+        source_refs_json=["workspace.root"],
+        discovered_files_json=["frontend/src/app/pages/DeliveryV2Page.tsx"],
+        dependency_refs_json=["frontend/package.json:scripts.build"],
+        confidence_score=0.9,
+        provider_metadata_json={"provider": "local"},
+    )
+
+    draft = await OpenAIWorkflowProvider().analyze_impact(demand, None, repo_context)
+
+    assert draft.risk_level == "L1"
+    assert draft.confidence_score == 1.0
+    assert "frontend/src/app/pages/DeliveryV2Page.tsx" in draft.affected_files
+    assert draft.provider_metadata["response_id"] == "resp_impact"
 
 
 @pytest.mark.asyncio
@@ -429,6 +646,73 @@ async def test_delivery_service_resolves_project_dify_api_key_from_secret_store(
         "credential_source": "secret_store",
         "credential_project_id": project.id,
         "api_key_secret_name": "dify_api_key",
+    }
+
+
+@pytest.mark.asyncio
+async def test_delivery_service_resolves_project_openai_api_key_from_secret_store(
+    db_session,
+    monkeypatch,
+):
+    monkeypatch.setattr(settings, "secret_store_master_key", "test-secret-master-key")
+    monkeypatch.setattr(settings, "openai_api_base_url", "https://api.openai.example/v1")
+    monkeypatch.setattr(settings, "openai_api_key", "")
+    monkeypatch.setattr(settings, "openai_api_key_secret_name", "openai_api_key")
+    monkeypatch.setattr(settings, "openai_model", "gpt-4o-mini")
+    project = await auth_repository.create_project(
+        db_session,
+        key="openai-secret-project",
+        name="OpenAI Secret Project",
+    )
+    demand = await delivery_repository.create_demand(
+        db_session,
+        raw_input="Add a status badge to the delivery dashboard.",
+        source_type="new_requirement",
+        title="Add status badge",
+        project_id=project.id,
+    )
+    await secret_store_service.create_secret(
+        db_session,
+        project_id=project.id,
+        name="openai_api_key",
+        provider="openai",
+        value="project-openai-key",
+        actor_ref="test",
+    )
+    captured: dict[str, object] = {}
+
+    async def fake_create_structured_response(self, schema_name, schema, system_prompt, user_payload):
+        captured["schema_name"] = schema_name
+        captured["api_key"] = self._api_key()
+        captured["credential_metadata"] = self._credential_metadata()
+        return (
+            {
+                "title": "Add status badge",
+                "user_story": "As an operator, I can see execution status.",
+                "scope": "Delivery dashboard status display.",
+                "acceptance_criteria": ["Status badge is visible."],
+                "constraints": ["Do not expose secrets."],
+                "risks": ["Low UI risk."],
+                "open_questions": [],
+            },
+            "resp_project",
+        )
+
+    monkeypatch.setattr(
+        OpenAIWorkflowProvider,
+        "_create_structured_response",
+        fake_create_structured_response,
+    )
+
+    spec = await DeliveryService(provider=OpenAIWorkflowProvider()).generate_spec(db_session, demand.id)
+
+    assert spec.title == "Add status badge"
+    assert captured["schema_name"] == "ai_pjm_spec_draft"
+    assert captured["api_key"] == "project-openai-key"
+    assert captured["credential_metadata"] == {
+        "credential_source": "secret_store",
+        "credential_project_id": project.id,
+        "api_key_secret_name": "openai_api_key",
     }
 
 

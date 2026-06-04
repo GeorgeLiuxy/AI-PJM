@@ -18,7 +18,7 @@
 - 低风险自动修复闭环首版。
 - 本地 MR/PR 记录、评审门禁、测试环境记录和验收记录。
 - 执行队列可见性和基础并发上限保护。
-- Dify Provider、GitLab MR provider、webhook 部署 provider 边界首版，相关凭证可按项目从 SecretStore 读取。
+- Dify/OpenAI Provider、GitLab MR provider、webhook 部署 provider 边界首版，相关凭证可按项目从 SecretStore 读取。
 - 本地认证、Bearer Token、项目成员、用户维护和交付 API 权限保护首版。
 - 前端按钮级权限首版，工作台动作和权限管理入口按角色显示或拦截。
 - 人工审批、MR 创建/评审、测试部署、验收的操作者已写入业务表结构化字段。
@@ -28,7 +28,7 @@
 - 中文化交付工作台页面。
 - 前后端启动/关闭脚本。
 
-当前是“本地 MVP 闭环”，不是完整生产级系统。近期生产化缺口集中在主链路：真实 Symphony daemon/worker 替换、GitLab/GitHub 评审同步、部署状态轮询、生产数据库和 OpenAI Provider。企业 SSO、复杂业务角色和审计报表平台化不是近期主线。
+当前是“本地 MVP 闭环”，不是完整生产级系统。近期生产化缺口集中在主链路：真实 Symphony daemon/worker 替换、GitLab/GitHub 评审同步、部署状态轮询、生产数据库和 Provider 生产联调/质量评估。企业 SSO、复杂业务角色和审计报表平台化不是近期主线。
 
 ## 2. 总体目标
 
@@ -231,14 +231,14 @@
 
 目标：在 Provider 合同稳定后，引入外部编排工具，而不是让 Dify 接管平台状态。
 
-状态：Dify Provider 边界首版已实现，默认不启用。`ai_workflow_provider=dify` 时，Spec 和影响分析可通过 Dify workflow 获取结构化输出；仓库上下文和任务包仍可复用本地规则。Dify API Key 会优先按项目从 SecretStore 读取 `dify_api_key`，项目未配置时回退到全局 `DIFY_API_KEY`。缺少 Dify URL、API Key 或 workflow id 时会明确失败，不会静默推进门禁。OpenAI Provider 仍待实现。
+状态：Dify/OpenAI Provider 边界首版已实现，默认不启用。`ai_workflow_provider=dify` 时，Spec 和影响分析可通过 Dify workflow 获取结构化输出；`ai_workflow_provider=openai` 时，Spec 和影响分析可通过 OpenAI Responses API 获取结构化输出。仓库上下文和任务包仍复用本地规则。Dify API Key 会优先按项目从 SecretStore 读取 `dify_api_key`，OpenAI API Key 会优先按项目读取 `openai_api_key`，项目未配置时分别回退到全局 `DIFY_API_KEY` / `OPENAI_API_KEY`。缺少必要配置或输出不合规时会明确失败，不会静默推进门禁。
 
 任务：
 
 - 实现 `DifyProvider`。（已完成首版）
-- 实现 `OpenAIProvider` 或其他模型 Provider。（待实现）
+- 实现 `OpenAIProvider` 或其他模型 Provider。（OpenAI 首版已完成）
 - Provider 只返回结构化草稿，不直接改数据库状态。（已按合同约束）
-- Dify API Key 按项目从 SecretStore 读取。（已完成首版）
+- Dify/OpenAI API Key 按项目从 SecretStore 读取。（已完成首版）
 - 加入 schema 校验、超时、重试、降级到本地规则。（结构化校验和超时已完成，重试/降级策略待细化）
 
 完成标准：
@@ -288,9 +288,9 @@ V2 主链路已经完成本地 MVP 闭环，下一步应转入生产化基础建
 1. 完成文档口径清理，让 README、路线图、蓝图、交互说明和生产化计划一致。
 2. 按 `docs/symphony-integration-plan.md` 做 S0：拉通 Symphony 本地运行和 Codex 调用方式。
 3. 做 S1/S2：实现 AI PJM internal execution bridge API 和 `SymphonyBridgeExecutor`。
-4. 完善 SecretStore Provider 消费：让 GitLab/OpenAI/部署 Provider 按项目安全读取凭证。（Dify/GitLab/webhook 部署已完成首版，OpenAI 待实现）
+4. 完善 SecretStore Provider 消费：Dify/OpenAI/GitLab/webhook 部署已完成首版项目级读取，下一步补 Provider 远端可用性探测和失败原因写回。
 5. 做 S3/S4：用 Symphony 执行低风险任务，创建真实 GitLab/GitHub MR，并补远端评审同步。
 6. 做 S5：增强真实测试环境部署 Provider，补环境配置和自动状态轮询；重新部署入口首版已完成。
-7. 再补 PostgreSQL 真库演练、备份恢复、队列恢复、生产级 Dify/OpenAI 质量评估和产品化交互；Alembic 迁移链路和最小可观测性首版已完成。
+7. 再补 PostgreSQL 真库演练、备份恢复、队列恢复、生产级 Dify/OpenAI 质量评估和产品化交互；Alembic 迁移链路、最小可观测性和 OpenAI Provider 首版已完成。
 
 原因：生产使用时最大的风险不是缺少复杂组织治理，而是主链路仍需人工搬运、真实 MR/部署没有打通、执行和证据不够可靠。先补这些直接影响交付效率的能力，平台才能真实减少人工介入。
