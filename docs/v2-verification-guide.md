@@ -562,6 +562,8 @@ $env:OPENAI_API_KEY="<openai-api-key>"
 $env:OPENAI_API_KEY_SECRET_NAME="openai_api_key"
 $env:OPENAI_MODEL="gpt-4o-mini"
 $env:OPENAI_REQUEST_TIMEOUT_SECONDS="120"
+$env:AI_WORKFLOW_PROVIDER_SCHEMA_VERSION="delivery-v2.1"
+$env:AI_WORKFLOW_PROVIDER_PROMPT_VERSION="delivery-v2.1"
 ```
 
 For project-scoped credentials, store a project secret with:
@@ -584,8 +586,9 @@ Expected OpenAI behavior:
 ```text
 Spec and impact analysis are requested through the Responses API with strict JSON Schema output.
 Repository context collection and coding task generation still use local rules.
-Provider metadata records provider, model, response id, and credential source only.
+Provider metadata records provider, model, response id, schema name, schema version, prompt version, and credential source only.
 Plaintext API keys must never be stored in provider metadata or frontend responses.
+Spec/Impact metadata includes quality_evaluation with score, min_score, passed, findings, and version.
 ```
 
 If required configuration, output text, valid JSON, required fields, risk level, or confidence score are missing, the provider must fail clearly and must not silently advance the workflow.
@@ -611,6 +614,30 @@ Dify remote credential probing is intentionally opt-in because calling an arbitr
 
 ```powershell
 $env:DIFY_HEALTH_CHECK_URL="https://<your-dify-host>/<safe-readonly-health-endpoint>"
+```
+
+## 13.1 Deployment Sync Worker Verification
+
+For webhook deployments that return `pending` with a `status_url`, run a one-shot sync from `backend/`:
+
+```powershell
+python scripts/deployment_sync_worker.py --limit 20 --status-file .runtime/deployment-sync-status.json
+```
+
+For continuous polling:
+
+```powershell
+$env:DEPLOYMENT_SYNC_POLL_SECONDS="120"
+python scripts/deployment_sync_worker.py --loop --limit 20 --status-file .runtime/deployment-sync-status.json
+```
+
+Expected behavior:
+
+```text
+Pending deploy records are scanned.
+Remote status is synced through the same service path as POST /api/v2/deployments/sync-pending.
+Successful or failed deployment status updates write gates, audit events, and redacted evidence.
+The optional status file records state, counts, synced ids, and redacted errors.
 ```
 
 ## 14. Auth and Project Access Verification

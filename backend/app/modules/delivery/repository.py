@@ -340,6 +340,7 @@ class DeliveryRepository:
         constraints: list[str],
         risks: list[str],
         open_questions: list[str],
+        provider_metadata: dict | None = None,
     ) -> SpecCard:
         spec = SpecCard(
             demand_id=demand_id,
@@ -351,6 +352,7 @@ class DeliveryRepository:
             constraints_json=constraints,
             risks_json=risks,
             open_questions_json=open_questions,
+            provider_metadata_json=provider_metadata,
         )
         db.add(spec)
         await db.flush()

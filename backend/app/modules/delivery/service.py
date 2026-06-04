@@ -53,6 +53,7 @@ from app.modules.delivery.providers import WorkflowProvider, get_workflow_provid
 from app.modules.delivery.providers.dify import DifyWorkflowProvider
 from app.modules.delivery.providers.local import LocalWorkflowProvider
 from app.modules.delivery.providers.openai import OpenAIWorkflowProvider
+from app.modules.delivery.providers.quality import evaluate_impact_draft, evaluate_spec_draft
 from app.modules.delivery.redaction import redact_text, redact_value
 from app.modules.delivery.repository import delivery_repository
 from app.modules.secrets.repository import secret_repository
@@ -560,6 +561,15 @@ class DeliveryService:
             provider=provider,
             call=lambda selected_provider: selected_provider.generate_spec(demand),
         )
+        draft = self._annotate_provider_draft(
+            draft,
+            {
+                "quality_evaluation": evaluate_spec_draft(
+                    draft,
+                    settings.ai_workflow_provider_quality_min_score,
+                )
+            },
+        )
         provider_metadata = draft.provider_metadata or {}
         open_questions = self._merge_open_questions(
             draft.open_questions,
@@ -585,6 +595,7 @@ class DeliveryService:
             constraints=draft.constraints,
             risks=self._merge_risks(draft.risks, risk_level),
             open_questions=open_questions,
+            provider_metadata=provider_metadata,
         )
 
         demand.risk_level = risk_level
@@ -693,6 +704,15 @@ class DeliveryService:
                 spec,
                 repo_context,
             ),
+        )
+        draft = self._annotate_provider_draft(
+            draft,
+            {
+                "quality_evaluation": evaluate_impact_draft(
+                    draft,
+                    settings.ai_workflow_provider_quality_min_score,
+                )
+            },
         )
         status = (
             ImpactAnalysisStatus.MANUAL_REVIEW

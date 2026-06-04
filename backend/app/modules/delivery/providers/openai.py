@@ -23,6 +23,8 @@ class OpenAIWorkflowProvider(LocalWorkflowProvider):
     """Workflow provider that delegates Spec and impact drafts to OpenAI."""
 
     name = "openai"
+    spec_schema_name = "ai_pjm_spec_draft"
+    impact_schema_name = "ai_pjm_impact_analysis"
 
     def __init__(
         self,
@@ -40,7 +42,7 @@ class OpenAIWorkflowProvider(LocalWorkflowProvider):
 
     async def generate_spec(self, demand: DemandItem) -> SpecDraft:
         outputs, response_id = await self._create_structured_response(
-            schema_name="ai_pjm_spec_draft",
+            schema_name=self.spec_schema_name,
             schema=self._spec_schema(),
             system_prompt=(
                 "You create concise engineering delivery Spec drafts for AI PJM. "
@@ -67,6 +69,7 @@ class OpenAIWorkflowProvider(LocalWorkflowProvider):
                 "provider": self.name,
                 "model": self._model(),
                 "source": "openai_responses_api",
+                **self._contract_metadata(self.spec_schema_name),
                 "response_id": response_id,
                 **self._credential_metadata(),
             },
@@ -79,7 +82,7 @@ class OpenAIWorkflowProvider(LocalWorkflowProvider):
         repo_context: RepoContext | None,
     ) -> ImpactAnalysisDraft:
         outputs, response_id = await self._create_structured_response(
-            schema_name="ai_pjm_impact_analysis",
+            schema_name=self.impact_schema_name,
             schema=self._impact_schema(),
             system_prompt=(
                 "You create conservative engineering impact analysis drafts for AI PJM. "
@@ -105,6 +108,7 @@ class OpenAIWorkflowProvider(LocalWorkflowProvider):
                 "provider": self.name,
                 "model": self._model(),
                 "source": "openai_responses_api",
+                **self._contract_metadata(self.impact_schema_name),
                 "response_id": response_id,
                 "spec_card_id": spec.id if spec else None,
                 "repo_context_id": repo_context.id if repo_context else None,
@@ -234,6 +238,13 @@ class OpenAIWorkflowProvider(LocalWorkflowProvider):
         if self._api_key_secret_name:
             metadata["api_key_secret_name"] = self._api_key_secret_name
         return metadata
+
+    def _contract_metadata(self, schema_name: str) -> dict[str, Any]:
+        return {
+            "schema_name": schema_name,
+            "schema_version": settings.ai_workflow_provider_schema_version.strip(),
+            "prompt_version": settings.ai_workflow_provider_prompt_version.strip(),
+        }
 
     def _required_str(self, outputs: dict[str, Any], key: str) -> str:
         value = outputs.get(key)

@@ -1450,8 +1450,15 @@ function SummaryRow({ label, value }: { label: string; value?: string | number |
 }
 
 function SummaryTab({ result }: { result: DeliveryResult }) {
+  const providerMetadata = getProviderMetadata(result);
+  const qualityEvaluation = getQualityEvaluation(providerMetadata);
+
   return (
     <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+        <Metric label="提供方" value={metadataString(providerMetadata, 'provider')} />
+        <Metric label="结构版本" value={formatSchemaMetadata(providerMetadata)} />
+        <Metric label="提示版本" value={metadataString(providerMetadata, 'prompt_version')} />
+        <Metric label="质量" value={formatQualityEvaluation(qualityEvaluation)} />
         <Metric label="需求" value={result.demand?.id} />
         <Metric label="风险" value={result.demand?.risk_level || result.impact?.risk_level} />
         <Metric label="置信度" value={formatConfidence(result.impact?.confidence_score || result.demand?.confidence_score)} />
@@ -1464,6 +1471,43 @@ function SummaryTab({ result }: { result: DeliveryResult }) {
         <Metric label="验收" value={result.verificationRecord?.status} />
     </div>
   );
+}
+
+function getProviderMetadata(result: DeliveryResult): Record<string, unknown> | null {
+  return (
+    result.spec?.provider_metadata_json ||
+    result.impact?.provider_metadata_json ||
+    result.repo?.provider_metadata_json ||
+    null
+  );
+}
+
+function getQualityEvaluation(metadata: Record<string, unknown> | null): Record<string, unknown> | null {
+  const raw = metadata?.quality_evaluation;
+  return raw && typeof raw === 'object' && !Array.isArray(raw) ? (raw as Record<string, unknown>) : null;
+}
+
+function metadataString(metadata: Record<string, unknown> | null, key: string): string | null {
+  const value = metadata?.[key];
+  return typeof value === 'string' && value.trim() ? value : null;
+}
+
+function formatSchemaMetadata(metadata: Record<string, unknown> | null): string | null {
+  const schemaName = metadataString(metadata, 'schema_name');
+  const schemaVersion = metadataString(metadata, 'schema_version');
+  if (schemaName && schemaVersion) {
+    return `${schemaName}@${schemaVersion}`;
+  }
+  return schemaVersion || schemaName;
+}
+
+function formatQualityEvaluation(quality: Record<string, unknown> | null): string | null {
+  if (!quality) {
+    return null;
+  }
+  const score = typeof quality.score === 'number' ? `${Math.round(quality.score * 100)}%` : null;
+  const passed = quality.passed === true ? '达标' : quality.passed === false ? '需关注' : null;
+  return [score, passed].filter(Boolean).join(' / ') || null;
 }
 
 function MergeRequestSummary({ mergeRequest }: { mergeRequest?: DeliveryMergeRequestRecord }) {

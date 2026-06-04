@@ -187,7 +187,7 @@
 
 目标：MR 后能进入测试环境验证，而不是停在代码层。
 
-状态：首版已实现本地测试环境记录与验收记录。当前 `local` 模式只记录测试环境 URL、环境名、验收状态和证据链接；`webhook` 部署 Provider 已可按项目读取 `deploy_token` 调用外部部署入口，并把部署 URL、状态和证据写入 `DeployRecord`。webhook 返回 `status_url` 时，工作台可手动同步单条部署状态并回写门禁、审计和证据；后端提供 `POST /api/v2/deployments/sync-pending` 批量同步 pending 部署，供后续 worker/定时器调用。失败部署可从工作台重新部署并保留来源证据。环境级配置和真正自动轮询调度仍待实现。
+状态：首版已实现本地测试环境记录与验收记录。当前 `local` 模式只记录测试环境 URL、环境名、验收状态和证据链接；`webhook` 部署 Provider 已可按项目读取 `deploy_token` 调用外部部署入口，并把部署 URL、状态和证据写入 `DeployRecord`。webhook 返回 `status_url` 时，工作台可手动同步单条部署状态并回写门禁、审计和证据；后端提供 `POST /api/v2/deployments/sync-pending` 批量同步 pending 部署，`scripts/deployment_sync_worker.py --loop` 可后台定时同步 pending 部署。失败部署可从工作台重新部署并保留来源证据。环境级配置仍待实现。
 
 任务：
 
@@ -231,7 +231,7 @@
 
 目标：在 Provider 合同稳定后，引入外部编排工具，而不是让 Dify 接管平台状态。
 
-状态：Dify/OpenAI Provider 边界首版已实现，默认不启用。`ai_workflow_provider=dify` 时，Spec 和影响分析可通过 Dify workflow 获取结构化输出；`ai_workflow_provider=openai` 时，Spec 和影响分析可通过 OpenAI Responses API 获取结构化输出。仓库上下文和任务包仍复用本地规则。Dify API Key 会优先按项目从 SecretStore 读取 `dify_api_key`，OpenAI API Key 会优先按项目读取 `openai_api_key`，项目未配置时分别回退到全局 `DIFY_API_KEY` / `OPENAI_API_KEY`。缺少必要配置或输出不合规时会明确失败；启用平台降级时，连续失败会转为本地规则 Provider，并在 Spec open questions、门禁 evidence 或 Impact metadata 里记录脱敏恢复证据。
+状态：Dify/OpenAI Provider 边界首版已实现，默认不启用。`ai_workflow_provider=dify` 时，Spec 和影响分析可通过 Dify workflow 获取结构化输出；`ai_workflow_provider=openai` 时，Spec 和影响分析可通过 OpenAI Responses API 获取结构化输出。仓库上下文和任务包仍复用本地规则。Dify API Key 会优先按项目从 SecretStore 读取 `dify_api_key`，OpenAI API Key 会优先按项目读取 `openai_api_key`，项目未配置时分别回退到全局 `DIFY_API_KEY` / `OPENAI_API_KEY`。缺少必要配置或输出不合规时会明确失败；启用平台降级时，连续失败会转为本地规则 Provider，并在 Spec open questions、门禁 evidence 或 Impact metadata 里记录脱敏恢复证据。Spec/Impact 元数据会记录 workflow/model、schema name、schema version、prompt version 和本地确定性质量评分，便于后续质量评估与回溯。
 
 任务：
 
@@ -239,13 +239,15 @@
 - 实现 `OpenAIProvider` 或其他模型 Provider。（OpenAI 首版已完成）
 - Provider 只返回结构化草稿，不直接改数据库状态。（已按合同约束）
 - Dify/OpenAI API Key 按项目从 SecretStore 读取。（已完成首版）
-- 加入 schema 校验、超时、重试、降级到本地规则。（结构化校验、超时、平台级重试和本地降级首版已完成）
+- 加入 schema 校验、超时、重试、降级到本地规则。（结构化校验、超时、平台级重试、本地降级、Provider schema/prompt 版本记录和质量评分首版已完成）
 
 完成标准：
 
 - 可通过配置切换 `mock`、`local`、`dify`、`openai`。
 - Provider 输出不合规时不会推进门禁。
 - 页面展示 Provider 来源和置信度。
+- 同一需求可追溯使用了哪个 workflow/model、schema 和 prompt 版本。
+- 同一需求可追溯 Provider 输出质量评分和扣分项。
 
 ## 5. 暂不做事项
 

@@ -129,6 +129,10 @@ async def _ensure_sqlite_schema_compat(conn) -> None:
         "ON delivery_demand_items (manual_approval_status)"
     )
 
+    spec_columns = await _sqlite_columns(conn, "delivery_spec_cards")
+    if spec_columns and "provider_metadata_json" not in spec_columns:
+        await conn.exec_driver_sql("ALTER TABLE delivery_spec_cards ADD COLUMN provider_metadata_json JSON")
+
     merge_request_columns = await _sqlite_columns(conn, "delivery_merge_request_records")
     if merge_request_columns:
         if "created_by_user_id" not in merge_request_columns:

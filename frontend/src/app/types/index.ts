@@ -72,6 +72,7 @@ export interface DeliverySpecCard {
   constraints_json: string[];
   risks_json: string[];
   open_questions_json: string[];
+  provider_metadata_json: Record<string, unknown> | null;
   created_by: string;
   created_at: string;
   updated_at: string;

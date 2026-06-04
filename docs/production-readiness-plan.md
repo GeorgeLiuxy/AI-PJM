@@ -382,7 +382,7 @@ AI 不允许直接决定：
 
 目标：让 MR 后的结果进入可验证环境。
 
-当前状态：`DeployClient` 边界和 `webhook` 部署 provider 首版已实现，可用项目级 `deploy_token` 或全局 `DEPLOY_TOKEN` 调用外部 webhook，并把部署 URL、状态、commit 和凭据来源写入 `DeployRecord` 证据。webhook 返回 `status_url` 时，可通过 `POST /api/v2/deployments/{id}/sync-status` 手动同步部署状态，也可通过 `POST /api/v2/deployments/sync-pending` 批量同步 pending 部署，供后续 worker/定时器复用；同步会写回 `test_deployed` 门禁、审计事件和脱敏证据。失败状态会写入失败门禁，不会推进验收；失败部署可通过 `POST /api/v2/deployments/{id}/redeploy` 创建新部署记录并保留来源证据。真正自动轮询调度、环境级配置、部署日志归档仍待实现。
+当前状态：`DeployClient` 边界和 `webhook` 部署 provider 首版已实现，可用项目级 `deploy_token` 或全局 `DEPLOY_TOKEN` 调用外部 webhook，并把部署 URL、状态、commit 和凭据来源写入 `DeployRecord` 证据。webhook 返回 `status_url` 时，可通过 `POST /api/v2/deployments/{id}/sync-status` 手动同步部署状态，也可通过 `POST /api/v2/deployments/sync-pending` 批量同步 pending 部署；`scripts/deployment_sync_worker.py --loop` 可后台定时调用服务层同步 pending 部署。同步会写回 `test_deployed` 门禁、审计事件和脱敏证据。失败状态会写入失败门禁，不会推进验收；失败部署可通过 `POST /api/v2/deployments/{id}/redeploy` 创建新部署记录并保留来源证据。环境级配置、部署日志归档仍待实现。
 
 实施内容：
 
@@ -390,7 +390,7 @@ AI 不允许直接决定：
 - 对接现有 CI/CD、测试环境平台或脚本入口。（webhook 首版已完成）
 - 支持按项目配置部署环境。
 - 记录部署 URL、版本、commit、日志、状态。
-- webhook `status_url` 同步部署状态。（单条同步和 pending 批量同步入口已完成，自动调度待实现）
+- webhook `status_url` 同步部署状态。（单条同步、pending 批量同步入口和后台轮询脚本首版已完成）
 - 部署失败保留日志并阻断验收。
 - 支持重新部署。（失败部署重新部署首版已完成）
 
@@ -453,7 +453,7 @@ AI 不允许直接决定：
 
 目标：让外部 AI 编排提高方案质量，而不是接管平台状态。
 
-当前状态：Dify/OpenAI Provider 首版已完成，默认不启用。Dify 使用配置的 workflow 生成 Spec/Impact 结构化草稿；OpenAI 使用 Responses API 的 JSON Schema 结构化输出生成 Spec/Impact 草稿。两者都只返回草稿，不直接改数据库状态、不执行代码、不绕过门禁。已具备必填字段、列表字段、风险等级和置信度校验；超时、平台级重试和本地规则降级首版已完成。降级会记录失败 provider、尝试次数和脱敏错误，并在 Spec open questions、门禁 evidence 或 Impact metadata 中可追溯。OpenAI/GitLab 凭证已有只读可用性探测，Dify 支持显式安全 URL 探测；远端质量评估和 Provider 版本治理仍待实现。
+当前状态：Dify/OpenAI Provider 首版已完成，默认不启用。Dify 使用配置的 workflow 生成 Spec/Impact 结构化草稿；OpenAI 使用 Responses API 的 JSON Schema 结构化输出生成 Spec/Impact 草稿。两者都只返回草稿，不直接改数据库状态、不执行代码、不绕过门禁。已具备必填字段、列表字段、风险等级和置信度校验；超时、平台级重试和本地规则降级首版已完成。降级会记录失败 provider、尝试次数和脱敏错误，并在 Spec open questions、门禁 evidence 或 Impact metadata 中可追溯。OpenAI/GitLab 凭证已有只读可用性探测，Dify 支持显式安全 URL 探测；Spec/Impact 会记录 workflow/model、schema name、schema version、prompt version 和本地确定性质量评分。远端生产联调仍待实现。
 
 实施内容：
 
@@ -462,13 +462,14 @@ AI 不允许直接决定：
 - 增加 OpenAI Provider。（首版已完成）
 - 增加 Provider 输出校验。（首版已完成）
 - 增加超时、重试、降级策略。（首版已完成）
-- 记录 workflow/model/prompt 版本。（model/workflow id 首版已记录，prompt/schema 版本待补）
-- 评估 Provider 输出质量。（待实现）
+- 记录 workflow/model/prompt 版本。（workflow/model、schema name、schema version、prompt version 首版已完成）
+- 评估 Provider 输出质量。（本地确定性质量评分首版已完成，远端生产联调待实现）
 
 验收标准：
 
 - Provider 输出不合规时不会推进流程。（首版已完成）
-- 同一需求可追溯使用了哪个 workflow/model。（首版已完成）
+- 同一需求可追溯使用了哪个 workflow/model、schema 和 prompt 版本。（首版已完成）
+- 同一需求可追溯 Provider 输出质量评分、是否达标和扣分项。（首版已完成）
 - Dify/OpenAI 不直接修改数据库状态。（已按 Provider 合同约束）
 - Provider 失败可降级到本地规则或进入人工处理。（本地规则降级首版已完成，人工处理策略待产品化）
 

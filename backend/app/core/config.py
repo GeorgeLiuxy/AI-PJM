@@ -82,6 +82,9 @@ class Settings(BaseSettings):
     ai_workflow_provider_retry_attempts: int = 2
     ai_workflow_provider_retry_backoff_seconds: float = 0.25
     ai_workflow_provider_fallback_enabled: bool = True
+    ai_workflow_provider_schema_version: str = "delivery-v2.1"
+    ai_workflow_provider_prompt_version: str = "delivery-v2.1"
+    ai_workflow_provider_quality_min_score: float = 0.65
     dify_api_base_url: str = ""
     dify_api_key: str = ""
     dify_api_key_secret_name: str = "dify_api_key"

@@ -21,6 +21,8 @@ class DifyWorkflowProvider(LocalWorkflowProvider):
     """Workflow provider that can delegate Spec and impact drafts to Dify."""
 
     name = "dify"
+    spec_schema_name = "ai_pjm_spec_draft"
+    impact_schema_name = "ai_pjm_impact_analysis"
 
     def __init__(
         self,
@@ -61,6 +63,7 @@ class DifyWorkflowProvider(LocalWorkflowProvider):
                 "provider": self.name,
                 "workflow_id": workflow_id,
                 "source": "dify_workflow",
+                **self._contract_metadata(self.spec_schema_name),
                 **self._credential_metadata(),
             },
         )
@@ -94,6 +97,7 @@ class DifyWorkflowProvider(LocalWorkflowProvider):
                 "provider": self.name,
                 "workflow_id": workflow_id,
                 "source": "dify_workflow",
+                **self._contract_metadata(self.impact_schema_name),
                 "spec_card_id": spec.id if spec else None,
                 "repo_context_id": repo_context.id if repo_context else None,
                 **self._credential_metadata(),
@@ -161,6 +165,13 @@ class DifyWorkflowProvider(LocalWorkflowProvider):
         if self._api_key_secret_name:
             metadata["api_key_secret_name"] = self._api_key_secret_name
         return metadata
+
+    def _contract_metadata(self, schema_name: str) -> dict[str, Any]:
+        return {
+            "schema_name": schema_name,
+            "schema_version": settings.ai_workflow_provider_schema_version.strip(),
+            "prompt_version": settings.ai_workflow_provider_prompt_version.strip(),
+        }
 
     def _required_str(self, outputs: dict[str, Any], key: str) -> str:
         value = outputs.get(key)

@@ -3,6 +3,7 @@
 import sys
 import subprocess
 import json
+from types import SimpleNamespace
 from datetime import timedelta
 
 import pytest
@@ -42,6 +43,7 @@ from app.modules.delivery.repository import delivery_repository
 from app.modules.delivery.service import DeliveryService, delivery_service
 from app.modules.secrets.provider_health import check_remote_provider_health
 from app.modules.secrets.service import secret_store_service
+from scripts import deployment_sync_worker
 from scripts.symphony_worker import Worker, quote_arg, tail
 
 
@@ -260,6 +262,36 @@ def test_symphony_worker_writes_idle_status(tmp_path):
     assert status["run_id"] is None
 
 
+@pytest.mark.asyncio
+async def test_deployment_sync_worker_writes_success_status(tmp_path):
+    captured: dict[str, object] = {}
+
+    async def fake_sync(limit, project_ids):
+        captured["limit"] = limit
+        captured["project_ids"] = project_ids
+        return {
+            "scanned": 1,
+            "synced_count": 1,
+            "error_count": 0,
+            "synced": [SimpleNamespace(id=9)],
+            "errors": [],
+        }
+
+    status_file = tmp_path / "deployment-sync-status.json"
+    summary = await deployment_sync_worker.run_once(
+        limit=3,
+        project_ids=[11],
+        status_file=status_file,
+        sync_func=fake_sync,
+    )
+
+    status = json.loads(status_file.read_text(encoding="utf-8"))
+    assert captured == {"limit": 3, "project_ids": [11]}
+    assert summary["synced_ids"] == [9]
+    assert status["state"] == "succeeded"
+    assert status["synced_ids"] == [9]
+
+
 def test_symphony_worker_records_command_timeout(tmp_path, monkeypatch):
     class FakeBridgeClient:
         def __init__(self):
@@ -445,6 +477,8 @@ async def test_delivery_v2_openai_provider_generates_spec_with_structured_output
     monkeypatch.setattr(settings, "openai_api_key", "")
     monkeypatch.setattr(settings, "openai_model", "gpt-4o-mini")
     monkeypatch.setattr(settings, "openai_request_timeout_seconds", 12)
+    monkeypatch.setattr(settings, "ai_workflow_provider_schema_version", "test-schema-v1")
+    monkeypatch.setattr(settings, "ai_workflow_provider_prompt_version", "test-prompt-v1")
     captured: dict[str, object] = {}
 
     class FakeResponse:
@@ -504,6 +538,9 @@ async def test_delivery_v2_openai_provider_generates_spec_with_structured_output
         "provider": "openai",
         "model": "gpt-4o-mini",
         "source": "openai_responses_api",
+        "schema_name": "ai_pjm_spec_draft",
+        "schema_version": "test-schema-v1",
+        "prompt_version": "test-prompt-v1",
         "response_id": "resp_123",
         "credential_source": "secret_store",
         "credential_project_id": 123,
@@ -519,6 +556,7 @@ async def test_delivery_v2_openai_provider_generates_spec_with_structured_output
     assert isinstance(request_json, dict)
     assert request_json["model"] == "gpt-4o-mini"
     assert request_json["text"]["format"]["type"] == "json_schema"
+    assert request_json["text"]["format"]["name"] == "ai_pjm_spec_draft"
     assert request_json["text"]["format"]["strict"] is True
     assert "project-openai-key" not in str(spec.provider_metadata)
 
@@ -528,6 +566,8 @@ async def test_delivery_v2_openai_provider_analyzes_impact_from_output_items(mon
     monkeypatch.setattr(settings, "openai_api_base_url", "https://api.openai.example/v1")
     monkeypatch.setattr(settings, "openai_api_key", "settings-openai-key")
     monkeypatch.setattr(settings, "openai_model", "gpt-4o-mini")
+    monkeypatch.setattr(settings, "ai_workflow_provider_schema_version", "test-schema-v1")
+    monkeypatch.setattr(settings, "ai_workflow_provider_prompt_version", "test-prompt-v1")
 
     class FakeResponse:
         def raise_for_status(self):
@@ -600,6 +640,9 @@ async def test_delivery_v2_openai_provider_analyzes_impact_from_output_items(mon
     assert draft.confidence_score == 1.0
     assert "frontend/src/app/pages/DeliveryV2Page.tsx" in draft.affected_files
     assert draft.provider_metadata["response_id"] == "resp_impact"
+    assert draft.provider_metadata["schema_name"] == "ai_pjm_impact_analysis"
+    assert draft.provider_metadata["schema_version"] == "test-schema-v1"
+    assert draft.provider_metadata["prompt_version"] == "test-prompt-v1"
 
 
 @pytest.mark.asyncio
@@ -721,6 +764,8 @@ async def test_delivery_service_resolves_project_dify_api_key_from_secret_store(
     monkeypatch.setattr(settings, "dify_api_key", "")
     monkeypatch.setattr(settings, "dify_api_key_secret_name", "dify_api_key")
     monkeypatch.setattr(settings, "dify_spec_workflow_id", "spec-flow")
+    monkeypatch.setattr(settings, "ai_workflow_provider_schema_version", "test-schema-v1")
+    monkeypatch.setattr(settings, "ai_workflow_provider_prompt_version", "test-prompt-v1")
     project = await auth_repository.create_project(
         db_session,
         key="dify-secret-project",
@@ -769,6 +814,11 @@ async def test_delivery_service_resolves_project_dify_api_key_from_secret_store(
         "credential_project_id": project.id,
         "api_key_secret_name": "dify_api_key",
     }
+    assert spec.provider_metadata_json["schema_name"] == "ai_pjm_spec_draft"
+    assert spec.provider_metadata_json["schema_version"] == "test-schema-v1"
+    assert spec.provider_metadata_json["prompt_version"] == "test-prompt-v1"
+    assert spec.provider_metadata_json["quality_evaluation"]["version"] == "provider-quality-v1"
+    assert spec.provider_metadata_json["quality_evaluation"]["passed"] is True
 
 
 @pytest.mark.asyncio
@@ -781,6 +831,8 @@ async def test_delivery_service_resolves_project_openai_api_key_from_secret_stor
     monkeypatch.setattr(settings, "openai_api_key", "")
     monkeypatch.setattr(settings, "openai_api_key_secret_name", "openai_api_key")
     monkeypatch.setattr(settings, "openai_model", "gpt-4o-mini")
+    monkeypatch.setattr(settings, "ai_workflow_provider_schema_version", "test-schema-v1")
+    monkeypatch.setattr(settings, "ai_workflow_provider_prompt_version", "test-prompt-v1")
     project = await auth_repository.create_project(
         db_session,
         key="openai-secret-project",
@@ -836,6 +888,11 @@ async def test_delivery_service_resolves_project_openai_api_key_from_secret_stor
         "credential_project_id": project.id,
         "api_key_secret_name": "openai_api_key",
     }
+    assert spec.provider_metadata_json["schema_name"] == "ai_pjm_spec_draft"
+    assert spec.provider_metadata_json["schema_version"] == "test-schema-v1"
+    assert spec.provider_metadata_json["prompt_version"] == "test-prompt-v1"
+    assert spec.provider_metadata_json["quality_evaluation"]["version"] == "provider-quality-v1"
+    assert spec.provider_metadata_json["quality_evaluation"]["passed"] is True
 
 
 @pytest.mark.asyncio

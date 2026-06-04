@@ -126,6 +126,7 @@ class SpecCard(Base):
     constraints_json: Mapped[list[str]] = mapped_column(DB_JSON, nullable=False, default=list)
     risks_json: Mapped[list[str]] = mapped_column(DB_JSON, nullable=False, default=list)
     open_questions_json: Mapped[list[str]] = mapped_column(DB_JSON, nullable=False, default=list)
+    provider_metadata_json: Mapped[Optional[dict[str, Any]]] = mapped_column(DB_JSON, nullable=True)
     created_by: Mapped[str] = mapped_column(String(50), nullable=False, default="ai")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(
