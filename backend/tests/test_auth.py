@@ -535,6 +535,85 @@ async def test_admin_can_check_project_secret_health_without_plaintext(
 
 
 @pytest.mark.asyncio
+async def test_admin_can_check_remote_provider_secret_health_without_plaintext(
+    client,
+    db_session,
+    auth_enabled,
+    monkeypatch,
+):
+    monkeypatch.setattr(settings, "secret_store_master_key", "test-secret-master-key")
+    monkeypatch.setattr(settings, "openai_api_base_url", "https://api.openai.example/v1")
+    _, project = await _create_user_with_project(
+        db_session,
+        username="remote_secret_health_admin",
+        role="admin",
+        project_key="remote-secret-health-project",
+        project_name="Remote Secret Health Project",
+        project_role="owner",
+    )
+    token = await _login(client, "remote_secret_health_admin")
+    captured: dict[str, object] = {}
+
+    class FakeResponse:
+        status_code = 200
+
+    class FakeAsyncClient:
+        def __init__(self, timeout):
+            captured["timeout"] = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return None
+
+        async def get(self, url, headers):
+            captured["url"] = url
+            captured["headers"] = headers
+            return FakeResponse()
+
+    monkeypatch.setattr("app.modules.secrets.provider_health.httpx.AsyncClient", FakeAsyncClient)
+
+    created = await client.post(
+        "/api/v2/secrets",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "project_id": project.id,
+            "name": "openai_api_key",
+            "provider": "openai",
+            "value": "sk-test-remote-health-value",
+            "description": "OpenAI key",
+        },
+    )
+    assert created.status_code == 201
+    secret_id = created.json()["data"]["id"]
+
+    health = await client.get(
+        f"/api/v2/secrets/{secret_id}/health?remote=true",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert health.status_code == 200
+    payload = health.json()["data"]
+    provider_health = payload["metadata_json"]["last_provider_health"]
+    assert payload["health_status"] == "healthy"
+    assert payload["health_checked_at"]
+    assert provider_health["status"] == "healthy"
+    assert provider_health["endpoint"] == "openai.models"
+    assert captured["url"] == "https://api.openai.example/v1/models"
+    assert captured["headers"] == {"Authorization": "Bearer sk-test-remote-health-value"}
+    assert "sk-test-remote-health-value" not in health.text
+
+    audit = await client.get(
+        "/api/v2/audit/events?action=secret.provider_health_checked",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert audit.status_code == 200
+    assert audit.json()["data"][0]["entity_type"] == "secret"
+    assert "sk-test-remote-health-value" not in audit.text
+
+
+@pytest.mark.asyncio
 async def test_secret_store_requires_master_key(client, db_session, auth_enabled, monkeypatch):
     monkeypatch.setattr(settings, "secret_store_master_key", "")
     _, project = await _create_user_with_project(

@@ -2,14 +2,16 @@
 
 import asyncio
 import subprocess
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Awaitable, Callable, TypeVar
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.db import utc_now
-from app.core.exceptions import BadRequestException, NotFoundException
+from app.core.exceptions import AIServiceException, BadRequestException, NotFoundException
 from app.modules.audit.repository import audit_repository
 from app.modules.delivery.enums import (
     CodingTaskStatus,
@@ -28,7 +30,7 @@ from app.modules.delivery.enums import (
     VerificationStatus,
 )
 from app.modules.delivery.executors import get_execution_executor
-from app.modules.delivery.gates import DeliveryGateEngine, gate_engine
+from app.modules.delivery.gates import DeliveryGateEngine, GateDecision, gate_engine
 from app.modules.delivery.deployments import get_deploy_client
 from app.modules.delivery.models import (
     CodingTask,
@@ -49,11 +51,15 @@ from app.modules.delivery.provider_credentials import (
 )
 from app.modules.delivery.providers import WorkflowProvider, get_workflow_provider
 from app.modules.delivery.providers.dify import DifyWorkflowProvider
+from app.modules.delivery.providers.local import LocalWorkflowProvider
 from app.modules.delivery.providers.openai import OpenAIWorkflowProvider
 from app.modules.delivery.redaction import redact_text, redact_value
 from app.modules.delivery.repository import delivery_repository
 from app.modules.secrets.repository import secret_repository
 from app.modules.secrets.service import secret_store_service
+
+
+ProviderDraftT = TypeVar("ProviderDraftT")
 
 
 class DeliveryService:
@@ -549,7 +555,24 @@ class DeliveryService:
             auto_approve_low_risk=auto_approve_low_risk,
         )
         provider = await self._provider_for_demand(db, demand)
-        draft = await provider.generate_spec(demand)
+        draft, provider = await self._run_provider_operation(
+            operation="generate_spec",
+            provider=provider,
+            call=lambda selected_provider: selected_provider.generate_spec(demand),
+        )
+        provider_metadata = draft.provider_metadata or {}
+        open_questions = self._merge_open_questions(
+            draft.open_questions,
+            risk_level,
+            confidence_score,
+        )
+        if self._provider_fallback_used(provider_metadata):
+            open_questions = self._dedupe(
+                [
+                    "External AI provider failed; local rule fallback was used. Review provider recovery evidence before relying on this draft.",
+                    *open_questions,
+                ]
+            )
 
         spec = await delivery_repository.create_spec_card(
             db=db,
@@ -561,11 +584,7 @@ class DeliveryService:
             acceptance_criteria=draft.acceptance_criteria,
             constraints=draft.constraints,
             risks=self._merge_risks(draft.risks, risk_level),
-            open_questions=self._merge_open_questions(
-                draft.open_questions,
-                risk_level,
-                confidence_score,
-            ),
+            open_questions=open_questions,
         )
 
         demand.risk_level = risk_level
@@ -576,17 +595,18 @@ class DeliveryService:
             else DemandStatus.SPEC_MANUAL_REQUIRED
         )
 
+        spec_ready_gate = self.gates.evaluate_spec_ready(
+            spec_card_id=spec.id,
+            user_story=spec.user_story,
+            scope=spec.scope,
+            acceptance_criteria=spec.acceptance_criteria_json,
+            constraints=spec.constraints_json,
+            risks=spec.risks_json,
+        )
         await self._record_gate(
             db,
             demand.id,
-            self.gates.evaluate_spec_ready(
-                spec_card_id=spec.id,
-                user_story=spec.user_story,
-                scope=spec.scope,
-                acceptance_criteria=spec.acceptance_criteria_json,
-                constraints=spec.constraints_json,
-                risks=spec.risks_json,
-            ),
+            self._with_provider_evidence(spec_ready_gate, provider_metadata),
         )
         await self._record_gate(
             db,
@@ -665,7 +685,15 @@ class DeliveryService:
         spec = await delivery_repository.get_latest_spec_card(db, demand_id)
         repo_context = await self._resolve_repo_context(db, demand_id, repo_context_id)
         provider = await self._provider_for_demand(db, demand)
-        draft = await provider.analyze_impact(demand, spec, repo_context)
+        draft, provider = await self._run_provider_operation(
+            operation="analyze_impact",
+            provider=provider,
+            call=lambda selected_provider: selected_provider.analyze_impact(
+                demand,
+                spec,
+                repo_context,
+            ),
+        )
         status = (
             ImpactAnalysisStatus.MANUAL_REVIEW
             if draft.risk_level in {DeliveryRiskLevel.L2, DeliveryRiskLevel.L3}
@@ -697,6 +725,7 @@ class DeliveryService:
                 "impact_analysis_id": analysis.id,
                 "risk_level": analysis.risk_level,
                 "confidence_score": analysis.confidence_score,
+                "provider_metadata": redact_value(analysis.provider_metadata_json or {}),
             },
         )
 
@@ -2104,6 +2133,127 @@ class DeliveryService:
         if risk_level in {DeliveryRiskLevel.L2, DeliveryRiskLevel.L3}:
             questions.append("Please confirm safety, permission, data, and release constraints.")
         return questions
+
+    async def _run_provider_operation(
+        self,
+        *,
+        operation: str,
+        provider: WorkflowProvider,
+        call: Callable[[WorkflowProvider], Awaitable[ProviderDraftT]],
+    ) -> tuple[ProviderDraftT, WorkflowProvider]:
+        attempts = max(1, settings.ai_workflow_provider_retry_attempts)
+        errors: list[dict] = []
+        last_error: AIServiceException | None = None
+
+        for attempt in range(1, attempts + 1):
+            try:
+                draft = await call(provider)
+            except AIServiceException as exc:
+                last_error = exc
+                errors.append(self._provider_error_metadata(provider, operation, attempt, exc))
+                if attempt < attempts:
+                    await asyncio.sleep(max(settings.ai_workflow_provider_retry_backoff_seconds, 0.0))
+                continue
+
+            if attempt > 1:
+                draft = self._annotate_provider_draft(
+                    draft,
+                    {
+                        "provider_recovery": {
+                            "operation": operation,
+                            "fallback_used": False,
+                            "provider": provider.name,
+                            "attempts": attempt,
+                            "previous_errors": errors,
+                        }
+                    },
+                )
+            return draft, provider
+
+        if self._should_fallback_provider(provider):
+            fallback_provider = LocalWorkflowProvider()
+            try:
+                fallback_draft = await call(fallback_provider)
+            except AIServiceException as fallback_exc:
+                errors.append(
+                    self._provider_error_metadata(
+                        fallback_provider,
+                        operation,
+                        1,
+                        fallback_exc,
+                    )
+                )
+                if last_error is not None:
+                    raise AIServiceException(
+                        f"{provider.name} provider failed and local fallback also failed: "
+                        f"{redact_text(str(fallback_exc))}"
+                    ) from last_error
+                raise
+
+            fallback_draft = self._annotate_provider_draft(
+                fallback_draft,
+                {
+                    "provider_recovery": {
+                        "operation": operation,
+                        "fallback_used": True,
+                        "failed_provider": provider.name,
+                        "fallback_provider": fallback_provider.name,
+                        "attempts": attempts,
+                        "errors": errors,
+                    }
+                },
+            )
+            return fallback_draft, fallback_provider
+
+        if last_error is not None:
+            raise last_error
+        raise AIServiceException(f"{provider.name} provider failed during {operation}")
+
+    def _should_fallback_provider(self, provider: WorkflowProvider) -> bool:
+        return (
+            settings.ai_workflow_provider_fallback_enabled
+            and provider.name in {"dify", "openai"}
+        )
+
+    def _provider_error_metadata(
+        self,
+        provider: WorkflowProvider,
+        operation: str,
+        attempt: int,
+        exc: Exception,
+    ) -> dict:
+        return {
+            "provider": provider.name,
+            "operation": operation,
+            "attempt": attempt,
+            "error_type": exc.__class__.__name__,
+            "message": redact_text(str(exc))[:1000],
+        }
+
+    def _annotate_provider_draft(self, draft: ProviderDraftT, metadata: dict) -> ProviderDraftT:
+        existing = getattr(draft, "provider_metadata", {}) or {}
+        return replace(
+            draft,
+            provider_metadata={
+                **existing,
+                **metadata,
+            },
+        )
+
+    def _provider_fallback_used(self, metadata: dict) -> bool:
+        recovery = metadata.get("provider_recovery") if isinstance(metadata, dict) else None
+        return isinstance(recovery, dict) and recovery.get("fallback_used") is True
+
+    def _with_provider_evidence(self, decision: GateDecision, provider_metadata: dict) -> GateDecision:
+        if not provider_metadata:
+            return decision
+        return replace(
+            decision,
+            evidence={
+                **decision.evidence,
+                "provider_metadata": redact_value(provider_metadata),
+            },
+        )
 
     async def _resolve_repo_context(
         self,

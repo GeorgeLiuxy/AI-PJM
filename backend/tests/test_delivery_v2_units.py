@@ -32,6 +32,7 @@ from app.modules.delivery.gates import gate_engine
 from app.modules.delivery.merge_requests.gitlab import GitLabMergeRequestClient
 from app.modules.delivery.models import CodingTask, DemandItem, DeployRecord, ExecutionRun, MergeRequestRecord, RepoContext
 from app.modules.delivery.provider_credentials import ProviderCredential, resolve_provider_credential
+from app.modules.delivery.providers.base import SpecDraft
 from app.modules.delivery.providers.dify import DifyWorkflowProvider
 from app.modules.delivery.providers.factory import get_workflow_provider
 from app.modules.delivery.providers.local import LocalWorkflowProvider
@@ -39,6 +40,7 @@ from app.modules.delivery.providers.openai import OpenAIWorkflowProvider
 from app.modules.delivery.redaction import REDACTED, redact_text, redact_value
 from app.modules.delivery.repository import delivery_repository
 from app.modules.delivery.service import DeliveryService, delivery_service
+from app.modules.secrets.provider_health import check_remote_provider_health
 from app.modules.secrets.service import secret_store_service
 from scripts.symphony_worker import Worker, quote_arg, tail
 
@@ -427,6 +429,17 @@ def test_delivery_v2_openai_provider_rejects_invalid_risk_level():
 
 
 @pytest.mark.asyncio
+async def test_dify_remote_health_probe_requires_explicit_safe_url(monkeypatch):
+    monkeypatch.setattr(settings, "dify_health_check_url", "")
+
+    result = await check_remote_provider_health("dify", "project-dify-key")
+
+    assert result.status == "unknown"
+    assert result.remote_probe is False
+    assert "DIFY_HEALTH_CHECK_URL" in result.reason
+
+
+@pytest.mark.asyncio
 async def test_delivery_v2_openai_provider_generates_spec_with_structured_outputs(monkeypatch):
     monkeypatch.setattr(settings, "openai_api_base_url", "https://api.openai.example/v1")
     monkeypatch.setattr(settings, "openai_api_key", "")
@@ -587,6 +600,115 @@ async def test_delivery_v2_openai_provider_analyzes_impact_from_output_items(mon
     assert draft.confidence_score == 1.0
     assert "frontend/src/app/pages/DeliveryV2Page.tsx" in draft.affected_files
     assert draft.provider_metadata["response_id"] == "resp_impact"
+
+
+@pytest.mark.asyncio
+async def test_delivery_service_retries_external_provider_before_success(
+    db_session,
+    monkeypatch,
+):
+    monkeypatch.setattr(settings, "ai_workflow_provider_retry_attempts", 2)
+    monkeypatch.setattr(settings, "ai_workflow_provider_retry_backoff_seconds", 0)
+    monkeypatch.setattr(settings, "ai_workflow_provider_fallback_enabled", True)
+
+    class FlakyOpenAIProvider:
+        name = "openai"
+
+        def __init__(self):
+            self.attempts = 0
+
+        async def generate_spec(self, demand):
+            self.attempts += 1
+            if self.attempts == 1:
+                raise AIServiceException("temporary provider outage")
+            return SpecDraft(
+                title="Add status badge",
+                user_story="As an operator, I can see execution status.",
+                scope="Delivery dashboard status display.",
+                acceptance_criteria=["Status badge is visible."],
+                constraints=["Do not expose secrets."],
+                risks=["Low UI risk."],
+                open_questions=[],
+                provider_metadata={"provider": self.name},
+            )
+
+        async def collect_repo_context(self, demand):
+            raise AssertionError("not used")
+
+        async def analyze_impact(self, demand, spec, repo_context):
+            raise AssertionError("not used")
+
+        async def create_coding_task(self, demand, spec, allowed_paths, required_checks):
+            raise AssertionError("not used")
+
+    demand = await delivery_repository.create_demand(
+        db_session,
+        raw_input="Add a compact execution status badge to the delivery dashboard.",
+        source_type="new_requirement",
+        title="Add status badge",
+    )
+    provider = FlakyOpenAIProvider()
+
+    spec = await DeliveryService(provider=provider).generate_spec(db_session, demand.id)
+    detail = await delivery_repository.get_demand_detail(db_session, demand.id)
+    spec_ready_gate = next(gate for gate in detail.gate_checks if gate.gate_type == GateType.SPEC_READY)
+    recovery = spec_ready_gate.evidence_json["provider_metadata"]["provider_recovery"]
+
+    assert provider.attempts == 2
+    assert spec.title == "Add status badge"
+    assert recovery["fallback_used"] is False
+    assert recovery["provider"] == "openai"
+    assert recovery["attempts"] == 2
+    assert "temporary provider outage" in recovery["previous_errors"][0]["message"]
+
+
+@pytest.mark.asyncio
+async def test_delivery_service_falls_back_to_local_spec_after_external_provider_failure(
+    db_session,
+    monkeypatch,
+):
+    monkeypatch.setattr(settings, "ai_workflow_provider_retry_attempts", 2)
+    monkeypatch.setattr(settings, "ai_workflow_provider_retry_backoff_seconds", 0)
+    monkeypatch.setattr(settings, "ai_workflow_provider_fallback_enabled", True)
+
+    class FailingOpenAIProvider:
+        name = "openai"
+
+        async def generate_spec(self, demand):
+            raise AIServiceException("Authorization: Bearer sk-test-abcdefghijklmnopqrstuvwxyz")
+
+        async def collect_repo_context(self, demand):
+            raise AssertionError("not used")
+
+        async def analyze_impact(self, demand, spec, repo_context):
+            raise AssertionError("not used")
+
+        async def create_coding_task(self, demand, spec, allowed_paths, required_checks):
+            raise AssertionError("not used")
+
+    demand = await delivery_repository.create_demand(
+        db_session,
+        raw_input="Add a compact execution status badge to the delivery dashboard.",
+        source_type="new_requirement",
+        title="Add status badge",
+    )
+
+    spec = await DeliveryService(provider=FailingOpenAIProvider()).generate_spec(db_session, demand.id)
+    detail = await delivery_repository.get_demand_detail(db_session, demand.id)
+    spec_ready_gate = next(gate for gate in detail.gate_checks if gate.gate_type == GateType.SPEC_READY)
+    metadata = spec_ready_gate.evidence_json["provider_metadata"]
+    recovery = metadata["provider_recovery"]
+
+    assert spec.title == "Add status badge"
+    assert spec.created_by == "ai"
+    assert any("local rule fallback" in question for question in spec.open_questions_json)
+    assert metadata["provider"] == "local"
+    assert recovery["fallback_used"] is True
+    assert recovery["failed_provider"] == "openai"
+    assert recovery["fallback_provider"] == "local"
+    assert len(recovery["errors"]) == 2
+    assert "sk-test-abcdefghijklmnopqrstuvwxyz" not in str(recovery)
+    assert REDACTED in str(recovery)
 
 
 @pytest.mark.asyncio

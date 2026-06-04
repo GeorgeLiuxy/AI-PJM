@@ -97,6 +97,7 @@ async def rotate_secret(
 @router.get("/{secret_id}/health", response_model=dict)
 async def check_secret_health(
     secret_id: int,
+    remote: bool = False,
     db: AsyncSession = Depends(get_db),
     principal: AuthPrincipal = Depends(get_current_principal),
 ):
@@ -104,7 +105,13 @@ async def check_secret_health(
     if not record:
         raise NotFoundException(f"Secret {secret_id} not found")
     require_capability(principal, "admin", record.project_id)
-    response = await secret_store_service.check_secret_health(db, secret_id)
+    response = await secret_store_service.check_secret_health(
+        db,
+        secret_id,
+        verify_remote=remote,
+        actor_user_id=principal.user_id,
+        actor_ref=principal.username,
+    )
     return success_response(
         data=response.model_dump(),
         message="Secret health checked",

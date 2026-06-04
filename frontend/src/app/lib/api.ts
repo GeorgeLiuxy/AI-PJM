@@ -206,8 +206,8 @@ export const authApi = {
       body: JSON.stringify(params),
     });
   },
-  checkSecretHealth: (secretId: number) => {
-    return fetchAPI<SecretRecord>(`/api/v2/secrets/${secretId}/health`);
+  checkSecretHealth: (secretId: number, remote = true) => {
+    return fetchAPI<SecretRecord>(`/api/v2/secrets/${secretId}/health${remote ? '?remote=true' : ''}`);
   },
 };
 

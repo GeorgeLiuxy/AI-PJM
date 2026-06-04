@@ -989,6 +989,7 @@ function SecretTable({
                   <td className="px-3 py-2">
                     <Badge>{formatSecretHealth(secret.health_status)}</Badge>
                     {secret.health_reason ? <div className="mt-1 text-xs text-slate-500">{secret.health_reason}</div> : null}
+                    <ProviderHealthNote secret={secret} />
                   </td>
                   <td className="px-3 py-2 text-xs text-slate-600">
                     <div>最近：{formatDate(secret.last_used_at)}</div>
@@ -1093,6 +1094,35 @@ function formatSecretHealth(value: string) {
     unknown: '未检查',
   };
   return labels[value] || value;
+}
+
+function ProviderHealthNote({ secret }: { secret: SecretRecord }) {
+  const health = providerHealth(secret);
+  if (!health) {
+    return null;
+  }
+  return (
+    <div className="mt-1 text-xs text-slate-500">
+      远端：{formatSecretHealth(health.status)}
+      {health.reason ? `，${health.reason}` : ''}
+    </div>
+  );
+}
+
+function providerHealth(secret: SecretRecord): { status: string; reason: string | null } | null {
+  const raw = secret.metadata_json?.last_provider_health;
+  if (!raw || typeof raw !== 'object') {
+    return null;
+  }
+  const health = raw as Record<string, unknown>;
+  const status = typeof health.status === 'string' ? health.status : '';
+  if (!status) {
+    return null;
+  }
+  return {
+    status,
+    reason: typeof health.reason === 'string' ? health.reason : null,
+  };
 }
 
 function formatDate(value?: string | null) {

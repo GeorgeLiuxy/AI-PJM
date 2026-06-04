@@ -79,9 +79,13 @@ class Settings(BaseSettings):
     openai_request_timeout_seconds: int = 120
     openai_api_key_secret_name: str = "openai_api_key"
     ai_workflow_provider: str = "local"
+    ai_workflow_provider_retry_attempts: int = 2
+    ai_workflow_provider_retry_backoff_seconds: float = 0.25
+    ai_workflow_provider_fallback_enabled: bool = True
     dify_api_base_url: str = ""
     dify_api_key: str = ""
     dify_api_key_secret_name: str = "dify_api_key"
+    dify_health_check_url: str = ""
     dify_spec_workflow_id: str = ""
     dify_impact_workflow_id: str = ""
 

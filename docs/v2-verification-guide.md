@@ -590,6 +590,29 @@ Plaintext API keys must never be stored in provider metadata or frontend respons
 
 If required configuration, output text, valid JSON, required fields, risk level, or confidence score are missing, the provider must fail clearly and must not silently advance the workflow.
 
+External provider recovery is controlled by:
+
+```powershell
+$env:AI_WORKFLOW_PROVIDER_RETRY_ATTEMPTS="2"
+$env:AI_WORKFLOW_PROVIDER_RETRY_BACKOFF_SECONDS="0.25"
+$env:AI_WORKFLOW_PROVIDER_FALLBACK_ENABLED="true"
+```
+
+Expected recovery behavior:
+
+```text
+Dify/OpenAI Spec and impact operations retry before failing.
+When fallback is enabled and retries are exhausted, local rules generate the draft.
+Spec fallback adds an open question warning.
+Spec gates and impact metadata include provider_recovery with failed provider, fallback provider, attempts, and redacted errors.
+```
+
+Dify remote credential probing is intentionally opt-in because calling an arbitrary workflow could produce side effects. Configure a safe read-only endpoint first:
+
+```powershell
+$env:DIFY_HEALTH_CHECK_URL="https://<your-dify-host>/<safe-readonly-health-endpoint>"
+```
+
 ## 14. Auth and Project Access Verification
 
 Local development keeps auth disabled unless `AUTH_ENABLED=true`.
@@ -637,6 +660,8 @@ Expected behavior:
 - Secret creation and rotation create audit events.
 - Dify Provider can resolve `dify_api_key` from project SecretStore without returning the key to the frontend.
 - OpenAI Provider can resolve `openai_api_key` from project SecretStore without returning the key to the frontend.
+- `GET /api/v2/secrets/{id}/health?remote=true` decrypts only server-side, probes OpenAI/GitLab with read-only endpoints, probes Dify only when `DIFY_HEALTH_CHECK_URL` is configured, writes `metadata_json.last_provider_health`, and never returns plaintext.
+- The access management page health-check button uses the remote probe and shows the latest remote provider status when available.
 
 Manual local configuration:
 
@@ -739,9 +764,7 @@ To be added:
 - OpenAI Responses API outputs are parsed into structured drafts only.
 - Invalid or missing OpenAI configuration or malformed structured output fails explicitly.
 
-To be added:
-
-- Retry and fallback policy for transient provider failures.
+- Retry and fallback policy for transient provider failures is available for Dify/OpenAI Spec and impact operations.
 
 ## 17. Regression Checklist
 

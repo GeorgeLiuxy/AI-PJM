@@ -41,7 +41,7 @@ AI PJM 是一个 AI 辅助工程交付编排平台。它不是通用项目管理
 - 审计查询增强首版：支持操作者、动作、对象、时间范围、关键词筛选，并可导出 CSV。
 - 审计事件首版：关键人工/敏感动作落库，并在工作台审计页签展示。
 - 项目密钥管理首版：服务端加密存储项目级凭证，访问管理页只展示掩码，不回显明文。
-- 密钥健康检查首版：支持登记过期时间、展示健康状态、手动检查可解密性，不返回明文。
+- 密钥健康检查首版：支持登记过期时间、展示健康状态、手动检查可解密性；OpenAI/GitLab 支持只读远端可用性探测并写回最近健康结果，不返回明文。
 - 执行日志和执行证据脱敏首版：持久化前清洗 Token、API Key、密码、Authorization 等敏感片段。
 - 最小可观测性首版：工作台展示 worker lease 异常、队列积压、凭证不可用/即将过期、测试部署失败告警，后端提供 `/api/v2/observability/summary`。
 - 中文化交付工作台页面。
@@ -50,7 +50,7 @@ AI PJM 是一个 AI 辅助工程交付编排平台。它不是通用项目管理
 尚未实现或未生产化：
 
 - 真实本地代码上下文收集和任务范围推断已有首版，仍待增强语义匹配和历史需求读取。
-- OpenAI Provider 首版已实现；Dify/OpenAI Provider 仍需生产联调、质量评估、重试/降级策略和监控。
+- OpenAI Provider 首版已实现；Dify/OpenAI Provider 已有平台级重试和本地规则降级首版，OpenAI/GitLab 凭证已有只读远端探测首版；仍需 Dify 安全探测方案、生产联调、质量评估和监控。
 - Codex CLI 首版已可用，但仍需继续做自动修复闭环、性能优化和生产化运维配置。本机 WindowsApps 下的 `codex.exe` 仍会返回 `Access is denied`，当前使用全局 npm 版 `@openai/codex`。
 - 当前 MR/PR、测试环境部署和验收默认仍是本地记录闭环；GitLab MR 和 webhook 部署已有首版 provider，GitLab MR 创建前可自动推送执行分支，并可手动同步远端评审评论和 commit CI 状态；评审阻塞可触发自动修复 run，修复成功后会把修复分支推回原 GitLab MR 源分支；webhook 部署返回 `status_url` 时可手动同步部署状态，失败部署可从工作台重新部署。自动轮询、GitLab webhook 和 GitHub provider 仍待补齐。
 - Symphony Bridge 已完成首版 internal API、最小 worker、lease 恢复和暂停/恢复/取消控制；真实 Symphony daemon 替换和更强队列恢复仍待实现。
@@ -141,7 +141,9 @@ $env:SECRET_STORE_MASTER_KEY="replace-with-a-long-random-secret"
 
 Dify 项目级凭证约定密钥名为 `dify_api_key`，可通过 `DIFY_API_KEY_SECRET_NAME` 调整。项目未配置该密钥时，Dify Provider 回退使用全局 `DIFY_API_KEY`，便于本地调试。
 
-OpenAI 项目级凭证约定密钥名为 `openai_api_key`，可通过 `OPENAI_API_KEY_SECRET_NAME` 调整。项目未配置该密钥时，OpenAI Provider 回退使用全局 `OPENAI_API_KEY`。`OPENAI_API_BASE_URL` 默认使用 OpenAI 官方 API，`OPENAI_MODEL` 默认 `gpt-4o-mini`，可按环境调整。
+OpenAI 项目级凭证约定密钥名为 `openai_api_key`，可通过 `OPENAI_API_KEY_SECRET_NAME` 调整。项目未配置该密钥时，OpenAI Provider 回退使用全局 `OPENAI_API_KEY`。`OPENAI_API_BASE_URL` 默认使用 OpenAI 官方 API，`OPENAI_MODEL` 默认 `gpt-4o-mini`，可按环境调整。Dify 远端健康探测必须显式配置 `DIFY_HEALTH_CHECK_URL`，避免误调用 workflow。
+
+外部 AI Provider 的恢复策略由平台统一控制：`AI_WORKFLOW_PROVIDER_RETRY_ATTEMPTS` 默认重试 2 次，`AI_WORKFLOW_PROVIDER_RETRY_BACKOFF_SECONDS` 默认 0.25 秒，`AI_WORKFLOW_PROVIDER_FALLBACK_ENABLED=true` 时 Dify/OpenAI 连续失败会降级到本地规则 Provider。降级不会静默发生：Spec 会写入 open question，门禁 evidence 或 Impact metadata 会保留失败 provider、尝试次数和脱敏错误。
 
 GitLab MR provider 使用 `gitlab_token`，可通过 `GITLAB_TOKEN_SECRET_NAME` 调整，缺省回退到 `GITLAB_TOKEN`。webhook 部署 provider 使用 `deploy_token`，可通过 `DEPLOY_TOKEN_SECRET_NAME` 调整，缺省回退到 `DEPLOY_TOKEN`。
 

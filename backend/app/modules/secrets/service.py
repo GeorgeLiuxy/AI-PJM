@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.db import utc_now
 from app.core.exceptions import BadRequestException, ConflictException, NotFoundException
+from app.modules.delivery.redaction import redact_value
 from app.modules.audit.repository import audit_repository
 from app.modules.auth.repository import auth_repository
 from app.modules.secrets.crypto import (
@@ -17,6 +18,7 @@ from app.modules.secrets.crypto import (
     secret_fingerprint,
 )
 from app.modules.secrets.models import SecretRecord
+from app.modules.secrets.provider_health import check_remote_provider_health
 from app.modules.secrets.repository import secret_repository
 from app.modules.secrets.schemas import SecretRecordResponse
 
@@ -135,11 +137,64 @@ class SecretStoreService:
         await secret_repository.update_secret(db, record, last_used_at=utc_now())
         return value
 
-    async def check_secret_health(self, db: AsyncSession, secret_id: int) -> SecretRecordResponse:
+    async def check_secret_health(
+        self,
+        db: AsyncSession,
+        secret_id: int,
+        *,
+        verify_remote: bool = False,
+        actor_user_id: int | None = None,
+        actor_ref: str = "system",
+    ) -> SecretRecordResponse:
         record = await secret_repository.get_secret(db, secret_id)
         if not record:
             raise NotFoundException(f"Secret {secret_id} not found")
-        return self.to_response(record, verify_decrypt=True)
+        local_response = self.to_response(record, verify_decrypt=True)
+        if not verify_remote or local_response.health_status in {"disabled", "expired", "invalid"}:
+            return local_response
+
+        value = decrypt_secret(record.ciphertext)
+        probe = await check_remote_provider_health(record.provider, value)
+        checked_at = utc_now()
+        probe_metadata = {
+            "provider": record.provider,
+            "status": probe.status,
+            "reason": probe.reason,
+            "remote_probe": probe.remote_probe,
+            "endpoint": probe.endpoint,
+            "checked_at": checked_at.isoformat(),
+        }
+        metadata = {
+            **(record.metadata_json or {}),
+            "last_provider_health": redact_value(probe_metadata),
+        }
+        await secret_repository.update_secret(db, record, metadata_json=metadata)
+        await audit_repository.create_event(
+            db,
+            action="secret.provider_health_checked",
+            entity_type="secret",
+            entity_id=record.id,
+            project_id=record.project_id,
+            actor_user_id=actor_user_id,
+            actor_ref=actor_ref,
+            summary=f"Provider health checked: {record.name}",
+            metadata=redact_value(probe_metadata),
+        )
+        await db.commit()
+
+        health_status, health_reason = self._merge_provider_health(
+            local_response.health_status,
+            local_response.health_reason,
+            probe_metadata,
+        )
+        return self.to_response(record, verify_decrypt=False).model_copy(
+            update={
+                "metadata_json": metadata,
+                "health_status": health_status,
+                "health_reason": health_reason,
+                "health_checked_at": checked_at,
+            }
+        )
 
     def to_response(self, record: SecretRecord, *, verify_decrypt: bool = False) -> SecretRecordResponse:
         expires_at = self._expires_at(record.metadata_json)
@@ -207,10 +262,40 @@ class SecretStoreService:
             except BadRequestException as exc:
                 return "invalid", str(exc)
 
+        provider_status, provider_reason = self._provider_health(record.metadata_json)
+        if provider_status == "invalid":
+            return provider_status, provider_reason
+        if provider_status == "unknown" and expires_at is None:
+            return provider_status, provider_reason
+
         if expires_at is not None and expires_at <= now + timedelta(days=EXPIRING_SOON_DAYS):
             return "expiring_soon", f"Secret expires within {EXPIRING_SOON_DAYS} days."
 
         return "healthy", None
+
+    def _provider_health(self, metadata: dict | None) -> tuple[str | None, str | None]:
+        value = (metadata or {}).get("last_provider_health")
+        if not isinstance(value, dict):
+            return None, None
+        status = value.get("status")
+        if status not in {"healthy", "invalid", "unknown"}:
+            return None, None
+        reason = value.get("reason")
+        return status, str(reason) if reason else None
+
+    def _merge_provider_health(
+        self,
+        local_status: str,
+        local_reason: str | None,
+        provider_metadata: dict,
+    ) -> tuple[str, str | None]:
+        provider_status = provider_metadata.get("status")
+        provider_reason = provider_metadata.get("reason")
+        if provider_status == "invalid":
+            return "invalid", str(provider_reason) if provider_reason else None
+        if provider_status == "unknown" and local_status == "healthy":
+            return "unknown", str(provider_reason) if provider_reason else None
+        return local_status, local_reason
 
 
 secret_store_service = SecretStoreService()

@@ -24,7 +24,7 @@
 - 人工审批、MR 创建/评审、测试部署、验收的操作者已写入业务表结构化字段。
 - 审计查询增强首版，支持多条件筛选和 CSV 导出。
 - 本地 SecretStore 首版：项目级密钥服务端加密存储、掩码展示、创建/轮换审计。
-- 密钥健康检查首版：过期时间、健康状态、可解密性检查和最近使用时间展示。
+- 密钥健康检查首版：过期时间、健康状态、可解密性检查、OpenAI/GitLab 只读远端探测和最近使用时间展示。
 - 中文化交付工作台页面。
 - 前后端启动/关闭脚本。
 
@@ -231,7 +231,7 @@
 
 目标：在 Provider 合同稳定后，引入外部编排工具，而不是让 Dify 接管平台状态。
 
-状态：Dify/OpenAI Provider 边界首版已实现，默认不启用。`ai_workflow_provider=dify` 时，Spec 和影响分析可通过 Dify workflow 获取结构化输出；`ai_workflow_provider=openai` 时，Spec 和影响分析可通过 OpenAI Responses API 获取结构化输出。仓库上下文和任务包仍复用本地规则。Dify API Key 会优先按项目从 SecretStore 读取 `dify_api_key`，OpenAI API Key 会优先按项目读取 `openai_api_key`，项目未配置时分别回退到全局 `DIFY_API_KEY` / `OPENAI_API_KEY`。缺少必要配置或输出不合规时会明确失败，不会静默推进门禁。
+状态：Dify/OpenAI Provider 边界首版已实现，默认不启用。`ai_workflow_provider=dify` 时，Spec 和影响分析可通过 Dify workflow 获取结构化输出；`ai_workflow_provider=openai` 时，Spec 和影响分析可通过 OpenAI Responses API 获取结构化输出。仓库上下文和任务包仍复用本地规则。Dify API Key 会优先按项目从 SecretStore 读取 `dify_api_key`，OpenAI API Key 会优先按项目读取 `openai_api_key`，项目未配置时分别回退到全局 `DIFY_API_KEY` / `OPENAI_API_KEY`。缺少必要配置或输出不合规时会明确失败；启用平台降级时，连续失败会转为本地规则 Provider，并在 Spec open questions、门禁 evidence 或 Impact metadata 里记录脱敏恢复证据。
 
 任务：
 
@@ -239,7 +239,7 @@
 - 实现 `OpenAIProvider` 或其他模型 Provider。（OpenAI 首版已完成）
 - Provider 只返回结构化草稿，不直接改数据库状态。（已按合同约束）
 - Dify/OpenAI API Key 按项目从 SecretStore 读取。（已完成首版）
-- 加入 schema 校验、超时、重试、降级到本地规则。（结构化校验和超时已完成，重试/降级策略待细化）
+- 加入 schema 校验、超时、重试、降级到本地规则。（结构化校验、超时、平台级重试和本地降级首版已完成）
 
 完成标准：
 
@@ -288,7 +288,7 @@ V2 主链路已经完成本地 MVP 闭环，下一步应转入生产化基础建
 1. 完成文档口径清理，让 README、路线图、蓝图、交互说明和生产化计划一致。
 2. 按 `docs/symphony-integration-plan.md` 做 S0：拉通 Symphony 本地运行和 Codex 调用方式。
 3. 做 S1/S2：实现 AI PJM internal execution bridge API 和 `SymphonyBridgeExecutor`。
-4. 完善 SecretStore Provider 消费：Dify/OpenAI/GitLab/webhook 部署已完成首版项目级读取，下一步补 Provider 远端可用性探测和失败原因写回。
+4. 完善 SecretStore Provider 消费：Dify/OpenAI/GitLab/webhook 部署已完成首版项目级读取，Dify/OpenAI 已有平台级重试和本地降级，OpenAI/GitLab 凭证已有只读远端探测和失败原因写回，Dify 支持显式安全 URL 探测。
 5. 做 S3/S4：用 Symphony 执行低风险任务，创建真实 GitLab/GitHub MR，并补远端评审同步。
 6. 做 S5：增强真实测试环境部署 Provider，补环境配置和自动状态轮询；重新部署入口首版已完成。
 7. 再补 PostgreSQL 真库演练、备份恢复、队列恢复、生产级 Dify/OpenAI 质量评估和产品化交互；Alembic 迁移链路、最小可观测性和 OpenAI Provider 首版已完成。
