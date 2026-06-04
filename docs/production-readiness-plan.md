@@ -80,8 +80,8 @@ AI PJM 的生产级目标：
 - 密钥和 Token 已有本地加密存储、健康检查和过期提示首版，Dify、OpenAI、GitLab MR 和 webhook 部署已接入项目级消费；OpenAI/GitLab 凭证已有只读远端探测和失败原因写回，Dify 支持通过显式 `DIFY_HEALTH_CHECK_URL` 配置安全只读探测。尚未接 Vault/KMS 和集中轮换策略。
 - GitLab MR 创建、源分支自动推送、远端评审同步和阻塞意见自动修复已有首版；GitHub provider、GitLab webhook 和 reviewer/label 配置仍待实现。
 - webhook 测试部署 client 已有首版，失败部署重新部署入口、环境级 URL 配置和部署日志证据归档已完成；仍缺生产 CI/CD 平台深度状态轮询。
-- Symphony Bridge、最小 worker、lease 恢复和暂停/恢复/取消控制已有首版；真实 Symphony daemon、队列恢复增强和生产 worker 运维仍待实现。
-- Alembic 迁移链路首版已完成，并已通过 Docker PostgreSQL 真库升级到 head 演练；备份恢复和性能压测仍待实现。
+- Symphony Bridge、最小 worker、lease 恢复、过期队列恢复脚本和暂停/恢复/取消控制已有首版；真实 Symphony daemon、失败重试幂等增强和生产 worker 运维仍待实现。
+- Alembic 迁移链路首版已完成，并已通过 Docker PostgreSQL 真库升级到 head 演练；SQLite/PostgreSQL 最小备份恢复脚本已完成，性能压测仍待实现。
 - 没有完整审计、告警和运行指标。
 - Dify/OpenAI 本地质量评分已完成；真实 Dify/OpenAI 环境生产联调仍待完成。
 
