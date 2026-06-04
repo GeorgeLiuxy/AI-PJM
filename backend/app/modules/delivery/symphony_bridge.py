@@ -133,6 +133,7 @@ class SymphonyBridgeService:
         return redact_value(
             {
                 "run_id": run.id,
+                "trace_id": run.trace_id or task.trace_id or demand.trace_id,
                 "coding_task_id": task.id,
                 "demand_id": demand.id,
                 "demand_title": demand.title,

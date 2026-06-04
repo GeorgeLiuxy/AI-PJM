@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import httpx
 
 from app.core.config import settings
@@ -10,6 +12,7 @@ from app.modules.delivery.deployments.base import DeployDraft, DeployRemoteStatu
 from app.modules.delivery.enums import DeploymentStatus
 from app.modules.delivery.models import CodingTask, DeployRecord, MergeRequestRecord
 from app.modules.delivery.provider_credentials import ProviderCredential
+from app.modules.delivery.redaction import redact_text
 
 
 class WebhookDeployClient:
@@ -72,6 +75,7 @@ class WebhookDeployClient:
                 "status_url": status_url,
                 "commit_sha": payload["commit_sha"],
                 "credential": self._credential.metadata(secret_name_key="token_secret_name"),
+                **self._log_evidence(body),
             },
         )
 
@@ -112,6 +116,7 @@ class WebhookDeployClient:
                 "external_id": self._external_id(deploy_record),
                 "status": status,
                 "credential": self._credential.metadata(secret_name_key="token_secret_name"),
+                **self._log_evidence(body),
             },
         )
 
@@ -161,6 +166,29 @@ class WebhookDeployClient:
             if isinstance(provider_evidence, dict):
                 return self._str_or_none(provider_evidence.get("external_id"))
         return None
+
+    def _log_evidence(self, body: dict) -> dict:
+        evidence: dict[str, str] = {}
+        log_url = (
+            self._str_or_none(body.get("log_url"))
+            or self._str_or_none(body.get("logs_url"))
+            or self._str_or_none(body.get("deployment_log_url"))
+        )
+        if log_url:
+            evidence["log_url"] = log_url
+
+        raw_logs = body.get("logs")
+        if raw_logs is None:
+            raw_logs = body.get("log")
+        if raw_logs is None:
+            raw_logs = body.get("output")
+        if raw_logs is not None:
+            if isinstance(raw_logs, (dict, list)):
+                text = json.dumps(raw_logs, ensure_ascii=False, default=str)
+            else:
+                text = str(raw_logs)
+            evidence["logs_tail"] = redact_text(text)[-4000:]
+        return evidence
 
     def _str_or_none(self, value: object) -> str | None:
         if value is None:

@@ -64,6 +64,7 @@ class Settings(BaseSettings):
     deploy_webhook_url: str = ""
     deploy_token: str = ""
     deploy_token_secret_name: str = "deploy_token"
+    deploy_environment_config_json: str = ""
     symphony_bridge_token: str = ""
     symphony_bridge_default_lease_seconds: int = 300
 

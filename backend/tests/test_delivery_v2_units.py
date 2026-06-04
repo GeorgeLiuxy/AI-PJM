@@ -22,12 +22,16 @@ from app.modules.delivery.enums import (
     CodingTaskStatus,
     DeliveryRiskLevel,
     DeploymentStatus,
+    ExecutionLogLevel,
     ExecutionRunStatus,
     GateStatus,
     GateType,
+    ImpactAnalysisStatus,
     MergeRequestStatus,
+    RepoContextStatus,
     ReviewStatus,
     SpecStatus,
+    VerificationStatus,
 )
 from app.modules.delivery.gates import gate_engine
 from app.modules.delivery.merge_requests.gitlab import GitLabMergeRequestClient
@@ -92,6 +96,121 @@ def test_delivery_v2_execution_gate_blocks_draft_task():
 
     assert decision.status == GateStatus.MANUAL_REQUIRED
     assert decision.evidence["coding_task_status"] == CodingTaskStatus.DRAFT
+
+
+@pytest.mark.asyncio
+async def test_delivery_trace_id_propagates_across_main_workflow(db_session):
+    demand = await delivery_repository.create_demand(
+        db_session,
+        raw_input="Add a trace id to the delivery workflow.",
+        source_type="new_requirement",
+        title="Trace delivery workflow",
+    )
+    spec = await delivery_repository.create_spec_card(
+        db_session,
+        demand_id=demand.id,
+        status=SpecStatus.APPROVED,
+        title="Trace delivery workflow",
+        user_story="As an operator, I can trace delivery work.",
+        scope="Trace id propagation.",
+        acceptance_criteria=["Trace id is visible."],
+        constraints=["Do not expose secrets."],
+        risks=["Low risk."],
+        open_questions=[],
+    )
+    gate = await delivery_repository.create_gate_check(
+        db_session,
+        demand_id=demand.id,
+        gate_type=GateType.SPEC_READY,
+        status=GateStatus.PASSED,
+    )
+    repo_context = await delivery_repository.create_repo_context(
+        db_session,
+        demand_id=demand.id,
+        status=RepoContextStatus.READY,
+        provider="local",
+        summary="Trace context.",
+        source_refs=["workspace.root"],
+        discovered_files=["backend/app/modules/delivery/models.py"],
+        dependency_refs=["backend/pyproject.toml"],
+        confidence_score=0.9,
+    )
+    impact = await delivery_repository.create_impact_analysis(
+        db_session,
+        demand_id=demand.id,
+        repo_context_id=repo_context.id,
+        status=ImpactAnalysisStatus.READY,
+        provider="local",
+        summary="Trace impact.",
+        impacted_areas=["backend/app/modules/delivery"],
+        affected_files=["backend/app/modules/delivery/models.py"],
+        recommendations=["Run delivery unit tests."],
+        risk_level=DeliveryRiskLevel.L1,
+        confidence_score=0.9,
+    )
+    task = await delivery_repository.create_coding_task(
+        db_session,
+        demand_id=demand.id,
+        spec_card_id=spec.id,
+        status=CodingTaskStatus.COMPLETED,
+        title="Trace delivery workflow",
+        task_prompt="Add trace id propagation.",
+        allowed_paths=["backend/app/modules/delivery"],
+        forbidden_actions=[],
+        required_checks=["python -m pytest tests/test_delivery_v2_units.py -q"],
+        expected_evidence=["command_results"],
+    )
+    run = await delivery_repository.create_execution_run(
+        db_session,
+        coding_task_id=task.id,
+        status=ExecutionRunStatus.SUCCEEDED,
+        executor_type="codex",
+        trigger_mode="manual",
+    )
+    log = await delivery_repository.create_execution_log(
+        db_session,
+        execution_run_id=run.id,
+        level=ExecutionLogLevel.INFO,
+        message="Trace log.",
+    )
+    merge_request = await delivery_repository.create_merge_request_record(
+        db_session,
+        coding_task_id=task.id,
+        execution_run_id=run.id,
+        provider="local",
+        status=MergeRequestStatus.REVIEW_PASSED,
+        review_status=ReviewStatus.PASSED,
+        title="Trace delivery workflow",
+        source_branch="codex/trace",
+        target_branch="main",
+    )
+    deploy_record = await delivery_repository.create_deploy_record(
+        db_session,
+        merge_request_id=merge_request.id,
+        coding_task_id=task.id,
+        provider="local",
+        status=DeploymentStatus.DEPLOYED,
+        environment="test",
+    )
+    verification = await delivery_repository.create_verification_record(
+        db_session,
+        deploy_record_id=deploy_record.id,
+        status=VerificationStatus.PASSED,
+    )
+
+    assert demand.trace_id
+    assert {
+        spec.trace_id,
+        gate.trace_id,
+        repo_context.trace_id,
+        impact.trace_id,
+        task.trace_id,
+        run.trace_id,
+        log.trace_id,
+        merge_request.trace_id,
+        deploy_record.trace_id,
+        verification.trace_id,
+    } == {demand.trace_id}
 
 
 def test_symphony_executor_is_deferred_queue_adapter():
@@ -1925,6 +2044,98 @@ async def test_delivery_service_syncs_webhook_deployment_status_gate_and_audit(d
     assert batch["error_count"] == 0
     assert batch["synced"][0].id == second_deploy_record.id
     assert batch["synced"][0].status == DeploymentStatus.DEPLOYED
+
+
+@pytest.mark.asyncio
+async def test_delivery_service_records_deployment_environment_config_and_logs(db_session, monkeypatch):
+    monkeypatch.setattr(
+        settings,
+        "deploy_environment_config_json",
+        json.dumps(
+            {
+                "test": {
+                    "url": "https://test.example/app",
+                    "log_url": "https://ci.example/jobs/42",
+                    "description": "Shared test environment",
+                }
+            }
+        ),
+    )
+    project = await auth_repository.create_project(
+        db_session,
+        key="deploy-env-project",
+        name="Deploy Env Project",
+    )
+    demand = await delivery_repository.create_demand(
+        db_session,
+        raw_input="Add deployment environment config.",
+        source_type="new_requirement",
+        title="Deployment env config",
+        project_id=project.id,
+    )
+    spec = await delivery_repository.create_spec_card(
+        db_session,
+        demand_id=demand.id,
+        status=SpecStatus.APPROVED,
+        title="Deployment env config",
+        user_story="As an operator, I can see deployment config evidence.",
+        scope="Deployment evidence.",
+        acceptance_criteria=["Deployment config is recorded."],
+        constraints=["Do not expose secrets."],
+        risks=["Low risk."],
+        open_questions=[],
+    )
+    task = await delivery_repository.create_coding_task(
+        db_session,
+        demand_id=demand.id,
+        spec_card_id=spec.id,
+        status=CodingTaskStatus.COMPLETED,
+        title="Deployment env config",
+        task_prompt="Record deployment config.",
+        allowed_paths=["backend/app/modules/delivery"],
+        forbidden_actions=[],
+        required_checks=[],
+        expected_evidence=[],
+    )
+    run = await delivery_repository.create_execution_run(
+        db_session,
+        coding_task_id=task.id,
+        status=ExecutionRunStatus.SUCCEEDED,
+        executor_type="codex",
+        trigger_mode="manual",
+    )
+    merge_request = await delivery_repository.create_merge_request_record(
+        db_session,
+        coding_task_id=task.id,
+        execution_run_id=run.id,
+        provider="local",
+        status=MergeRequestStatus.REVIEW_PASSED,
+        review_status=ReviewStatus.PASSED,
+        title="Deployment env config",
+        source_branch="codex/deploy-env",
+        target_branch="main",
+    )
+
+    deploy_record = await DeliveryService().create_deploy_record(
+        db_session,
+        merge_request.id,
+        provider="local",
+        environment="test",
+        actor_ref="operator",
+    )
+
+    assert deploy_record.trace_id == demand.trace_id
+    assert deploy_record.url == "https://test.example/app"
+    assert deploy_record.evidence_json["deployment_config"] == {
+        "environment": "test",
+        "source": "DEPLOY_ENVIRONMENT_CONFIG_JSON",
+        "url": "https://test.example/app",
+        "log_url": "https://ci.example/jobs/42",
+        "description": "Shared test environment",
+    }
+    assert deploy_record.evidence_json["deployment_logs"] == {
+        "configured_log_url": "https://ci.example/jobs/42",
+    }
 
 
 @pytest.mark.asyncio

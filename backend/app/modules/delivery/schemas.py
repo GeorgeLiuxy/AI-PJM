@@ -38,6 +38,7 @@ class DemandResponse(BaseModel):
     """Demand item response."""
 
     id: int
+    trace_id: Optional[str] = None
     project_id: Optional[int] = None
     created_by_user_id: Optional[int] = None
     raw_input: str
@@ -78,6 +79,7 @@ class SpecCardResponse(BaseModel):
     """Spec card response."""
 
     id: int
+    trace_id: Optional[str] = None
     demand_id: int
     status: SpecStatus
     title: str
@@ -99,6 +101,7 @@ class GateCheckResponse(BaseModel):
     """Gate check response."""
 
     id: int
+    trace_id: Optional[str] = None
     demand_id: int
     gate_type: GateType
     status: GateStatus
@@ -120,6 +123,7 @@ class RepoContextResponse(BaseModel):
     """Repository context response."""
 
     id: int
+    trace_id: Optional[str] = None
     demand_id: int
     status: RepoContextStatus
     provider: str
@@ -146,6 +150,7 @@ class ImpactAnalysisResponse(BaseModel):
     """Impact analysis response."""
 
     id: int
+    trace_id: Optional[str] = None
     demand_id: int
     repo_context_id: Optional[int] = None
     status: ImpactAnalysisStatus
@@ -175,6 +180,7 @@ class CodingTaskResponse(BaseModel):
     """Coding task package response."""
 
     id: int
+    trace_id: Optional[str] = None
     demand_id: int
     spec_card_id: int
     status: CodingTaskStatus
@@ -251,6 +257,7 @@ class ExecutionLogResponse(BaseModel):
     """Execution run log response."""
 
     id: int
+    trace_id: Optional[str] = None
     execution_run_id: int
     level: ExecutionLogLevel
     message: str
@@ -265,6 +272,7 @@ class ExecutionRunResponse(BaseModel):
     """Execution run response."""
 
     id: int
+    trace_id: Optional[str] = None
     coding_task_id: int
     status: ExecutionRunStatus
     executor_type: str
@@ -354,6 +362,7 @@ class SymphonyBridgeTaskPackageResponse(BaseModel):
     """Task package consumed by an external Symphony worker."""
 
     run_id: int
+    trace_id: Optional[str] = None
     coding_task_id: int
     demand_id: int
     demand_title: str
@@ -374,6 +383,7 @@ class MergeRequestRecordResponse(BaseModel):
     """Merge request or pull request record response."""
 
     id: int
+    trace_id: Optional[str] = None
     coding_task_id: int
     execution_run_id: int
     provider: str
@@ -404,6 +414,7 @@ class VerificationRecordResponse(BaseModel):
     """Verification record response."""
 
     id: int
+    trace_id: Optional[str] = None
     deploy_record_id: int
     status: VerificationStatus
     verifier_user_id: Optional[int] = None
@@ -422,6 +433,7 @@ class DeployRecordResponse(BaseModel):
     """Test deployment record response."""
 
     id: int
+    trace_id: Optional[str] = None
     merge_request_id: int
     coding_task_id: int
     provider: str

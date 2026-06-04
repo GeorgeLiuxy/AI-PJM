@@ -79,9 +79,9 @@ AI PJM 的生产级目标：
 - 权限仍是本地首版，但当前阶段只需要最小角色模型；企业 SSO、复杂组织角色和审计报表平台化不作为近期主线。
 - 密钥和 Token 已有本地加密存储、健康检查和过期提示首版，Dify、OpenAI、GitLab MR 和 webhook 部署已接入项目级消费；OpenAI/GitLab 凭证已有只读远端探测和失败原因写回，Dify 支持通过显式 `DIFY_HEALTH_CHECK_URL` 配置安全只读探测。尚未接 Vault/KMS 和集中轮换策略。
 - GitLab MR 创建、源分支自动推送、远端评审同步和阻塞意见自动修复已有首版；GitHub provider、GitLab webhook 和 reviewer/label 配置仍待实现。
-- webhook 测试部署 client 已有首版，失败部署重新部署入口已完成；仍缺 CI/CD 状态轮询和环境级配置。
+- webhook 测试部署 client 已有首版，失败部署重新部署入口、环境级 URL 配置和部署日志证据归档已完成；仍缺生产 CI/CD 平台深度状态轮询。
 - Symphony Bridge、最小 worker、lease 恢复和暂停/恢复/取消控制已有首版；真实 Symphony daemon、队列恢复增强和生产 worker 运维仍待实现。
-- Alembic 迁移链路首版已完成；PostgreSQL 真库演练、备份恢复和性能压测仍待实现。
+- Alembic 迁移链路首版已完成，并已通过 Docker PostgreSQL 真库升级到 head 演练；备份恢复和性能压测仍待实现。
 - 没有完整审计、告警和运行指标。
 - Dify/OpenAI 本地质量评分已完成；真实 Dify/OpenAI 环境生产联调仍待完成。
 
@@ -265,11 +265,11 @@ AI 不允许直接决定：
 
 目标：替换 SQLite，保证可升级、可备份、可恢复。
 
-当前状态：迁移链路首版已完成。开发环境继续使用 SQLite、`create_all` 和少量幂等补列兼容已有本地库；生产路径提供 `backend/scripts/migrate.py` 执行 Alembic `upgrade head/current`，当前迁移可从空库升级到 head，并由 `tests/test_migrations.py` 覆盖 SQLite 干净库验证。非 SQLite 启动会在 `DATABASE_VALIDATE_MIGRATIONS=true` 时校验数据库是否到达 Alembic head。PostgreSQL 真库演练、备份恢复流程和性能压测仍待完成。
+当前状态：迁移链路首版已完成。开发环境继续使用 SQLite、`create_all` 和少量幂等补列兼容已有本地库；生产路径提供 `backend/scripts/migrate.py` 执行 Alembic `upgrade head/current`，当前迁移可从空库升级到 head，并由 `tests/test_migrations.py` 覆盖 SQLite 干净库验证。非 SQLite 启动会在 `DATABASE_VALIDATE_MIGRATIONS=true` 时校验数据库是否到达 Alembic head。2026-06-04 已用 Docker PostgreSQL 16 真库验证 `upgrade head` 到 `012`，并确认交付主链路表已具备 `trace_id` 字段。备份恢复流程和性能压测仍待完成。
 
 实施内容：
 
-- 引入 PostgreSQL。（真库演练待完成）
+- 引入 PostgreSQL。（Docker 真库迁移演练已完成，生产连接池和运维参数待按目标环境调优）
 - 引入 Alembic 数据库迁移。（首版已完成）
 - 为当前所有模型生成初始 migration。（首版已完成）
 - 增加索引：项目、需求、状态、任务、执行记录、门禁、创建时间。（随当前迁移首版完成）
@@ -278,9 +278,9 @@ AI 不允许直接决定：
 
 验收标准：
 
-- 新环境可一键执行 migration 初始化。（SQLite 干净库验证已覆盖，PostgreSQL 真库验证待完成）
+- 新环境可一键执行 migration 初始化。（SQLite 干净库验证和 Docker PostgreSQL 真库验证已覆盖）
 - 旧版本升级不会丢数据。
-- 测试覆盖 SQLite 和 PostgreSQL 至少一种生产等价路径。（SQLite 迁移链路已覆盖，PostgreSQL 待真库演练）
+- 测试覆盖 SQLite 和 PostgreSQL 至少一种生产等价路径。（SQLite 迁移链路和 Docker PostgreSQL 真库升级演练已覆盖）
 - 关键列表接口在 1 万条任务下仍可接受。
 
 不做风险：
@@ -382,14 +382,14 @@ AI 不允许直接决定：
 
 目标：让 MR 后的结果进入可验证环境。
 
-当前状态：`DeployClient` 边界和 `webhook` 部署 provider 首版已实现，可用项目级 `deploy_token` 或全局 `DEPLOY_TOKEN` 调用外部 webhook，并把部署 URL、状态、commit 和凭据来源写入 `DeployRecord` 证据。webhook 返回 `status_url` 时，可通过 `POST /api/v2/deployments/{id}/sync-status` 手动同步部署状态，也可通过 `POST /api/v2/deployments/sync-pending` 批量同步 pending 部署；`scripts/deployment_sync_worker.py --loop` 可后台定时调用服务层同步 pending 部署。同步会写回 `test_deployed` 门禁、审计事件和脱敏证据。失败状态会写入失败门禁，不会推进验收；失败部署可通过 `POST /api/v2/deployments/{id}/redeploy` 创建新部署记录并保留来源证据。环境级配置、部署日志归档仍待实现。
+当前状态：`DeployClient` 边界和 `webhook` 部署 provider 首版已实现，可用项目级 `deploy_token` 或全局 `DEPLOY_TOKEN` 调用外部 webhook，并把部署 URL、状态、commit 和凭据来源写入 `DeployRecord` 证据。webhook 返回 `status_url` 时，可通过 `POST /api/v2/deployments/{id}/sync-status` 手动同步部署状态，也可通过 `POST /api/v2/deployments/sync-pending` 批量同步 pending 部署；`scripts/deployment_sync_worker.py --loop` 可后台定时调用服务层同步 pending 部署。同步会写回 `test_deployed` 门禁、审计事件和脱敏证据。失败状态会写入失败门禁，不会推进验收；失败部署可通过 `POST /api/v2/deployments/{id}/redeploy` 创建新部署记录并保留来源证据。`DEPLOY_ENVIRONMENT_CONFIG_JSON` 已支持按环境配置默认 URL、日志 URL 和说明，provider 返回的 `log_url/logs` 会脱敏归档到部署证据。生产 CI/CD 状态语义适配、环境配置 UI 和更完整日志归档策略仍待增强。
 
 实施内容：
 
 - 增加 `DeployClient` 接口。（已完成首版）
 - 对接现有 CI/CD、测试环境平台或脚本入口。（webhook 首版已完成）
-- 支持按项目配置部署环境。
-- 记录部署 URL、版本、commit、日志、状态。
+- 支持按项目配置部署环境。（全局环境 JSON 首版已完成，项目级 UI 待增强）
+- 记录部署 URL、版本、commit、日志、状态。（部署 URL、状态、commit、日志 URL 和日志尾部首版已完成）
 - webhook `status_url` 同步部署状态。（单条同步、pending 批量同步入口和后台轮询脚本首版已完成）
 - 部署失败保留日志并阻断验收。
 - 支持重新部署。（失败部署重新部署首版已完成）
@@ -481,19 +481,19 @@ AI 不允许直接决定：
 
 目标：让生产问题可发现、可定位、可恢复。
 
-当前状态：最小可观测性首版已完成。后端提供 `GET /api/v2/observability/summary`，按项目权限汇总 worker lease 过期、执行队列积压、凭证过期/禁用/即将过期、测试部署失败四类告警；交付工作台顶部展示运行告警、核心计数和前两条告警摘要。完整 trace id、结构化指标、集中告警、异常失败率和项目健康后台仍待实现。
+当前状态：最小可观测性首版已完成。后端提供 `GET /api/v2/observability/summary`，按项目权限汇总 worker lease 过期、执行队列积压、凭证过期/禁用/即将过期、测试部署失败四类告警；交付工作台顶部展示运行告警、核心计数和前两条告警摘要。需求、Spec、门禁、上下文、影响分析、任务、执行、日志、MR、部署和验收已具备同一 `trace_id` 首版贯穿能力。结构化指标、集中告警、异常失败率、项目健康后台和历史数据 trace 回填仍待实现。
 
 实施内容：
 
 - 结构化日志。（待增强）
-- trace id 贯穿需求、任务、执行、MR、部署、验收。（待实现）
+- trace id 贯穿需求、任务、执行、MR、部署、验收。（新记录首版已完成，历史记录回填待实现）
 - 指标：任务数量、成功率、失败率、平均耗时、队列积压、自动修复率。（队列、部署、凭证、worker 首版计数已完成）
 - 告警：worker 停止、队列积压、凭证失效、部署失败、异常失败率。（worker lease、队列积压、凭证、部署失败首版已完成）
 - 管理后台查看系统健康。（工作台告警条首版已完成，管理后台聚合待实现）
 
 验收标准：
 
-- 任一失败任务可通过 trace id 找到完整日志。
+- 任一失败任务可通过 trace id 找到完整日志。（新记录首版已具备统一 trace id，集中日志检索待增强）
 - 队列积压和 worker 异常能告警。（首版已完成）
 - 管理员能看到各项目健康状态。（工作台首版已完成，管理后台聚合待实现）
 
@@ -646,9 +646,9 @@ AI 不允许直接决定：
 2. 按 `docs/symphony-integration-plan.md` 做 S0：拉通 Symphony 本地运行和 Codex 调用方式。
 3. 做 S1/S2：实现 AI PJM internal execution bridge API 和 `SymphonyBridgeExecutor`。
 4. 完善 SecretStore Provider 消费：Dify/OpenAI/GitLab/webhook 部署已完成首版项目级读取；OpenAI/GitLab 凭证远端探测和失败原因写回首版已完成，Dify 显式安全 URL 探测首版已完成。
-5. 做 S3/S4：用 Symphony 执行低风险任务，并创建真实 GitLab/GitHub MR。
-6. 做 S5：接入真实测试环境部署 Provider。
-7. 做 S6：补 PostgreSQL、队列恢复和最小可观测性。
+5. 做 S3/S4：用 Symphony 执行低风险任务，并增强真实 GitLab/GitHub MR。
+6. 做 S5：增强真实测试环境部署 Provider，补生产 CI/CD 状态语义适配和环境配置 UI；重新部署、环境 JSON 配置和日志证据首版已完成。
+7. 做 S6：补备份恢复、性能压测、队列恢复、历史 trace 回填和集中告警；Alembic、Docker PostgreSQL 真库演练、trace id 和最小可观测性首版已完成。
 8. 增强高风险动作二次确认和任务级责任字段。
 
 这 8 项完成后，AI PJM 才具备小团队低风险任务试点价值。企业 SSO、复杂角色、审计报表平台化不作为试点前置条件。

@@ -1,6 +1,7 @@
 """Delivery v2 business logic."""
 
 import asyncio
+import json
 import subprocess
 from dataclasses import replace
 from datetime import datetime, timezone
@@ -1424,24 +1425,31 @@ class DeliveryService:
         if not demand:
             raise NotFoundException(f"Demand {task.demand_id} not found")
 
+        configured_url, environment_config = self._deployment_environment_settings(environment)
+        requested_url = url or configured_url
         credential = await self._deployment_credential_for_provider(db, demand, provider)
         client = get_deploy_client(provider, credential=credential)
         draft = await client.create_deployment(
             task=task,
             merge_request=merge_request,
             environment=environment,
-            url=url,
+            url=requested_url,
         )
         status = self._enum_or_str(draft.status)
+        provider_evidence = redact_value(draft.evidence)
+        deployment_logs = self._deployment_log_evidence(provider_evidence, environment_config)
         evidence = {
             "merge_request_id": merge_request.id,
             "coding_task_id": task.id,
             "environment": environment,
+            "deployment_config": environment_config,
             "provider": draft.provider,
             "created_by_user_id": actor_user_id,
             "created_by_ref": actor_ref or "system",
-            "provider_evidence": draft.evidence,
+            "provider_evidence": provider_evidence,
         }
+        if deployment_logs:
+            evidence["deployment_logs"] = deployment_logs
         deploy_record = await delivery_repository.create_deploy_record(
             db=db,
             merge_request_id=merge_request.id,
@@ -1590,6 +1598,12 @@ class DeliveryService:
             "remote_status_synced_by_ref": actor_ref or "system",
             "remote_status_synced_at": utc_now().isoformat(),
         }
+        deployment_logs = self._deployment_log_evidence(
+            remote_evidence,
+            evidence.get("deployment_config") if isinstance(evidence.get("deployment_config"), dict) else {},
+        )
+        if deployment_logs:
+            evidence["deployment_logs"] = deployment_logs
         await delivery_repository.update_deploy_record(
             db,
             deploy_record,
@@ -2480,6 +2494,54 @@ class DeliveryService:
         if review_status == self._enum_or_str(ReviewStatus.BLOCKING):
             return GateStatus.FAILED
         return GateStatus.MANUAL_REQUIRED
+
+    def _deployment_environment_settings(self, environment: str) -> tuple[str | None, dict]:
+        config_text = settings.deploy_environment_config_json.strip()
+        if not config_text:
+            return None, {"environment": environment, "source": "request"}
+        try:
+            config = json.loads(config_text)
+        except ValueError as exc:
+            raise BadRequestException("DEPLOY_ENVIRONMENT_CONFIG_JSON must be valid JSON") from exc
+        if not isinstance(config, dict):
+            raise BadRequestException("DEPLOY_ENVIRONMENT_CONFIG_JSON must be a JSON object")
+
+        selected = config.get(environment) or config.get("*")
+        if selected is None:
+            return None, {"environment": environment, "source": "request"}
+        if isinstance(selected, str):
+            return selected, {
+                "environment": environment,
+                "source": "DEPLOY_ENVIRONMENT_CONFIG_JSON",
+                "url": redact_text(selected),
+            }
+        if not isinstance(selected, dict):
+            raise BadRequestException("Deployment environment config entries must be strings or objects")
+
+        allowed_keys = {"url", "log_url", "description", "environment_name"}
+        raw_url = selected.get("url")
+        configured_url = str(raw_url).strip() if raw_url is not None and str(raw_url).strip() else None
+        sanitized = {
+            key: redact_text(str(value))
+            for key, value in selected.items()
+            if key in allowed_keys and value is not None and str(value).strip()
+        }
+        return configured_url, {"environment": environment, "source": "DEPLOY_ENVIRONMENT_CONFIG_JSON", **sanitized}
+
+    def _deployment_log_evidence(self, provider_evidence: dict, environment_config: dict) -> dict:
+        logs: dict[str, str] = {}
+        configured_log_url = environment_config.get("log_url") if isinstance(environment_config, dict) else None
+        if isinstance(configured_log_url, str) and configured_log_url.strip():
+            logs["configured_log_url"] = configured_log_url.strip()
+
+        provider_log_url = provider_evidence.get("log_url") if isinstance(provider_evidence, dict) else None
+        if isinstance(provider_log_url, str) and provider_log_url.strip():
+            logs["provider_log_url"] = provider_log_url.strip()
+
+        logs_tail = provider_evidence.get("logs_tail") if isinstance(provider_evidence, dict) else None
+        if isinstance(logs_tail, str) and logs_tail.strip():
+            logs["logs_tail"] = redact_text(logs_tail)[-4000:]
+        return logs
 
     def _deployment_gate_status(self, deployment_status: str) -> GateStatus:
         if deployment_status == self._enum_or_str(DeploymentStatus.DEPLOYED):

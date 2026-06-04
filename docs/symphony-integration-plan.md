@@ -327,7 +327,7 @@ AI PJM 收到完成事件后再执行：
 
 目标：MR 后进入测试环境，完成业务验收。
 
-状态：`DeployClient` 和 webhook 部署 provider 首版已实现，可通过 AI PJM 服务端按项目读取 `deploy_token` 并回写 `DeployRecord`；webhook 返回 `status_url` 时可手动同步部署状态并回写门禁、审计和证据；失败部署可重新部署并保留来源证据。环境级配置、自动状态轮询和日志归档待实现。
+状态：`DeployClient` 和 webhook 部署 provider 首版已实现，可通过 AI PJM 服务端按项目读取 `deploy_token` 并回写 `DeployRecord`；webhook 返回 `status_url` 时可手动同步部署状态并回写门禁、审计和证据；失败部署可重新部署并保留来源证据。`DEPLOY_ENVIRONMENT_CONFIG_JSON` 已支持按环境配置默认 URL、日志 URL 和说明，部署 provider 返回的日志 URL 和日志尾部会脱敏进入证据。生产 CI/CD 状态语义适配、自动状态轮询和环境配置 UI 待实现。
 
 任务：
 
@@ -350,8 +350,8 @@ AI PJM 收到完成事件后再执行：
 - worker heartbeat、lease 过期恢复。
 - 任务取消、暂停、恢复。
 - 队列积压和失败原因可见。
-- PostgreSQL/Alembic 迁移链路首版已完成；PostgreSQL 真库演练、备份恢复和性能压测待完成。
-- 最小可观测性首版已完成；集中告警、trace 和异常失败率待完成。
+- PostgreSQL/Alembic 迁移链路首版已完成，Docker PostgreSQL 真库升级演练已完成；备份恢复和性能压测待完成。
+- 最小可观测性首版已完成，需求到验收的 trace id 首版贯穿已完成；集中告警、历史 trace 回填和异常失败率待完成。
 
 完成标准：
 
@@ -368,7 +368,7 @@ AI PJM 收到完成事件后再执行：
 4. S3：用 Symphony 执行一个真实低风险任务并回写证据。
 5. S4：接 GitLab/GitHub MR。
 6. S5：接测试环境部署。
-7. S6：再补 PostgreSQL 真库演练、队列恢复、trace 和集中告警；Alembic 迁移链路和最小可观测性首版已完成。
+7. S6：再补备份恢复、性能压测、队列恢复、历史 trace 回填和集中告警；Alembic 迁移链路、Docker PostgreSQL 真库演练、trace id 和最小可观测性首版已完成。
 
 ## 12. 验证清单
 

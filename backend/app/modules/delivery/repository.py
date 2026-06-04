@@ -21,6 +21,7 @@ from app.modules.delivery.models import (
     SpecCard,
     VerificationRecord,
 )
+from app.modules.delivery.trace import generate_delivery_trace_id
 
 
 class DeliveryRepository:
@@ -36,8 +37,10 @@ class DeliveryRepository:
         context_payload: dict | None = None,
         project_id: int | None = None,
         created_by_user_id: int | None = None,
+        trace_id: str | None = None,
     ) -> DemandItem:
         demand = DemandItem(
+            trace_id=trace_id or generate_delivery_trace_id(),
             project_id=project_id,
             created_by_user_id=created_by_user_id,
             raw_input=raw_input,
@@ -342,7 +345,9 @@ class DeliveryRepository:
         open_questions: list[str],
         provider_metadata: dict | None = None,
     ) -> SpecCard:
+        trace_id = await self._trace_id_for_demand(db, demand_id)
         spec = SpecCard(
+            trace_id=trace_id,
             demand_id=demand_id,
             status=status,
             title=title,
@@ -367,7 +372,9 @@ class DeliveryRepository:
         reason: str | None = None,
         evidence_json: dict | None = None,
     ) -> GateCheck:
+        trace_id = await self._trace_id_for_demand(db, demand_id)
         gate = GateCheck(
+            trace_id=trace_id,
             demand_id=demand_id,
             gate_type=gate_type,
             status=status,
@@ -391,7 +398,9 @@ class DeliveryRepository:
         confidence_score: float,
         provider_metadata: dict | None = None,
     ) -> RepoContext:
+        trace_id = await self._trace_id_for_demand(db, demand_id)
         repo_context = RepoContext(
+            trace_id=trace_id,
             demand_id=demand_id,
             status=status,
             provider=provider,
@@ -421,7 +430,9 @@ class DeliveryRepository:
         confidence_score: float,
         provider_metadata: dict | None = None,
     ) -> ImpactAnalysis:
+        trace_id = await self._trace_id_for_demand(db, demand_id)
         analysis = ImpactAnalysis(
+            trace_id=trace_id,
             demand_id=demand_id,
             repo_context_id=repo_context_id,
             status=status,
@@ -451,7 +462,9 @@ class DeliveryRepository:
         required_checks: list[str],
         expected_evidence: list[str],
     ) -> CodingTask:
+        trace_id = await self._trace_id_for_demand(db, demand_id)
         task = CodingTask(
+            trace_id=trace_id,
             demand_id=demand_id,
             spec_card_id=spec_card_id,
             status=status,
@@ -476,7 +489,9 @@ class DeliveryRepository:
         result_summary: str | None = None,
         evidence_json: dict | None = None,
     ) -> ExecutionRun:
+        trace_id = await self._trace_id_for_coding_task(db, coding_task_id)
         run = ExecutionRun(
+            trace_id=trace_id,
             coding_task_id=coding_task_id,
             status=status,
             executor_type=executor_type,
@@ -496,7 +511,9 @@ class DeliveryRepository:
         message: str,
         event_json: dict | None = None,
     ) -> ExecutionLog:
+        trace_id = await self._trace_id_for_execution_run(db, execution_run_id)
         log = ExecutionLog(
+            trace_id=trace_id,
             execution_run_id=execution_run_id,
             level=level,
             message=message,
@@ -550,7 +567,9 @@ class DeliveryRepository:
         created_by_user_id: int | None = None,
         created_by_ref: str | None = None,
     ) -> MergeRequestRecord:
+        trace_id = await self._trace_id_for_coding_task(db, coding_task_id)
         record = MergeRequestRecord(
+            trace_id=trace_id,
             coding_task_id=coding_task_id,
             execution_run_id=execution_run_id,
             provider=provider,
@@ -584,7 +603,9 @@ class DeliveryRepository:
         created_by_user_id: int | None = None,
         created_by_ref: str | None = None,
     ) -> DeployRecord:
+        trace_id = await self._trace_id_for_coding_task(db, coding_task_id)
         record = DeployRecord(
+            trace_id=trace_id,
             merge_request_id=merge_request_id,
             coding_task_id=coding_task_id,
             provider=provider,
@@ -610,7 +631,9 @@ class DeliveryRepository:
         evidence_links: list[str] | None = None,
         evidence_json: dict | None = None,
     ) -> VerificationRecord:
+        trace_id = await self._trace_id_for_deploy_record(db, deploy_record_id)
         record = VerificationRecord(
+            trace_id=trace_id,
             deploy_record_id=deploy_record_id,
             status=status,
             verifier_user_id=verifier_user_id,
@@ -723,6 +746,22 @@ class DeliveryRepository:
         spec.status = status
         await db.flush()
         return spec
+
+    async def _trace_id_for_demand(self, db: AsyncSession, demand_id: int) -> str | None:
+        result = await db.execute(select(DemandItem.trace_id).where(DemandItem.id == demand_id))
+        return result.scalar_one_or_none()
+
+    async def _trace_id_for_coding_task(self, db: AsyncSession, coding_task_id: int) -> str | None:
+        result = await db.execute(select(CodingTask.trace_id).where(CodingTask.id == coding_task_id))
+        return result.scalar_one_or_none()
+
+    async def _trace_id_for_execution_run(self, db: AsyncSession, execution_run_id: int) -> str | None:
+        result = await db.execute(select(ExecutionRun.trace_id).where(ExecutionRun.id == execution_run_id))
+        return result.scalar_one_or_none()
+
+    async def _trace_id_for_deploy_record(self, db: AsyncSession, deploy_record_id: int) -> str | None:
+        result = await db.execute(select(DeployRecord.trace_id).where(DeployRecord.id == deploy_record_id))
+        return result.scalar_one_or_none()
 
 
 delivery_repository = DeliveryRepository()

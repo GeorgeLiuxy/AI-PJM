@@ -23,6 +23,7 @@ from app.modules.delivery.enums import (
     SpecStatus,
     VerificationStatus,
 )
+from app.modules.delivery.trace import generate_delivery_trace_id
 
 
 class DemandItem(Base):
@@ -31,6 +32,7 @@ class DemandItem(Base):
     __tablename__ = "delivery_demand_items"
 
     id: Mapped[int] = mapped_column(DB_BIGINT, primary_key=True, autoincrement=True)
+    trace_id: Mapped[Optional[str]] = mapped_column(String(80), nullable=True, default=generate_delivery_trace_id)
     project_id: Mapped[Optional[int]] = mapped_column(
         DB_BIGINT,
         ForeignKey("auth_projects.id", ondelete="SET NULL"),
@@ -98,6 +100,7 @@ class DemandItem(Base):
 
     __table_args__ = (
         Index("ix_delivery_demand_items_project_id", "project_id"),
+        Index("ix_delivery_demand_items_trace_id", "trace_id"),
         Index("ix_delivery_demand_items_created_by_user_id", "created_by_user_id"),
         Index("ix_delivery_demand_items_manual_approval_user_id", "manual_approval_user_id"),
         Index("ix_delivery_demand_items_manual_approval_status", "manual_approval_status"),
@@ -113,6 +116,7 @@ class SpecCard(Base):
     __tablename__ = "delivery_spec_cards"
 
     id: Mapped[int] = mapped_column(DB_BIGINT, primary_key=True, autoincrement=True)
+    trace_id: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
     demand_id: Mapped[int] = mapped_column(
         DB_BIGINT,
         ForeignKey("delivery_demand_items.id", ondelete="CASCADE"),
@@ -141,6 +145,7 @@ class SpecCard(Base):
 
     __table_args__ = (
         Index("ix_delivery_spec_cards_demand_id", "demand_id"),
+        Index("ix_delivery_spec_cards_trace_id", "trace_id"),
         Index("ix_delivery_spec_cards_status", "status"),
     )
 
@@ -151,6 +156,7 @@ class GateCheck(Base):
     __tablename__ = "delivery_gate_checks"
 
     id: Mapped[int] = mapped_column(DB_BIGINT, primary_key=True, autoincrement=True)
+    trace_id: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
     demand_id: Mapped[int] = mapped_column(
         DB_BIGINT,
         ForeignKey("delivery_demand_items.id", ondelete="CASCADE"),
@@ -166,6 +172,7 @@ class GateCheck(Base):
 
     __table_args__ = (
         Index("ix_delivery_gate_checks_demand_id", "demand_id"),
+        Index("ix_delivery_gate_checks_trace_id", "trace_id"),
         Index("ix_delivery_gate_checks_gate_type", "gate_type"),
         Index("ix_delivery_gate_checks_status", "status"),
     )
@@ -177,6 +184,7 @@ class RepoContext(Base):
     __tablename__ = "delivery_repo_contexts"
 
     id: Mapped[int] = mapped_column(DB_BIGINT, primary_key=True, autoincrement=True)
+    trace_id: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
     demand_id: Mapped[int] = mapped_column(
         DB_BIGINT,
         ForeignKey("delivery_demand_items.id", ondelete="CASCADE"),
@@ -206,6 +214,7 @@ class RepoContext(Base):
 
     __table_args__ = (
         Index("ix_delivery_repo_contexts_demand_id", "demand_id"),
+        Index("ix_delivery_repo_contexts_trace_id", "trace_id"),
         Index("ix_delivery_repo_contexts_status", "status"),
     )
 
@@ -216,6 +225,7 @@ class ImpactAnalysis(Base):
     __tablename__ = "delivery_impact_analyses"
 
     id: Mapped[int] = mapped_column(DB_BIGINT, primary_key=True, autoincrement=True)
+    trace_id: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
     demand_id: Mapped[int] = mapped_column(
         DB_BIGINT,
         ForeignKey("delivery_demand_items.id", ondelete="CASCADE"),
@@ -251,6 +261,7 @@ class ImpactAnalysis(Base):
 
     __table_args__ = (
         Index("ix_delivery_impact_analyses_demand_id", "demand_id"),
+        Index("ix_delivery_impact_analyses_trace_id", "trace_id"),
         Index("ix_delivery_impact_analyses_repo_context_id", "repo_context_id"),
         Index("ix_delivery_impact_analyses_status", "status"),
         Index("ix_delivery_impact_analyses_risk_level", "risk_level"),
@@ -263,6 +274,7 @@ class CodingTask(Base):
     __tablename__ = "delivery_coding_tasks"
 
     id: Mapped[int] = mapped_column(DB_BIGINT, primary_key=True, autoincrement=True)
+    trace_id: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
     demand_id: Mapped[int] = mapped_column(
         DB_BIGINT,
         ForeignKey("delivery_demand_items.id", ondelete="CASCADE"),
@@ -303,6 +315,7 @@ class CodingTask(Base):
 
     __table_args__ = (
         Index("ix_delivery_coding_tasks_demand_id", "demand_id"),
+        Index("ix_delivery_coding_tasks_trace_id", "trace_id"),
         Index("ix_delivery_coding_tasks_spec_card_id", "spec_card_id"),
         Index("ix_delivery_coding_tasks_status", "status"),
     )
@@ -314,6 +327,7 @@ class ExecutionRun(Base):
     __tablename__ = "delivery_execution_runs"
 
     id: Mapped[int] = mapped_column(DB_BIGINT, primary_key=True, autoincrement=True)
+    trace_id: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
     coding_task_id: Mapped[int] = mapped_column(
         DB_BIGINT,
         ForeignKey("delivery_coding_tasks.id", ondelete="CASCADE"),
@@ -350,6 +364,7 @@ class ExecutionRun(Base):
 
     __table_args__ = (
         Index("ix_delivery_execution_runs_coding_task_id", "coding_task_id"),
+        Index("ix_delivery_execution_runs_trace_id", "trace_id"),
         Index("ix_delivery_execution_runs_status", "status"),
         Index("ix_delivery_execution_runs_executor_type", "executor_type"),
     )
@@ -361,6 +376,7 @@ class ExecutionLog(Base):
     __tablename__ = "delivery_execution_logs"
 
     id: Mapped[int] = mapped_column(DB_BIGINT, primary_key=True, autoincrement=True)
+    trace_id: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
     execution_run_id: Mapped[int] = mapped_column(
         DB_BIGINT,
         ForeignKey("delivery_execution_runs.id", ondelete="CASCADE"),
@@ -375,6 +391,7 @@ class ExecutionLog(Base):
 
     __table_args__ = (
         Index("ix_delivery_execution_logs_execution_run_id", "execution_run_id"),
+        Index("ix_delivery_execution_logs_trace_id", "trace_id"),
         Index("ix_delivery_execution_logs_level", "level"),
     )
 
@@ -385,6 +402,7 @@ class MergeRequestRecord(Base):
     __tablename__ = "delivery_merge_request_records"
 
     id: Mapped[int] = mapped_column(DB_BIGINT, primary_key=True, autoincrement=True)
+    trace_id: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
     coding_task_id: Mapped[int] = mapped_column(
         DB_BIGINT,
         ForeignKey("delivery_coding_tasks.id", ondelete="CASCADE"),
@@ -437,6 +455,7 @@ class MergeRequestRecord(Base):
 
     __table_args__ = (
         Index("ix_delivery_merge_request_records_coding_task_id", "coding_task_id"),
+        Index("ix_delivery_merge_request_records_trace_id", "trace_id"),
         Index("ix_delivery_merge_request_records_execution_run_id", "execution_run_id"),
         Index("ix_delivery_merge_request_records_status", "status"),
         Index("ix_delivery_merge_request_records_review_status", "review_status"),
@@ -451,6 +470,7 @@ class DeployRecord(Base):
     __tablename__ = "delivery_deploy_records"
 
     id: Mapped[int] = mapped_column(DB_BIGINT, primary_key=True, autoincrement=True)
+    trace_id: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
     merge_request_id: Mapped[int] = mapped_column(
         DB_BIGINT,
         ForeignKey("delivery_merge_request_records.id", ondelete="CASCADE"),
@@ -489,6 +509,7 @@ class DeployRecord(Base):
 
     __table_args__ = (
         Index("ix_delivery_deploy_records_merge_request_id", "merge_request_id"),
+        Index("ix_delivery_deploy_records_trace_id", "trace_id"),
         Index("ix_delivery_deploy_records_coding_task_id", "coding_task_id"),
         Index("ix_delivery_deploy_records_status", "status"),
         Index("ix_delivery_deploy_records_created_by_user_id", "created_by_user_id"),
@@ -501,6 +522,7 @@ class VerificationRecord(Base):
     __tablename__ = "delivery_verification_records"
 
     id: Mapped[int] = mapped_column(DB_BIGINT, primary_key=True, autoincrement=True)
+    trace_id: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
     deploy_record_id: Mapped[int] = mapped_column(
         DB_BIGINT,
         ForeignKey("delivery_deploy_records.id", ondelete="CASCADE"),
@@ -528,6 +550,7 @@ class VerificationRecord(Base):
 
     __table_args__ = (
         Index("ix_delivery_verification_records_deploy_record_id", "deploy_record_id"),
+        Index("ix_delivery_verification_records_trace_id", "trace_id"),
         Index("ix_delivery_verification_records_status", "status"),
         Index("ix_delivery_verification_records_verifier_user_id", "verifier_user_id"),
     )

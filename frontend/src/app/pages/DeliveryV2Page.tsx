@@ -1456,6 +1456,7 @@ function SummaryTab({ result }: { result: DeliveryResult }) {
   return (
     <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
         <Metric label="提供方" value={metadataString(providerMetadata, 'provider')} />
+        <Metric label="追踪 ID" value={result.demand?.trace_id || result.run?.trace_id || result.task?.trace_id} />
         <Metric label="结构版本" value={formatSchemaMetadata(providerMetadata)} />
         <Metric label="提示版本" value={metadataString(providerMetadata, 'prompt_version')} />
         <Metric label="质量" value={formatQualityEvaluation(qualityEvaluation)} />

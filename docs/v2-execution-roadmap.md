@@ -187,7 +187,7 @@
 
 目标：MR 后能进入测试环境验证，而不是停在代码层。
 
-状态：首版已实现本地测试环境记录与验收记录。当前 `local` 模式只记录测试环境 URL、环境名、验收状态和证据链接；`webhook` 部署 Provider 已可按项目读取 `deploy_token` 调用外部部署入口，并把部署 URL、状态和证据写入 `DeployRecord`。webhook 返回 `status_url` 时，工作台可手动同步单条部署状态并回写门禁、审计和证据；后端提供 `POST /api/v2/deployments/sync-pending` 批量同步 pending 部署，`scripts/deployment_sync_worker.py --loop` 可后台定时同步 pending 部署。失败部署可从工作台重新部署并保留来源证据。环境级配置仍待实现。
+状态：首版已实现本地测试环境记录与验收记录。当前 `local` 模式只记录测试环境 URL、环境名、验收状态和证据链接；`webhook` 部署 Provider 已可按项目读取 `deploy_token` 调用外部部署入口，并把部署 URL、状态和证据写入 `DeployRecord`。webhook 返回 `status_url` 时，工作台可手动同步单条部署状态并回写门禁、审计和证据；后端提供 `POST /api/v2/deployments/sync-pending` 批量同步 pending 部署，`scripts/deployment_sync_worker.py --loop` 可后台定时同步 pending 部署。失败部署可从工作台重新部署并保留来源证据。`DEPLOY_ENVIRONMENT_CONFIG_JSON` 已支持按环境配置默认 URL、日志 URL 和说明，部署 provider 返回的日志 URL 和日志尾部会脱敏进入证据。生产 CI/CD 状态语义适配和环境配置 UI 待增强。
 
 任务：
 
@@ -292,7 +292,7 @@ V2 主链路已经完成本地 MVP 闭环，下一步应转入生产化基础建
 3. 做 S1/S2：实现 AI PJM internal execution bridge API 和 `SymphonyBridgeExecutor`。
 4. 完善 SecretStore Provider 消费：Dify/OpenAI/GitLab/webhook 部署已完成首版项目级读取，Dify/OpenAI 已有平台级重试和本地降级，OpenAI/GitLab 凭证已有只读远端探测和失败原因写回，Dify 支持显式安全 URL 探测。
 5. 做 S3/S4：用 Symphony 执行低风险任务，创建真实 GitLab/GitHub MR，并补远端评审同步。
-6. 做 S5：增强真实测试环境部署 Provider，补环境配置和自动状态轮询；重新部署入口首版已完成。
-7. 再补 PostgreSQL 真库演练、备份恢复、队列恢复、生产级 Dify/OpenAI 质量评估和产品化交互；Alembic 迁移链路、最小可观测性和 OpenAI Provider 首版已完成。
+6. 做 S5：增强真实测试环境部署 Provider，补生产 CI/CD 状态语义适配和环境配置 UI；重新部署入口、环境 JSON 配置和日志证据首版已完成。
+7. 再补备份恢复、性能压测、队列恢复、生产级 Dify/OpenAI 质量评估和产品化交互；Alembic 迁移链路、Docker PostgreSQL 真库演练、trace id、最小可观测性和 OpenAI Provider 首版已完成。
 
 原因：生产使用时最大的风险不是缺少复杂组织治理，而是主链路仍需人工搬运、真实 MR/部署没有打通、执行和证据不够可靠。先补这些直接影响交付效率的能力，平台才能真实减少人工介入。

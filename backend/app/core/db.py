@@ -102,6 +102,8 @@ async def _ensure_sqlite_schema_compat(conn) -> None:
         await conn.exec_driver_sql("ALTER TABLE delivery_demand_items ADD COLUMN project_id INTEGER")
     if "created_by_user_id" not in demand_columns:
         await conn.exec_driver_sql("ALTER TABLE delivery_demand_items ADD COLUMN created_by_user_id INTEGER")
+    if "trace_id" not in demand_columns:
+        await conn.exec_driver_sql("ALTER TABLE delivery_demand_items ADD COLUMN trace_id VARCHAR(80)")
     if "manual_approval_status" not in demand_columns:
         await conn.exec_driver_sql("ALTER TABLE delivery_demand_items ADD COLUMN manual_approval_status VARCHAR(50)")
     if "manual_approval_user_id" not in demand_columns:
@@ -121,6 +123,10 @@ async def _ensure_sqlite_schema_compat(conn) -> None:
         "ON delivery_demand_items (created_by_user_id)"
     )
     await conn.exec_driver_sql(
+        "CREATE INDEX IF NOT EXISTS ix_delivery_demand_items_trace_id "
+        "ON delivery_demand_items (trace_id)"
+    )
+    await conn.exec_driver_sql(
         "CREATE INDEX IF NOT EXISTS ix_delivery_demand_items_manual_approval_user_id "
         "ON delivery_demand_items (manual_approval_user_id)"
     )
@@ -130,8 +136,25 @@ async def _ensure_sqlite_schema_compat(conn) -> None:
     )
 
     spec_columns = await _sqlite_columns(conn, "delivery_spec_cards")
-    if spec_columns and "provider_metadata_json" not in spec_columns:
-        await conn.exec_driver_sql("ALTER TABLE delivery_spec_cards ADD COLUMN provider_metadata_json JSON")
+    if spec_columns:
+        if "trace_id" not in spec_columns:
+            await conn.exec_driver_sql("ALTER TABLE delivery_spec_cards ADD COLUMN trace_id VARCHAR(80)")
+        if "provider_metadata_json" not in spec_columns:
+            await conn.exec_driver_sql("ALTER TABLE delivery_spec_cards ADD COLUMN provider_metadata_json JSON")
+        await conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS ix_delivery_spec_cards_trace_id "
+            "ON delivery_spec_cards (trace_id)"
+        )
+
+    await _ensure_sqlite_trace_column(conn, "delivery_gate_checks")
+    await _ensure_sqlite_trace_column(conn, "delivery_repo_contexts")
+    await _ensure_sqlite_trace_column(conn, "delivery_impact_analyses")
+    await _ensure_sqlite_trace_column(conn, "delivery_coding_tasks")
+    await _ensure_sqlite_trace_column(conn, "delivery_execution_runs")
+    await _ensure_sqlite_trace_column(conn, "delivery_execution_logs")
+    await _ensure_sqlite_trace_column(conn, "delivery_merge_request_records")
+    await _ensure_sqlite_trace_column(conn, "delivery_deploy_records")
+    await _ensure_sqlite_trace_column(conn, "delivery_verification_records")
 
     merge_request_columns = await _sqlite_columns(conn, "delivery_merge_request_records")
     if merge_request_columns:
@@ -177,6 +200,18 @@ async def _ensure_sqlite_schema_compat(conn) -> None:
 async def _sqlite_columns(conn, table_name: str) -> set[str]:
     result = await conn.exec_driver_sql(f"PRAGMA table_info({table_name})")
     return {row[1] for row in result.fetchall()}
+
+
+async def _ensure_sqlite_trace_column(conn, table_name: str) -> None:
+    columns = await _sqlite_columns(conn, table_name)
+    if not columns:
+        return
+    if "trace_id" not in columns:
+        await conn.exec_driver_sql(f"ALTER TABLE {table_name} ADD COLUMN trace_id VARCHAR(80)")
+    await conn.exec_driver_sql(
+        f"CREATE INDEX IF NOT EXISTS ix_{table_name}_trace_id "
+        f"ON {table_name} (trace_id)"
+    )
 
 
 def _alembic_config():

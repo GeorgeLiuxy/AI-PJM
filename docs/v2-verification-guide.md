@@ -21,7 +21,7 @@ Expected result:
 Prerequisite:
 
 - The tests use an isolated SQLite database session through `backend/tests/conftest.py`.
-- PostgreSQL is not required for local verification.
+- PostgreSQL is not required for normal local verification.
 
 Run:
 
@@ -40,7 +40,35 @@ Expected result:
 - ExecutionRun can be created as queued or blocked by gate policy.
 - Demand detail includes spec cards, gate checks, repo contexts, impact analyses, and coding tasks.
 
-## 3. Manual API Verification
+## 3. PostgreSQL Migration Verification
+
+Use this when validating production-equivalent migration behavior. Docker can be used locally:
+
+```powershell
+docker run --rm -d --name ai-pjm-postgres-test `
+  -e POSTGRES_USER=ai_pjm `
+  -e POSTGRES_PASSWORD=ai_pjm_test `
+  -e POSTGRES_DB=ai_pjm_test `
+  -p 55432:5432 postgres:16-alpine
+
+cd backend
+python scripts/migrate.py upgrade head --database-url "postgresql+asyncpg://ai_pjm:ai_pjm_test@127.0.0.1:55432/ai_pjm_test"
+python scripts/migrate.py current --database-url "postgresql+asyncpg://ai_pjm:ai_pjm_test@127.0.0.1:55432/ai_pjm_test"
+
+docker rm -f ai-pjm-postgres-test
+```
+
+Expected result:
+
+```text
+Alembic reports the latest head revision.
+The migration reaches revision 012 or newer.
+delivery_* workflow tables include trace_id columns.
+```
+
+This was last verified on 2026-06-04 with Docker PostgreSQL 16 and Alembic head `012`.
+
+## 4. Manual API Verification
 
 Start backend only when you intentionally want to test the API:
 
@@ -65,6 +93,7 @@ Expected:
 
 ```text
 status = intake
+trace_id starts with dlv-
 ```
 
 Generate spec:
@@ -83,6 +112,7 @@ Expected:
 
 ```text
 status = approved
+trace_id equals demand.data.trace_id
 ```
 
 Collect repository context:
@@ -102,6 +132,7 @@ Expected:
 ```text
 status = ready
 provider = mock
+trace_id equals demand.data.trace_id
 ```
 
 Generate impact analysis:
@@ -121,6 +152,7 @@ Expected:
 ```text
 status = ready
 risk_level = L1
+trace_id equals demand.data.trace_id
 ```
 
 Generate CodingTask:
@@ -140,6 +172,7 @@ Expected:
 ```text
 status = ready
 task_prompt contains acceptance criteria and constraints
+trace_id equals demand.data.trace_id
 ```
 
 Create execution run record:
@@ -159,6 +192,7 @@ Expected:
 ```text
 status = queued
 logs count >= 1
+trace_id equals demand.data.trace_id
 ```
 
 Dispatch execution run:
@@ -201,9 +235,10 @@ repo_contexts count = 1
 impact_analyses count = 1
 gate_checks count >= 5
 coding_tasks count = 1
+trace_id is the same across demand, spec, repo context, impact analysis, task, run, and logs
 ```
 
-## 4. High-risk Gate Verification
+## 5. High-risk Gate Verification
 
 Create a high-risk demand:
 
@@ -236,9 +271,7 @@ spec.status = manual_review
 one gate_check.status = manual_required
 ```
 
-## 5. Slice-level Acceptance Criteria
-
-## 5. Failed Check and Retry Verification
+## 6. Failed Check and Retry Verification
 
 Use a safe command that fails deterministically:
 
@@ -280,7 +313,7 @@ latest demand detail shows task.status = blocked
 latest demand detail includes a failed self_test_passed gate
 ```
 
-## 6. Manual Approval Verification
+## 7. Manual Approval Verification
 
 Prepare a high-risk task, then approve it:
 
@@ -314,7 +347,7 @@ approval.data.gate_checks includes execution_allowed/passed with evidence_json.a
 
 If a draft coding task already exists before approval, approval promotes the latest draft task to `ready`. The UI should then hide the manual approval panel and enable `Continue`.
 
-## 7. Codex Command Hook Verification
+## 8. Codex Command Hook Verification
 
 The `codex` executor path can optionally run a configured command inside the generated worktree before required checks.
 
@@ -367,7 +400,7 @@ Changed files are checked against `CodingTask.allowed_paths_json` after the Code
 
 If `EXECUTION_CODEX_ENABLED=false`, the executor still creates a worktree and runs required checks, but records `codex_invocation.enabled = false`.
 
-## 8. Automatic Repair Verification
+## 9. Automatic Repair Verification
 
 Automatic repair is available for low-risk tasks after a failed run with failed check evidence.
 
@@ -396,7 +429,7 @@ evidence_json.execution_allowed.repair_context.failed_checks contains failed che
 
 L2/L3 tasks and changed-file violations must not enter automatic repair.
 
-## 9. Merge Request and Review Verification
+## 10. Merge Request and Review Verification
 
 After a task has a succeeded execution run:
 
@@ -435,7 +468,7 @@ gate_check.gate_type = review_passed
 gate_check.status = passed
 ```
 
-## 10. Deployment and Verification Record Verification
+## 11. Deployment and Verification Record Verification
 
 After an MR/PR review has passed:
 
@@ -453,9 +486,27 @@ deploy_record.provider = local
 deploy_record.status = deployed
 deploy_record.environment = test
 deploy_record.url = local://deployments/<id>
+deploy_record.trace_id equals the demand trace_id
 gate_check.gate_type = test_deployed
 gate_check.status = passed
 ```
+
+Environment-level defaults can be verified without a real deployment system:
+
+```powershell
+$env:DEPLOY_ENVIRONMENT_CONFIG_JSON='{"test":{"url":"https://test.example/app","log_url":"https://ci.example/jobs/42","description":"Shared test environment"}}'
+```
+
+When creating a `local` deployment with `environment = test` and no request URL, expected evidence is:
+
+```text
+deploy_record.url = https://test.example/app
+deploy_record.evidence_json.deployment_config.environment = test
+deploy_record.evidence_json.deployment_config.source = DEPLOY_ENVIRONMENT_CONFIG_JSON
+deploy_record.evidence_json.deployment_logs.configured_log_url = https://ci.example/jobs/42
+```
+
+For webhook deployments, if the provider response includes `log_url`, `logs_url`, `deployment_log_url`, `logs`, `log`, or `output`, the evidence should contain redacted `deployment_logs.provider_log_url` and/or `deployment_logs.logs_tail`.
 
 Record verification:
 
@@ -474,7 +525,7 @@ gate_check.gate_type = verification_passed
 gate_check.status = passed
 ```
 
-## 11. Execution Queue Verification
+## 12. Execution Queue Verification
 
 List recent execution records:
 
@@ -498,7 +549,7 @@ dispatch refuses to start when running executions >= EXECUTION_MAX_CONCURRENCY
 queued runs remain queued when the concurrency limit is reached
 ```
 
-## 12. Dify Provider Configuration Verification
+## 13. Dify Provider Configuration Verification
 
 Dify is not enabled by default. To test the provider boundary, configure:
 
@@ -551,7 +602,7 @@ confidence_score: number between 0 and 1
 
 If required configuration or required output fields are missing, the provider must fail clearly and must not silently advance the workflow.
 
-## 13. OpenAI Provider Configuration Verification
+## 14. OpenAI Provider Configuration Verification
 
 OpenAI is not enabled by default. To test the provider boundary, configure:
 
@@ -616,7 +667,7 @@ Dify remote credential probing is intentionally opt-in because calling an arbitr
 $env:DIFY_HEALTH_CHECK_URL="https://<your-dify-host>/<safe-readonly-health-endpoint>"
 ```
 
-## 13.1 Deployment Sync Worker Verification
+## 14.1 Deployment Sync Worker Verification
 
 For webhook deployments that return `pending` with a `status_url`, run a one-shot sync from `backend/`:
 
@@ -640,7 +691,7 @@ Successful or failed deployment status updates write gates, audit events, and re
 The optional status file records state, counts, synced ids, and redacted errors.
 ```
 
-## 14. Auth and Project Access Verification
+## 15. Auth and Project Access Verification
 
 Local development keeps auth disabled unless `AUTH_ENABLED=true`.
 
@@ -667,7 +718,7 @@ Expected behavior:
 - Non-admin users cannot manage users or project membership.
 - The access management page can load project and user data without `failed to fetch`.
 
-## 15. SecretStore Verification
+## 16. SecretStore Verification
 
 SecretStore writes are disabled until a server-side master key is configured.
 
@@ -708,7 +759,7 @@ The secret table shows only masked values, for example ****alue.
 Plaintext secret values never appear after save or refresh.
 ```
 
-## 16. Slice-level Acceptance Criteria
+## 17. Slice-level Acceptance Criteria
 
 ### Slice 0: Baseline
 
@@ -794,7 +845,7 @@ To be added:
 
 - Retry and fallback policy for transient provider failures is available for Dify/OpenAI Spec and impact operations.
 
-## 17. Regression Checklist
+## 18. Regression Checklist
 
 Before every larger change:
 

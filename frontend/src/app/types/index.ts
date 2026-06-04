@@ -42,6 +42,7 @@ export interface AuthLoginResponse {
 
 export interface DeliveryDemand {
   id: number;
+  trace_id: string | null;
   project_id: number | null;
   created_by_user_id: number | null;
   raw_input: string;
@@ -63,6 +64,7 @@ export interface DeliveryDemand {
 
 export interface DeliverySpecCard {
   id: number;
+  trace_id: string | null;
   demand_id: number;
   status: 'draft' | 'manual_review' | 'approved' | 'superseded';
   title: string;
@@ -80,6 +82,7 @@ export interface DeliverySpecCard {
 
 export interface DeliveryRepoContext {
   id: number;
+  trace_id: string | null;
   demand_id: number;
   status: 'ready' | 'insufficient';
   provider: string;
@@ -95,6 +98,7 @@ export interface DeliveryRepoContext {
 
 export interface DeliveryImpactAnalysis {
   id: number;
+  trace_id: string | null;
   demand_id: number;
   repo_context_id: number | null;
   status: 'ready' | 'manual_review';
@@ -112,6 +116,7 @@ export interface DeliveryImpactAnalysis {
 
 export interface DeliveryCodingTask {
   id: number;
+  trace_id: string | null;
   demand_id: number;
   spec_card_id: number;
   status: 'draft' | 'ready' | 'running' | 'blocked' | 'completed';
@@ -129,6 +134,7 @@ export interface DeliveryCodingTask {
 
 export interface DeliveryExecutionLog {
   id: number;
+  trace_id: string | null;
   execution_run_id: number;
   level: 'info' | 'warning' | 'error';
   message: string;
@@ -138,6 +144,7 @@ export interface DeliveryExecutionLog {
 
 export interface DeliveryExecutionRun {
   id: number;
+  trace_id: string | null;
   coding_task_id: number;
   status: 'queued' | 'running' | 'paused' | 'cancelled' | 'blocked' | 'failed' | 'succeeded';
   executor_type: string;
@@ -215,6 +222,7 @@ export interface SecretRecord {
 
 export interface DeliveryMergeRequestRecord {
   id: number;
+  trace_id: string | null;
   coding_task_id: number;
   execution_run_id: number;
   provider: string;
@@ -240,6 +248,7 @@ export interface DeliveryMergeRequestRecord {
 
 export interface DeliveryVerificationRecord {
   id: number;
+  trace_id: string | null;
   deploy_record_id: number;
   status: 'passed' | 'failed';
   verifier_user_id?: number | null;
@@ -253,6 +262,7 @@ export interface DeliveryVerificationRecord {
 
 export interface DeliveryDeployRecord {
   id: number;
+  trace_id: string | null;
   merge_request_id: number;
   coding_task_id: number;
   provider: string;
@@ -269,6 +279,7 @@ export interface DeliveryDeployRecord {
 
 export interface DeliveryGateCheck {
   id: number;
+  trace_id: string | null;
   demand_id: number;
   gate_type: string;
   status: string;
