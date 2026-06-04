@@ -265,7 +265,7 @@ AI 不允许直接决定：
 
 目标：替换 SQLite，保证可升级、可备份、可恢复。
 
-当前状态：迁移链路首版已完成。开发环境继续使用 SQLite、`create_all` 和少量幂等补列兼容已有本地库；生产路径提供 `backend/scripts/migrate.py` 执行 Alembic `upgrade head/current`，当前迁移可从空库升级到 head，并由 `tests/test_migrations.py` 覆盖 SQLite 干净库验证。非 SQLite 启动会在 `DATABASE_VALIDATE_MIGRATIONS=true` 时校验数据库是否到达 Alembic head。2026-06-04 已用 Docker PostgreSQL 16 真库验证 `upgrade head` 到 `012`，并确认交付主链路表已具备 `trace_id` 字段。备份恢复流程和性能压测仍待完成。
+当前状态：迁移链路首版已完成。开发环境继续使用 SQLite、`create_all` 和少量幂等补列兼容已有本地库；生产路径提供 `backend/scripts/migrate.py` 执行 Alembic `upgrade head/current`，当前迁移可从空库升级到 head，并由 `tests/test_migrations.py` 覆盖 SQLite 干净库验证。非 SQLite 启动会在 `DATABASE_VALIDATE_MIGRATIONS=true` 时校验数据库是否到达 Alembic head。2026-06-04 已用 Docker PostgreSQL 16 真库验证 `upgrade head` 到 `012`，并确认交付主链路表已具备 `trace_id` 字段。`scripts/database_backup.py` 和 `scripts/database_restore.py` 已提供 SQLite/PostgreSQL 最小备份恢复入口。性能压测仍待完成。
 
 实施内容：
 
@@ -274,14 +274,14 @@ AI 不允许直接决定：
 - 为当前所有模型生成初始 migration。（首版已完成）
 - 增加索引：项目、需求、状态、任务、执行记录、门禁、创建时间。（随当前迁移首版完成）
 - 增加数据保留策略。
-- 增加备份和恢复流程。
+- 增加备份和恢复流程。（SQLite/PostgreSQL 最小脚本已完成，定期调度和异地归档待接入）
 
 验收标准：
 
 - 新环境可一键执行 migration 初始化。（SQLite 干净库验证和 Docker PostgreSQL 真库验证已覆盖）
 - 旧版本升级不会丢数据。
 - 测试覆盖 SQLite 和 PostgreSQL 至少一种生产等价路径。（SQLite 迁移链路和 Docker PostgreSQL 真库升级演练已覆盖）
-- 关键列表接口在 1 万条任务下仍可接受。
+- 关键列表接口在 1 万条任务下仍可接受。（性能压测待完成）
 
 不做风险：
 
@@ -291,7 +291,7 @@ AI 不允许直接决定：
 
 目标：复用 OpenAI Symphony 的 Codex 编排模式，让长任务脱离页面请求，支持稳定批量执行。
 
-当前状态：已完成首版 internal bridge API、最小命令行 worker、`SymphonyBridgeExecutor`、lease 过期失败恢复、暂停/恢复/取消控制、同一任务活跃 run 幂等保护，以及本地常驻 worker 启停脚本和 status 文件。`executor_type=symphony` 的执行记录可以保持 queued，等待 worker claim；worker complete 后由 AI PJM 校验 required checks、allowed paths 和必要变更证据，再决定最终门禁。运行中 worker 如果超过 lease 未 heartbeat，会被标记 failed 并保留恢复证据，避免永久卡在 running。操作者可以暂停 queued run、恢复 paused run、取消 queued/paused/running run；取消后的 worker late complete 会被拒绝。尚未完成失败重试幂等锁增强和真实 Symphony daemon 替换。
+当前状态：已完成首版 internal bridge API、最小命令行 worker、`SymphonyBridgeExecutor`、lease 过期失败恢复、暂停/恢复/取消控制、同一任务活跃 run 幂等保护，以及本地常驻 worker 启停脚本和 status 文件。`executor_type=symphony` 的执行记录可以保持 queued，等待 worker claim；worker complete 后由 AI PJM 校验 required checks、allowed paths 和必要变更证据，再决定最终门禁。运行中 worker 如果超过 lease 未 heartbeat，会被标记 failed 并保留恢复证据，避免永久卡在 running；`scripts/recover_symphony_runs.py` 可手动或定时恢复过期 running run，并输出状态文件。操作者可以暂停 queued run、恢复 paused run、取消 queued/paused/running run；取消后的 worker late complete 会被拒绝。尚未完成失败重试幂等锁增强和真实 Symphony daemon 替换。
 
 实施内容：
 
@@ -481,19 +481,19 @@ AI 不允许直接决定：
 
 目标：让生产问题可发现、可定位、可恢复。
 
-当前状态：最小可观测性首版已完成。后端提供 `GET /api/v2/observability/summary`，按项目权限汇总 worker lease 过期、执行队列积压、凭证过期/禁用/即将过期、测试部署失败四类告警；交付工作台顶部展示运行告警、核心计数和前两条告警摘要。需求、Spec、门禁、上下文、影响分析、任务、执行、日志、MR、部署和验收已具备同一 `trace_id` 首版贯穿能力。结构化指标、集中告警、异常失败率、项目健康后台和历史数据 trace 回填仍待实现。
+当前状态：最小可观测性首版已完成。后端提供 `GET /api/v2/observability/summary`，按项目权限汇总 worker lease 过期、执行队列积压、凭证过期/禁用/即将过期、测试部署失败四类告警；交付工作台顶部展示运行告警、核心计数和前两条告警摘要。需求、Spec、门禁、上下文、影响分析、任务、执行、日志、MR、部署和验收已具备同一 `trace_id` 首版贯穿能力；`scripts/backfill_delivery_trace_ids.py` 可 dry-run 或正式回填历史记录。结构化指标、集中告警、异常失败率和项目健康后台仍待实现。
 
 实施内容：
 
 - 结构化日志。（待增强）
-- trace id 贯穿需求、任务、执行、MR、部署、验收。（新记录首版已完成，历史记录回填待实现）
+- trace id 贯穿需求、任务、执行、MR、部署、验收。（新记录首版和历史记录回填脚本已完成）
 - 指标：任务数量、成功率、失败率、平均耗时、队列积压、自动修复率。（队列、部署、凭证、worker 首版计数已完成）
 - 告警：worker 停止、队列积压、凭证失效、部署失败、异常失败率。（worker lease、队列积压、凭证、部署失败首版已完成）
 - 管理后台查看系统健康。（工作台告警条首版已完成，管理后台聚合待实现）
 
 验收标准：
 
-- 任一失败任务可通过 trace id 找到完整日志。（新记录首版已具备统一 trace id，集中日志检索待增强）
+- 任一失败任务可通过 trace id 找到完整日志。（新记录首版已具备统一 trace id，历史回填脚本已完成，集中日志检索待增强）
 - 队列积压和 worker 异常能告警。（首版已完成）
 - 管理员能看到各项目健康状态。（工作台首版已完成，管理后台聚合待实现）
 
@@ -648,7 +648,7 @@ AI 不允许直接决定：
 4. 完善 SecretStore Provider 消费：Dify/OpenAI/GitLab/webhook 部署已完成首版项目级读取；OpenAI/GitLab 凭证远端探测和失败原因写回首版已完成，Dify 显式安全 URL 探测首版已完成。
 5. 做 S3/S4：用 Symphony 执行低风险任务，并增强真实 GitLab/GitHub MR。
 6. 做 S5：增强真实测试环境部署 Provider，补生产 CI/CD 状态语义适配和环境配置 UI；重新部署、环境 JSON 配置和日志证据首版已完成。
-7. 做 S6：补备份恢复、性能压测、队列恢复、历史 trace 回填和集中告警；Alembic、Docker PostgreSQL 真库演练、trace id 和最小可观测性首版已完成。
+7. 做 S6：补性能压测、集中告警和异常失败率；备份恢复、过期队列恢复、历史 trace 回填、Alembic、Docker PostgreSQL 真库演练、trace id 和最小可观测性首版已完成。
 8. 增强高风险动作二次确认和任务级责任字段。
 
 这 8 项完成后，AI PJM 才具备小团队低风险任务试点价值。企业 SSO、复杂角色、审计报表平台化不作为试点前置条件。

@@ -68,7 +68,65 @@ delivery_* workflow tables include trace_id columns.
 
 This was last verified on 2026-06-04 with Docker PostgreSQL 16 and Alembic head `012`.
 
-## 4. Manual API Verification
+## 4. Backup and Restore Verification
+
+SQLite local backup:
+
+```powershell
+cd backend
+python scripts/database_backup.py --database-url "sqlite+aiosqlite:///./data/ai_pjm.db"
+```
+
+SQLite restore requires an explicit confirmation token:
+
+```powershell
+python scripts/database_restore.py ".runtime/backups/<backup-file>.sqlite" `
+  --database-url "sqlite+aiosqlite:///./data/ai_pjm.db" `
+  --confirm RESTORE_AI_PJM_DATABASE
+```
+
+PostgreSQL backup and restore use `pg_dump` and `pg_restore`; ensure those CLI tools are installed on the host:
+
+```powershell
+python scripts/database_backup.py --database-url "postgresql+asyncpg://user:pass@host:5432/ai_pjm"
+
+python scripts/database_restore.py ".runtime/backups/<backup-file>.dump" `
+  --database-url "postgresql+asyncpg://user:pass@host:5432/ai_pjm" `
+  --confirm RESTORE_AI_PJM_DATABASE
+```
+
+Expected behavior:
+
+```text
+Backup creates a timestamped file under .runtime/backups by default.
+SQLite restore creates a pre-restore safety copy unless --no-safety-copy is used.
+Restore refuses to run without --confirm RESTORE_AI_PJM_DATABASE.
+```
+
+## 5. Trace Backfill Verification
+
+Run dry-run first:
+
+```powershell
+cd backend
+python scripts/backfill_delivery_trace_ids.py --dry-run
+```
+
+If the output is expected, run the real update:
+
+```powershell
+python scripts/backfill_delivery_trace_ids.py
+```
+
+Expected behavior:
+
+```text
+dry_run = true does not write to the database.
+updated reports per-table counts.
+New or backfilled demand, spec, gate, context, impact, task, run, log, MR, deployment, and verification rows share one trace_id per demand.
+```
+
+## 6. Manual API Verification
 
 Start backend only when you intentionally want to test the API:
 
@@ -238,7 +296,7 @@ coding_tasks count = 1
 trace_id is the same across demand, spec, repo context, impact analysis, task, run, and logs
 ```
 
-## 5. High-risk Gate Verification
+## 7. High-risk Gate Verification
 
 Create a high-risk demand:
 
@@ -271,7 +329,7 @@ spec.status = manual_review
 one gate_check.status = manual_required
 ```
 
-## 6. Failed Check and Retry Verification
+## 8. Failed Check and Retry Verification
 
 Use a safe command that fails deterministically:
 
@@ -313,7 +371,7 @@ latest demand detail shows task.status = blocked
 latest demand detail includes a failed self_test_passed gate
 ```
 
-## 7. Manual Approval Verification
+## 9. Manual Approval Verification
 
 Prepare a high-risk task, then approve it:
 
@@ -347,7 +405,7 @@ approval.data.gate_checks includes execution_allowed/passed with evidence_json.a
 
 If a draft coding task already exists before approval, approval promotes the latest draft task to `ready`. The UI should then hide the manual approval panel and enable `Continue`.
 
-## 8. Codex Command Hook Verification
+## 10. Codex Command Hook Verification
 
 The `codex` executor path can optionally run a configured command inside the generated worktree before required checks.
 
@@ -400,7 +458,7 @@ Changed files are checked against `CodingTask.allowed_paths_json` after the Code
 
 If `EXECUTION_CODEX_ENABLED=false`, the executor still creates a worktree and runs required checks, but records `codex_invocation.enabled = false`.
 
-## 9. Automatic Repair Verification
+## 11. Automatic Repair Verification
 
 Automatic repair is available for low-risk tasks after a failed run with failed check evidence.
 
@@ -429,7 +487,7 @@ evidence_json.execution_allowed.repair_context.failed_checks contains failed che
 
 L2/L3 tasks and changed-file violations must not enter automatic repair.
 
-## 10. Merge Request and Review Verification
+## 12. Merge Request and Review Verification
 
 After a task has a succeeded execution run:
 
@@ -468,7 +526,7 @@ gate_check.gate_type = review_passed
 gate_check.status = passed
 ```
 
-## 11. Deployment and Verification Record Verification
+## 13. Deployment and Verification Record Verification
 
 After an MR/PR review has passed:
 
@@ -525,7 +583,7 @@ gate_check.gate_type = verification_passed
 gate_check.status = passed
 ```
 
-## 12. Execution Queue Verification
+## 14. Execution Queue Verification
 
 List recent execution records:
 
@@ -549,7 +607,23 @@ dispatch refuses to start when running executions >= EXECUTION_MAX_CONCURRENCY
 queued runs remain queued when the concurrency limit is reached
 ```
 
-## 13. Dify Provider Configuration Verification
+Recover expired running Symphony runs:
+
+```powershell
+cd backend
+python scripts/recover_symphony_runs.py --limit 100 --status-file .runtime/symphony-recovery-status.json
+```
+
+Expected behavior:
+
+```text
+Expired running Symphony runs are marked failed.
+The coding task is moved to blocked.
+A failed self_test_passed gate and execution log are recorded.
+The status file records recovered_count and recovered_run_ids.
+```
+
+## 15. Dify Provider Configuration Verification
 
 Dify is not enabled by default. To test the provider boundary, configure:
 
@@ -602,7 +676,7 @@ confidence_score: number between 0 and 1
 
 If required configuration or required output fields are missing, the provider must fail clearly and must not silently advance the workflow.
 
-## 14. OpenAI Provider Configuration Verification
+## 16. OpenAI Provider Configuration Verification
 
 OpenAI is not enabled by default. To test the provider boundary, configure:
 
@@ -667,7 +741,7 @@ Dify remote credential probing is intentionally opt-in because calling an arbitr
 $env:DIFY_HEALTH_CHECK_URL="https://<your-dify-host>/<safe-readonly-health-endpoint>"
 ```
 
-## 14.1 Deployment Sync Worker Verification
+## 16.1 Deployment Sync Worker Verification
 
 For webhook deployments that return `pending` with a `status_url`, run a one-shot sync from `backend/`:
 
@@ -691,7 +765,7 @@ Successful or failed deployment status updates write gates, audit events, and re
 The optional status file records state, counts, synced ids, and redacted errors.
 ```
 
-## 15. Auth and Project Access Verification
+## 17. Auth and Project Access Verification
 
 Local development keeps auth disabled unless `AUTH_ENABLED=true`.
 
@@ -718,7 +792,7 @@ Expected behavior:
 - Non-admin users cannot manage users or project membership.
 - The access management page can load project and user data without `failed to fetch`.
 
-## 16. SecretStore Verification
+## 18. SecretStore Verification
 
 SecretStore writes are disabled until a server-side master key is configured.
 
@@ -759,7 +833,7 @@ The secret table shows only masked values, for example ****alue.
 Plaintext secret values never appear after save or refresh.
 ```
 
-## 17. Slice-level Acceptance Criteria
+## 19. Slice-level Acceptance Criteria
 
 ### Slice 0: Baseline
 
@@ -845,7 +919,7 @@ To be added:
 
 - Retry and fallback policy for transient provider failures is available for Dify/OpenAI Spec and impact operations.
 
-## 18. Regression Checklist
+## 20. Regression Checklist
 
 Before every larger change:
 

@@ -45,9 +45,13 @@ from app.modules.delivery.providers.openai import OpenAIWorkflowProvider
 from app.modules.delivery.redaction import REDACTED, redact_text, redact_value
 from app.modules.delivery.repository import delivery_repository
 from app.modules.delivery.service import DeliveryService, delivery_service
+from app.modules.delivery.trace_backfill import backfill_delivery_trace_ids
 from app.modules.secrets.provider_health import check_remote_provider_health
 from app.modules.secrets.service import secret_store_service
 from scripts import deployment_sync_worker
+from scripts.database_backup import backup_database, normalize_database_url_for_cli, sqlite_path_from_url
+from scripts.database_restore import RESTORE_CONFIRMATION, restore_database
+from scripts.recover_symphony_runs import recover_expired_runs
 from scripts.symphony_worker import Worker, quote_arg, tail
 
 
@@ -96,6 +100,48 @@ def test_delivery_v2_execution_gate_blocks_draft_task():
 
     assert decision.status == GateStatus.MANUAL_REQUIRED
     assert decision.evidence["coding_task_status"] == CodingTaskStatus.DRAFT
+
+
+def test_database_backup_helpers_normalize_database_urls(tmp_path):
+    sqlite_file = tmp_path / "app.sqlite"
+    sqlite_url = f"sqlite+aiosqlite:///{sqlite_file}"
+
+    assert sqlite_path_from_url(sqlite_url) == sqlite_file
+    assert (
+        normalize_database_url_for_cli("postgresql+asyncpg://user:pass@127.0.0.1:5432/app")
+        == "postgresql://user:pass@127.0.0.1:5432/app"
+    )
+
+
+def test_sqlite_backup_and_restore_creates_safety_copy(tmp_path):
+    sqlite_file = tmp_path / "app.sqlite"
+    sqlite_file.write_text("before", encoding="utf-8")
+    sqlite_url = f"sqlite+aiosqlite:///{sqlite_file}"
+
+    backup_path = backup_database(sqlite_url, output_dir=tmp_path / "backups")
+    sqlite_file.write_text("after", encoding="utf-8")
+    safety_copy = restore_database(
+        sqlite_url,
+        backup_file=backup_path,
+        confirm=RESTORE_CONFIRMATION,
+    )
+
+    assert sqlite_file.read_text(encoding="utf-8") == "before"
+    assert safety_copy is not None
+    assert safety_copy.read_text(encoding="utf-8") == "after"
+
+
+def test_database_restore_requires_explicit_confirmation(tmp_path):
+    sqlite_file = tmp_path / "app.sqlite"
+    backup_file = tmp_path / "backup.sqlite"
+    backup_file.write_text("backup", encoding="utf-8")
+
+    with pytest.raises(ValueError, match=RESTORE_CONFIRMATION):
+        restore_database(
+            f"sqlite+aiosqlite:///{sqlite_file}",
+            backup_file=backup_file,
+            confirm="wrong",
+        )
 
 
 @pytest.mark.asyncio
@@ -211,6 +257,192 @@ async def test_delivery_trace_id_propagates_across_main_workflow(db_session):
         deploy_record.trace_id,
         verification.trace_id,
     } == {demand.trace_id}
+
+
+@pytest.mark.asyncio
+async def test_delivery_trace_id_backfill_restores_historical_records(db_session):
+    demand = await delivery_repository.create_demand(
+        db_session,
+        raw_input="Backfill old delivery trace ids.",
+        source_type="new_requirement",
+        title="Trace backfill",
+    )
+    spec = await delivery_repository.create_spec_card(
+        db_session,
+        demand_id=demand.id,
+        status=SpecStatus.APPROVED,
+        title="Trace backfill",
+        user_story="As an operator, I can backfill trace ids.",
+        scope="Backfill historical rows.",
+        acceptance_criteria=["Old rows receive trace ids."],
+        constraints=[],
+        risks=[],
+        open_questions=[],
+    )
+    gate = await delivery_repository.create_gate_check(
+        db_session,
+        demand_id=demand.id,
+        gate_type=GateType.SPEC_READY,
+        status=GateStatus.PASSED,
+    )
+    repo_context = await delivery_repository.create_repo_context(
+        db_session,
+        demand_id=demand.id,
+        status=RepoContextStatus.READY,
+        provider="local",
+        summary="Backfill context.",
+        source_refs=[],
+        discovered_files=[],
+        dependency_refs=[],
+        confidence_score=0.9,
+    )
+    impact = await delivery_repository.create_impact_analysis(
+        db_session,
+        demand_id=demand.id,
+        repo_context_id=repo_context.id,
+        status=ImpactAnalysisStatus.READY,
+        provider="local",
+        summary="Backfill impact.",
+        impacted_areas=[],
+        affected_files=[],
+        recommendations=[],
+        risk_level=DeliveryRiskLevel.L1,
+        confidence_score=0.9,
+    )
+    task = await delivery_repository.create_coding_task(
+        db_session,
+        demand_id=demand.id,
+        spec_card_id=spec.id,
+        status=CodingTaskStatus.COMPLETED,
+        title="Trace backfill",
+        task_prompt="Backfill trace ids.",
+        allowed_paths=[],
+        forbidden_actions=[],
+        required_checks=[],
+        expected_evidence=[],
+    )
+    run = await delivery_repository.create_execution_run(
+        db_session,
+        coding_task_id=task.id,
+        status=ExecutionRunStatus.SUCCEEDED,
+        executor_type="codex",
+        trigger_mode="manual",
+    )
+    log = await delivery_repository.create_execution_log(
+        db_session,
+        execution_run_id=run.id,
+        level=ExecutionLogLevel.INFO,
+        message="Backfill log.",
+    )
+    merge_request = await delivery_repository.create_merge_request_record(
+        db_session,
+        coding_task_id=task.id,
+        execution_run_id=run.id,
+        provider="local",
+        status=MergeRequestStatus.REVIEW_PASSED,
+        review_status=ReviewStatus.PASSED,
+        title="Trace backfill",
+        source_branch="codex/backfill-trace",
+        target_branch="main",
+    )
+    deploy_record = await delivery_repository.create_deploy_record(
+        db_session,
+        merge_request_id=merge_request.id,
+        coding_task_id=task.id,
+        provider="local",
+        status=DeploymentStatus.DEPLOYED,
+        environment="test",
+    )
+    verification = await delivery_repository.create_verification_record(
+        db_session,
+        deploy_record_id=deploy_record.id,
+        status=VerificationStatus.PASSED,
+    )
+
+    historical_rows = [
+        demand,
+        spec,
+        gate,
+        repo_context,
+        impact,
+        task,
+        run,
+        log,
+        merge_request,
+        deploy_record,
+        verification,
+    ]
+    for row in historical_rows:
+        row.trace_id = None
+    await db_session.flush()
+
+    dry_run = await backfill_delivery_trace_ids(db_session, dry_run=True)
+
+    assert dry_run.dry_run is True
+    assert dry_run.total_updated == len(historical_rows)
+    assert all(row.trace_id is None for row in historical_rows)
+
+    result = await backfill_delivery_trace_ids(db_session)
+
+    assert result.dry_run is False
+    assert result.total_updated == len(historical_rows)
+    assert demand.trace_id
+    assert {row.trace_id for row in historical_rows} == {demand.trace_id}
+
+
+@pytest.mark.asyncio
+async def test_recover_symphony_runs_marks_expired_running_runs_failed(db_session):
+    demand = await delivery_repository.create_demand(
+        db_session,
+        raw_input="Recover expired Symphony run.",
+        source_type="new_requirement",
+        title="Recover expired run",
+    )
+    spec = await delivery_repository.create_spec_card(
+        db_session,
+        demand_id=demand.id,
+        status=SpecStatus.APPROVED,
+        title="Recover expired run",
+        user_story="As an operator, expired worker leases are recovered.",
+        scope="Queue recovery.",
+        acceptance_criteria=["Expired running run is failed."],
+        constraints=[],
+        risks=[],
+        open_questions=[],
+    )
+    task = await delivery_repository.create_coding_task(
+        db_session,
+        demand_id=demand.id,
+        spec_card_id=spec.id,
+        status=CodingTaskStatus.RUNNING,
+        title="Recover expired run",
+        task_prompt="Recover expired run.",
+        allowed_paths=[],
+        forbidden_actions=[],
+        required_checks=[],
+        expected_evidence=[],
+    )
+    run = await delivery_repository.create_execution_run(
+        db_session,
+        coding_task_id=task.id,
+        status=ExecutionRunStatus.RUNNING,
+        executor_type="symphony",
+        trigger_mode="manual",
+        evidence_json={
+            "symphony_bridge": {
+                "worker_id": "worker-expired",
+                "lease_expires_at": (utc_now() - timedelta(minutes=5)).isoformat(),
+            }
+        },
+    )
+
+    summary = await recover_expired_runs(db_session, limit=10)
+
+    assert summary["recovered_count"] == 1
+    assert summary["recovered_run_ids"] == [run.id]
+    assert run.status == ExecutionRunStatus.FAILED
+    assert task.status == CodingTaskStatus.BLOCKED
+    assert run.evidence_json["symphony_bridge"]["status"] == "lease_expired"
 
 
 def test_symphony_executor_is_deferred_queue_adapter():
