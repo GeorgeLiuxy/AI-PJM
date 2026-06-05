@@ -84,7 +84,7 @@
 
 目标：先不用 Dify，先把“项目代码、文档、历史需求、测试命令”在本地收集准。
 
-状态：初版已实现。当前 `local` provider 会扫描仓库结构、文档、前后端配置、测试目录、依赖引用和需求相关候选文件；创建需求时会检索同项目近期需求，把 Top 相似历史需求写入 `context_payload.historical_demands`，Dify/OpenAI/Local Provider 都能沿用这份上下文。后续仍需继续增强语义匹配。
+状态：初版已实现。当前 `local` provider 会扫描仓库结构、文档、前后端配置、测试目录、依赖引用和需求相关候选文件；创建需求时会检索同项目近期需求，把 Top 相似历史需求写入 `context_payload.historical_demands`，Dify/OpenAI/Local Provider 都能沿用这份上下文。`local` provider 已基于需求文本和历史需求摘要做路径 + 文件内容的轻量 token 匹配；如需更强召回，后续再接入 embedding/向量检索。
 
 任务：
 

@@ -51,7 +51,7 @@ AI PJM 是一个 AI 辅助工程交付编排平台。它不是通用项目管理
 
 尚未实现或未生产化：
 
-- 真实本地代码上下文收集、任务范围推断和同项目历史需求上下文已有首版，仍待增强语义匹配。
+- 真实本地代码上下文收集、任务范围推断、同项目历史需求上下文和轻量内容匹配已有首版；如需更强召回，后续再接入 embedding/向量检索。
 - OpenAI Provider 首版已实现；Dify/OpenAI Provider 已有平台级重试和本地规则降级首版，OpenAI/GitLab/GitHub 凭证已有只读远端探测首版，Dify 支持显式安全 URL 探测；仍需生产联调、质量评估和监控。
 - Codex CLI 首版已可用，但仍需继续做自动修复闭环、性能优化和生产化运维配置。本机 WindowsApps 下的 `codex.exe` 仍会返回 `Access is denied`，当前使用全局 npm 版 `@openai/codex`。
 - 当前 MR/PR、测试环境部署和验收已有本地记录闭环；GitLab MR、GitHub PR 和 webhook 部署已有首版 provider，创建 MR/PR 前可自动推送执行分支，并可同步远端评审评论、CI/check 状态。GitLab/GitHub webhook 可更新原 MR/PR 记录；评审阻塞可触发自动修复 run，修复成功后会把修复分支推回原远端源分支；webhook 部署返回 `status_url` 时可手动或通过后台 worker 同步部署状态，失败部署可从工作台重新部署。

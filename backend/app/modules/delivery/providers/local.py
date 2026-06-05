@@ -70,12 +70,13 @@ class LocalWorkflowProvider(MockWorkflowProvider):
         root = self._workspace_root()
         files = self._list_candidate_files(root)
         payload = demand.context_payload or {}
+        demand_text = self._contextual_demand_text(demand)
         explicit_files = self._as_string_list(payload.get("files"))
         explicit_sources = self._as_string_list(payload.get("sources"))
         explicit_dependencies = self._as_string_list(payload.get("dependencies"))
 
         path_hints = self._existing_paths(root, self._extract_path_hints(demand.raw_input), files)
-        matched_files = self._match_demand_files(demand.raw_input, files)
+        matched_files = self._match_demand_files(demand_text, files, root=root)
         important_files = self._select_important_files(files)
         discovered_files = self._dedupe([*explicit_files, *path_hints, *matched_files, *important_files])[:40]
 
@@ -111,6 +112,8 @@ class LocalWorkflowProvider(MockWorkflowProvider):
                 "workspace_root": str(root),
                 "file_count": len(files),
                 "scanner": "local_filesystem",
+                "matcher": "path_and_content_tokens",
+                "historical_context_items": self._historical_context_count(payload),
             },
         )
 
@@ -195,35 +198,91 @@ class LocalWorkflowProvider(MockWorkflowProvider):
                 existing.append(normalized)
         return existing
 
-    def _match_demand_files(self, raw_input: str, files: list[str]) -> list[str]:
+    def _match_demand_files(self, raw_input: str, files: list[str], root: Path | None = None) -> list[str]:
         normalized = raw_input.lower()
         keywords = self._keywords(raw_input)
         domain_hints = self._domain_hint_files(normalized, files)
-        scored: list[tuple[int, str]] = []
+        scored: dict[str, float] = {}
 
         for path in files:
             haystack = path.lower()
             score = sum(1 for keyword in keywords if keyword in haystack)
             if score:
-                scored.append((score, path))
+                scored[path] = max(scored.get(path, 0), float(score))
 
-        scored.sort(key=lambda item: (-item[0], item[1]))
-        return self._dedupe([*domain_hints, *[path for _, path in scored]])[:24]
+        if root:
+            for path, score in self._content_matched_files(root, files, keywords):
+                scored[path] = max(scored.get(path, 0), score)
+
+        ordered = sorted(scored.items(), key=lambda item: (-item[1], item[0]))
+        return self._dedupe([*domain_hints, *[path for path, _ in ordered]])[:24]
 
     def _keywords(self, raw_input: str) -> list[str]:
-        words = re.findall(r"[A-Za-z0-9_]{3,}|[\u4e00-\u9fff]{2,}", raw_input.lower())
+        normalized = raw_input.lower()
+        words = re.findall(r"[a-z0-9_]{3,}", normalized)
+        chinese_chunks = re.findall(r"[\u4e00-\u9fff]+", normalized)
+        for chunk in chinese_chunks:
+            if len(chunk) >= 2:
+                words.append(chunk)
+                words.extend(f"{left}{right}" for left, right in zip(chunk, chunk[1:]))
         stop_words = {
             "add",
             "change",
+            "create",
+            "demand",
+            "delivery",
+            "feature",
+            "from",
+            "improve",
+            "into",
+            "requirement",
+            "status",
             "with",
             "that",
             "this",
-            "from",
-            "into",
-            "feature",
-            "status",
+            "update",
         }
-        return [word for word in words if word not in stop_words]
+        return self._dedupe([word for word in words if word not in stop_words])
+
+    def _content_matched_files(
+        self,
+        root: Path,
+        files: list[str],
+        keywords: list[str],
+        limit: int = 800,
+    ) -> list[tuple[str, float]]:
+        if not keywords:
+            return []
+
+        keyword_set = set(keywords)
+        scored: list[tuple[str, float]] = []
+        for path in self._content_scan_candidates(files)[:limit]:
+            sample = self._read_text_sample(root / path)
+            if not sample:
+                continue
+            haystack = f"{path.lower()}\n{sample.lower()}"
+            matches = [keyword for keyword in keyword_set if keyword in haystack]
+            if not matches:
+                continue
+            path_bonus = sum(0.5 for keyword in matches if keyword in path.lower())
+            coverage = len(matches) / len(keyword_set)
+            score = len(matches) + path_bonus + coverage
+            scored.append((path, score))
+
+        scored.sort(key=lambda item: (-item[1], item[0]))
+        return scored[:24]
+
+    def _content_scan_candidates(self, files: list[str]) -> list[str]:
+        docs = [path for path in files if path.startswith(self._doc_prefixes) and path.endswith(".md")]
+        important = [path for path in files if path in self._important_files]
+        source = [path for path in files if path not in set(docs + important)]
+        return self._dedupe([*docs, *important, *source])
+
+    def _read_text_sample(self, path: Path, max_chars: int = 16000) -> str:
+        try:
+            return path.read_text(encoding="utf-8", errors="ignore")[:max_chars]
+        except OSError:
+            return ""
 
     def _domain_hint_files(self, normalized_input: str, files: list[str]) -> list[str]:
         hints: list[str] = []
@@ -299,11 +358,39 @@ class LocalWorkflowProvider(MockWorkflowProvider):
                     " ".join(spec.acceptance_criteria_json or []),
                 ]
             )
-        demand_text = f"{demand.raw_input} {spec_text}".strip()
+        demand_text = f"{self._contextual_demand_text(demand)} {spec_text}".strip()
         matched_files = self._match_demand_files(demand_text, discovered_files)
         if matched_files:
             return matched_files[:16]
         return discovered_files[:8]
+
+    def _contextual_demand_text(self, demand: DemandItem) -> str:
+        payload = demand.context_payload or {}
+        parts = [demand.title or "", demand.raw_input or ""]
+        for item in self._historical_context_items(payload):
+            if not isinstance(item, dict):
+                continue
+            parts.extend(
+                [
+                    str(item.get("title") or ""),
+                    str(item.get("summary") or ""),
+                ]
+            )
+        return "\n".join(part for part in parts if part)
+
+    def _historical_context_count(self, payload: dict[str, Any]) -> int:
+        return len(self._historical_context_items(payload))
+
+    def _historical_context_items(self, payload: dict[str, Any]) -> list[Any]:
+        items: list[Any] = []
+        for key in ("historical_demands", "generated_historical_demands"):
+            value = payload.get(key)
+            if not isinstance(value, dict):
+                continue
+            raw_items = value.get("items")
+            if isinstance(raw_items, list):
+                items.extend(raw_items[:5])
+        return items
 
     def _impacted_areas(self, affected_files: list[str]) -> list[str]:
         areas: list[str] = []

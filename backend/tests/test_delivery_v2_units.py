@@ -4076,6 +4076,42 @@ async def test_local_provider_collects_real_workspace_context(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_local_provider_uses_history_and_content_for_context_matching(tmp_path):
+    (tmp_path / "backend" / "app" / "modules" / "delivery").mkdir(parents=True)
+    (tmp_path / "backend" / "app" / "modules" / "delivery" / "a.py").write_text(
+        '"""Historical demand similarity matcher for repository context collection."""\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "backend" / "app" / "modules" / "delivery" / "unrelated.py").write_text(
+        '"""Queue lease maintenance."""\n',
+        encoding="utf-8",
+    )
+
+    demand = DemandItem(
+        raw_input="Reuse previous context collection evidence.",
+        source_type="new_requirement",
+        title="Context collection",
+        context_payload={
+            "historical_demands": {
+                "items": [
+                    {
+                        "title": "Historical similarity matcher",
+                        "summary": "Match repository files from historical demand similarity evidence.",
+                    }
+                ]
+            }
+        },
+    )
+
+    draft = await LocalWorkflowProvider(workspace_root=tmp_path).collect_repo_context(demand)
+
+    assert "backend/app/modules/delivery/a.py" in draft.discovered_files
+    assert "backend/app/modules/delivery/unrelated.py" not in draft.discovered_files
+    assert draft.provider_metadata["matcher"] == "path_and_content_tokens"
+    assert draft.provider_metadata["historical_context_items"] == 1
+
+
+@pytest.mark.asyncio
 async def test_local_provider_analyzes_impact_from_repo_context():
     demand = DemandItem(
         raw_input="Update the delivery dashboard page and backend delivery status API.",
