@@ -1,10 +1,12 @@
 """Delivery v2 business logic."""
 
 import asyncio
+import hashlib
+import hmac
 import json
 import subprocess
 from dataclasses import replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Awaitable, Callable, TypeVar
 
@@ -14,6 +16,7 @@ from app.core.config import settings
 from app.core.db import utc_now
 from app.core.exceptions import AIServiceException, BadRequestException, NotFoundException
 from app.modules.audit.repository import audit_repository
+from app.modules.auth.repository import auth_repository
 from app.modules.delivery.enums import (
     CodingTaskStatus,
     DeliveryRiskLevel,
@@ -146,6 +149,20 @@ class DeliveryService:
                 provider=normalized,
                 secret_name=settings.gitlab_token_secret_name,
                 settings_name="GITLAB_TOKEN",
+            )
+        if normalized == "github":
+            credential = await resolve_provider_credential(
+                db,
+                project_id=demand.project_id,
+                provider=normalized,
+                secret_name=settings.github_token_secret_name,
+                settings_value=settings.github_token,
+            )
+            return require_provider_credential(
+                credential,
+                provider=normalized,
+                secret_name=settings.github_token_secret_name,
+                settings_name="GITHUB_TOKEN",
             )
         return None
 
@@ -320,6 +337,27 @@ class DeliveryService:
             limit=sample_limit,
             project_ids=project_ids,
         )
+        terminal_statuses = ["succeeded", "failed", "blocked", "cancelled"]
+        failed_execution_statuses = ["failed", "blocked", "cancelled"]
+        failure_rate_window_minutes = max(1, settings.observability_failure_rate_window_minutes)
+        failure_rate_since = now - timedelta(minutes=failure_rate_window_minutes)
+        recent_execution_count = await delivery_repository.count_execution_runs(
+            db,
+            statuses=terminal_statuses,
+            project_ids=project_ids,
+            updated_since=failure_rate_since,
+        )
+        recent_failed_execution_count = await delivery_repository.count_execution_runs(
+            db,
+            statuses=failed_execution_statuses,
+            project_ids=project_ids,
+            updated_since=failure_rate_since,
+        )
+        recent_failure_rate_percent = (
+            int(round((recent_failed_execution_count / recent_execution_count) * 100))
+            if recent_execution_count
+            else 0
+        )
 
         secrets = await secret_repository.list_secrets(
             db,
@@ -404,6 +442,32 @@ class DeliveryService:
                 "entity_ids": [record.id for record in failed_deploys],
             })
 
+        if (
+            recent_execution_count >= settings.observability_failure_rate_min_runs
+            and recent_failure_rate_percent >= settings.observability_failure_rate_threshold_percent
+        ):
+            failed_run_samples = await delivery_repository.list_execution_runs(
+                db,
+                statuses=failed_execution_statuses,
+                limit=sample_limit,
+                project_ids=project_ids,
+                updated_since=failure_rate_since,
+            )
+            alerts.append({
+                "id": "execution-failure-rate",
+                "category": "execution",
+                "severity": "critical",
+                "title": "执行失败率异常",
+                "summary": (
+                    f"近 {failure_rate_window_minutes} 分钟 {recent_execution_count} 次执行中 "
+                    f"{recent_failed_execution_count} 次失败，失败率 {recent_failure_rate_percent}%，"
+                    f"已达到阈值 {settings.observability_failure_rate_threshold_percent}%。"
+                ),
+                "count": recent_failed_execution_count,
+                "entity_type": "execution_run",
+                "entity_ids": [run.id for run in failed_run_samples],
+            })
+
         status_value = "healthy"
         if any(alert["severity"] == "critical" for alert in alerts):
             status_value = "critical"
@@ -420,8 +484,110 @@ class DeliveryService:
                 "failed_deployments": failed_deploy_count,
                 "unhealthy_secrets": len(unhealthy_secrets),
                 "expiring_secrets": len(expiring_secrets),
+                "recent_execution_runs": recent_execution_count,
+                "recent_failed_execution_runs": recent_failed_execution_count,
+                "recent_execution_failure_rate_percent": recent_failure_rate_percent,
             },
             "alerts": alerts,
+        }
+
+    async def get_project_observability_summaries(
+        self,
+        db: AsyncSession,
+        project_ids: list[int] | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[dict]:
+        if project_ids is not None and not project_ids:
+            return []
+
+        if project_ids is None:
+            projects = await auth_repository.list_projects(
+                db,
+                limit=min(max(limit, 1), 200),
+                offset=max(offset, 0),
+            )
+        else:
+            projects = []
+            for project_id in project_ids:
+                project = await auth_repository.get_project(db, project_id)
+                if project:
+                    projects.append(project)
+
+        summaries = []
+        for project in projects:
+            summary = await self.get_observability_summary(db, project_ids=[project.id])
+            alerts = summary["alerts"]
+            summaries.append({
+                "project_id": project.id,
+                "project_key": project.key,
+                "project_name": project.name,
+                "status": summary["status"],
+                "generated_at": summary["generated_at"],
+                "alert_count": len(alerts),
+                "critical_alerts": len([alert for alert in alerts if alert["severity"] == "critical"]),
+                "warning_alerts": len([alert for alert in alerts if alert["severity"] == "warning"]),
+                "metrics": summary["metrics"],
+                "top_alerts": alerts[:3],
+            })
+        return summaries
+
+    async def get_project_deployment_environment_config(
+        self,
+        db: AsyncSession,
+        project_id: int,
+    ) -> dict:
+        project = await auth_repository.get_project(db, project_id)
+        if not project:
+            raise NotFoundException(f"Project {project_id} not found")
+        return {
+            "project_id": project.id,
+            "environments": self._project_deployment_environments(project.settings_json),
+        }
+
+    async def update_project_deployment_environment_config(
+        self,
+        db: AsyncSession,
+        project_id: int,
+        environments: dict,
+        actor_user_id: int | None = None,
+        actor_ref: str | None = None,
+    ) -> dict:
+        project = await auth_repository.get_project(db, project_id)
+        if not project:
+            raise NotFoundException(f"Project {project_id} not found")
+
+        normalized_environments = self._normalize_deployment_environment_config(environments)
+        settings_json = dict(project.settings_json or {})
+        delivery_settings = settings_json.get("delivery")
+        if delivery_settings is None:
+            delivery_settings = {}
+        if not isinstance(delivery_settings, dict):
+            raise BadRequestException("Project delivery settings must be a JSON object")
+        delivery_settings = dict(delivery_settings)
+        delivery_settings["deployment_environments"] = normalized_environments
+        settings_json["delivery"] = delivery_settings
+
+        await auth_repository.update_project(db, project, settings_json=settings_json)
+        await audit_repository.create_event(
+            db,
+            action="delivery.project_deployment_environments_updated",
+            entity_type="project",
+            entity_id=project.id,
+            project_id=project.id,
+            actor_user_id=actor_user_id,
+            actor_ref=actor_ref or "system",
+            summary=f"Project deployment environments updated: {project.name}",
+            metadata={"environments": sorted(normalized_environments.keys())},
+        )
+        await db.commit()
+
+        loaded_project = await auth_repository.get_project(db, project.id)
+        if not loaded_project:
+            raise NotFoundException(f"Project {project_id} not found")
+        return {
+            "project_id": loaded_project.id,
+            "environments": self._project_deployment_environments(loaded_project.settings_json),
         }
 
     async def get_merge_request_record(
@@ -919,11 +1085,13 @@ class DeliveryService:
             await delivery_repository.update_coding_task_status(db, task, CodingTaskStatus.READY)
             await db.commit()
 
+        retry_context = self._build_retry_context(task)
         queued_run = await self.create_execution_run(
             db=db,
             coding_task_id=coding_task_id,
             executor_type=executor_type,
             trigger_mode=trigger_mode,
+            extra_evidence={"retry_context": retry_context} if retry_context else None,
         )
         if queued_run.status != ExecutionRunStatus.QUEUED:
             return queued_run
@@ -1147,12 +1315,14 @@ class DeliveryService:
             run=run,
             source_branch=source_branch,
         )
+        evidence_links = self._merge_request_evidence_links(demand=demand, task=task, run=run)
         description = self._build_merge_request_description(
             demand=demand,
             task=task,
             run=run,
             source_branch=source_branch,
             target_branch=resolved_target_branch,
+            evidence_links=evidence_links,
         )
         client = get_merge_request_client(provider, credential=credential)
         draft = await client.create_merge_request(
@@ -1173,6 +1343,7 @@ class DeliveryService:
             "created_by_user_id": actor_user_id,
             "created_by_ref": actor_ref or "system",
             "git_push": git_push_evidence,
+            "evidence_links": evidence_links,
             "provider_evidence": draft.evidence,
         }
         record = await delivery_repository.create_merge_request_record(
@@ -1402,6 +1573,250 @@ class DeliveryService:
             raise NotFoundException(f"Merge request record {record.id} not found")
         return loaded_record
 
+    async def handle_gitlab_webhook(
+        self,
+        db: AsyncSession,
+        payload: dict,
+        token: str | None,
+    ) -> dict:
+        expected_token = settings.gitlab_webhook_secret_token.strip()
+        if not expected_token:
+            raise BadRequestException("GitLab webhook is not configured: GITLAB_WEBHOOK_SECRET_TOKEN")
+        if not token or not hmac.compare_digest(token, expected_token):
+            raise BadRequestException("Invalid GitLab webhook token")
+        if not isinstance(payload, dict):
+            raise BadRequestException("GitLab webhook payload must be a JSON object")
+
+        iid = self._gitlab_webhook_iid(payload)
+        object_kind = self._str_value(payload.get("object_kind")) or self._str_value(payload.get("event_type"))
+        if not iid:
+            return {
+                "processed": False,
+                "reason": "merge_request_iid_not_found",
+                "object_kind": object_kind,
+            }
+
+        record = await delivery_repository.get_merge_request_by_provider_external_id(db, "gitlab", iid)
+        if not record:
+            return {
+                "processed": False,
+                "reason": "merge_request_record_not_found",
+                "object_kind": object_kind,
+                "external_id": iid,
+            }
+
+        task = await delivery_repository.get_coding_task(db, record.coding_task_id)
+        if not task:
+            raise NotFoundException(f"Coding task {record.coding_task_id} not found")
+        demand = await delivery_repository.get_demand(db, task.demand_id)
+        if not demand:
+            raise NotFoundException(f"Demand {task.demand_id} not found")
+
+        update = self._gitlab_webhook_review_update(payload)
+        reviewed_at = utc_now()
+        review_status_value = self._enum_or_str(update["review_status"])
+        status_value = self._enum_or_str(update["status"])
+        summary = redact_text(update["summary"])
+        comments = redact_value(update["comments"])
+        blockers = [redact_text(item) for item in update["blocking_issues"]]
+        webhook_event = redact_value(update["event"])
+        existing_evidence = record.evidence_json or {}
+        if not isinstance(existing_evidence, dict):
+            existing_evidence = {}
+        gitlab_webhook_evidence = (
+            existing_evidence.get("gitlab_webhook") if isinstance(existing_evidence, dict) else {}
+        )
+        if not isinstance(gitlab_webhook_evidence, dict):
+            gitlab_webhook_evidence = {}
+        events = gitlab_webhook_evidence.get("events")
+        if not isinstance(events, list):
+            events = []
+        events = [*events, webhook_event][-20:]
+        evidence = {
+            **existing_evidence,
+            "gitlab_webhook": {
+                "last_event": webhook_event,
+                "events": events,
+            },
+            "remote_review_synced_at": reviewed_at.isoformat(),
+            "remote_review_synced_by_ref": "gitlab-webhook",
+        }
+        existing_comments = record.review_comments_json or []
+        merged_comments = [*existing_comments, *comments][-50:] if comments else existing_comments
+
+        await delivery_repository.update_merge_request_record(
+            db,
+            record,
+            status=status_value,
+            review_status=review_status_value,
+            review_summary=summary,
+            review_comments_json=merged_comments,
+            evidence_json=evidence,
+            reviewed_by_ref="gitlab-webhook",
+            reviewed_at=reviewed_at,
+        )
+        await delivery_repository.create_gate_check(
+            db=db,
+            demand_id=demand.id,
+            gate_type=GateType.REVIEW_PASSED,
+            status=self._review_gate_status(review_status_value),
+            reason=summary,
+            evidence_json={
+                "merge_request_id": record.id,
+                "review_status": review_status_value,
+                "blocking_issues": blockers,
+                "gitlab_webhook": webhook_event,
+            },
+        )
+        await audit_repository.create_event(
+            db,
+            action="delivery.merge_request_gitlab_webhook_received",
+            entity_type="merge_request",
+            entity_id=record.id,
+            project_id=demand.project_id,
+            actor_ref="gitlab-webhook",
+            summary=summary,
+            metadata={
+                "review_status": review_status_value,
+                "provider": record.provider,
+                "object_kind": object_kind,
+                "external_id": iid,
+            },
+        )
+        await db.commit()
+        loaded_record = await delivery_repository.get_merge_request_record(db, record.id)
+        if not loaded_record:
+            raise NotFoundException(f"Merge request record {record.id} not found")
+        return {
+            "processed": True,
+            "reason": "updated",
+            "object_kind": object_kind,
+            "external_id": iid,
+            "merge_request": loaded_record,
+        }
+
+    async def handle_github_webhook(
+        self,
+        db: AsyncSession,
+        payload: dict,
+        signature: str | None,
+        event_type: str | None,
+        body: bytes,
+    ) -> dict:
+        expected_secret = settings.github_webhook_secret.strip()
+        if not expected_secret:
+            raise BadRequestException("GitHub webhook is not configured: GITHUB_WEBHOOK_SECRET")
+        if not signature or not self._github_webhook_signature_valid(signature, body, expected_secret):
+            raise BadRequestException("Invalid GitHub webhook signature")
+        if not isinstance(payload, dict):
+            raise BadRequestException("GitHub webhook payload must be a JSON object")
+
+        normalized_event_type = self._str_value(event_type) or self._str_value(payload.get("event_type")) or "unknown"
+        number = self._github_webhook_number(payload)
+        if not number:
+            return {
+                "processed": False,
+                "reason": "pull_request_number_not_found",
+                "event_type": normalized_event_type,
+            }
+
+        record = await delivery_repository.get_merge_request_by_provider_external_id(db, "github", number)
+        if not record:
+            return {
+                "processed": False,
+                "reason": "pull_request_record_not_found",
+                "event_type": normalized_event_type,
+                "external_id": number,
+            }
+
+        task = await delivery_repository.get_coding_task(db, record.coding_task_id)
+        if not task:
+            raise NotFoundException(f"Coding task {record.coding_task_id} not found")
+        demand = await delivery_repository.get_demand(db, task.demand_id)
+        if not demand:
+            raise NotFoundException(f"Demand {task.demand_id} not found")
+
+        update = self._github_webhook_review_update(payload, normalized_event_type)
+        reviewed_at = utc_now()
+        review_status_value = self._enum_or_str(update["review_status"])
+        status_value = self._enum_or_str(update["status"])
+        summary = redact_text(update["summary"])
+        comments = redact_value(update["comments"])
+        blockers = [redact_text(item) for item in update["blocking_issues"]]
+        webhook_event = redact_value(update["event"])
+        existing_evidence = record.evidence_json or {}
+        if not isinstance(existing_evidence, dict):
+            existing_evidence = {}
+        github_webhook_evidence = existing_evidence.get("github_webhook")
+        if not isinstance(github_webhook_evidence, dict):
+            github_webhook_evidence = {}
+        events = github_webhook_evidence.get("events")
+        if not isinstance(events, list):
+            events = []
+        events = [*events, webhook_event][-20:]
+        evidence = {
+            **existing_evidence,
+            "github_webhook": {
+                "last_event": webhook_event,
+                "events": events,
+            },
+            "remote_review_synced_at": reviewed_at.isoformat(),
+            "remote_review_synced_by_ref": "github-webhook",
+        }
+        existing_comments = record.review_comments_json or []
+        merged_comments = [*existing_comments, *comments][-50:] if comments else existing_comments
+
+        await delivery_repository.update_merge_request_record(
+            db,
+            record,
+            status=status_value,
+            review_status=review_status_value,
+            review_summary=summary,
+            review_comments_json=merged_comments,
+            evidence_json=evidence,
+            reviewed_by_ref="github-webhook",
+            reviewed_at=reviewed_at,
+        )
+        await delivery_repository.create_gate_check(
+            db=db,
+            demand_id=demand.id,
+            gate_type=GateType.REVIEW_PASSED,
+            status=self._review_gate_status(review_status_value),
+            reason=summary,
+            evidence_json={
+                "merge_request_id": record.id,
+                "review_status": review_status_value,
+                "blocking_issues": blockers,
+                "github_webhook": webhook_event,
+            },
+        )
+        await audit_repository.create_event(
+            db,
+            action="delivery.merge_request_github_webhook_received",
+            entity_type="merge_request",
+            entity_id=record.id,
+            project_id=demand.project_id,
+            actor_ref="github-webhook",
+            summary=summary,
+            metadata={
+                "review_status": review_status_value,
+                "provider": record.provider,
+                "event_type": normalized_event_type,
+                "external_id": number,
+            },
+        )
+        await db.commit()
+        loaded_record = await delivery_repository.get_merge_request_record(db, record.id)
+        if not loaded_record:
+            raise NotFoundException(f"Merge request record {record.id} not found")
+        return {
+            "processed": True,
+            "reason": "updated",
+            "event_type": normalized_event_type,
+            "external_id": number,
+            "merge_request": loaded_record,
+        }
+
     async def create_deploy_record(
         self,
         db: AsyncSession,
@@ -1425,7 +1840,17 @@ class DeliveryService:
         if not demand:
             raise NotFoundException(f"Demand {task.demand_id} not found")
 
-        configured_url, environment_config = self._deployment_environment_settings(environment)
+        project_settings = None
+        if demand.project_id is not None:
+            project = await auth_repository.get_project(db, demand.project_id)
+            if not project:
+                raise NotFoundException(f"Project {demand.project_id} not found")
+            project_settings = project.settings_json
+
+        configured_url, environment_config = self._deployment_environment_settings(
+            environment,
+            project_settings=project_settings,
+        )
         requested_url = url or configured_url
         credential = await self._deployment_credential_for_provider(db, demand, provider)
         client = get_deploy_client(provider, credential=credential)
@@ -2495,7 +2920,341 @@ class DeliveryService:
             return GateStatus.FAILED
         return GateStatus.MANUAL_REQUIRED
 
-    def _deployment_environment_settings(self, environment: str) -> tuple[str | None, dict]:
+    def _gitlab_webhook_iid(self, payload: dict) -> str | None:
+        attrs = payload.get("object_attributes")
+        merge_request = payload.get("merge_request")
+        candidates = []
+        if isinstance(attrs, dict):
+            candidates.extend([
+                attrs.get("iid"),
+                attrs.get("merge_request_iid"),
+                attrs.get("target_iid"),
+                attrs.get("noteable_iid"),
+            ])
+        if isinstance(merge_request, dict):
+            candidates.extend([merge_request.get("iid"), merge_request.get("id")])
+        merge_requests = payload.get("merge_requests")
+        if isinstance(merge_requests, list):
+            for item in merge_requests:
+                if isinstance(item, dict):
+                    candidates.extend([item.get("iid"), item.get("id")])
+        for key in ("merge_request_iid", "mr_iid", "iid"):
+            candidates.append(payload.get(key))
+        for value in candidates:
+            text = self._str_value(value)
+            if text:
+                return text
+        return None
+
+    def _gitlab_webhook_review_update(self, payload: dict) -> dict:
+        object_kind = self._str_value(payload.get("object_kind")) or self._str_value(payload.get("event_type")) or "unknown"
+        attrs = payload.get("object_attributes")
+        attrs = attrs if isinstance(attrs, dict) else {}
+        event = {
+            "received_at": utc_now().isoformat(),
+            "object_kind": object_kind,
+            "action": self._str_value(attrs.get("action")),
+            "state": self._str_value(attrs.get("state")),
+            "status": self._str_value(attrs.get("status")),
+            "iid": self._gitlab_webhook_iid(payload),
+        }
+        status = MergeRequestStatus.REVIEWING
+        review_status = ReviewStatus.PENDING
+        blocking_issues: list[str] = []
+        comments: list[dict] = []
+        summary = f"GitLab webhook received: {object_kind}."
+
+        if object_kind == "merge_request":
+            state = (self._str_value(attrs.get("state")) or "").lower()
+            detailed_status = (self._str_value(attrs.get("detailed_merge_status")) or "").lower()
+            event["detailed_merge_status"] = detailed_status
+            if state == "closed":
+                status = MergeRequestStatus.CLOSED
+                review_status = ReviewStatus.BLOCKING
+                blocking_issues.append("Merge request is closed.")
+                summary = "GitLab webhook marked the merge request closed."
+            elif state == "merged":
+                status = MergeRequestStatus.REVIEW_PASSED
+                review_status = ReviewStatus.PASSED
+                summary = "GitLab webhook marked the merge request merged."
+            elif detailed_status in {"mergeable", "can_be_merged"}:
+                summary = "GitLab webhook marked the merge request mergeable."
+            else:
+                summary = f"GitLab webhook updated merge request state: {state or detailed_status or 'unknown'}."
+
+        elif object_kind == "pipeline":
+            pipeline_status = (self._str_value(attrs.get("status")) or "").lower()
+            if pipeline_status in {"success", "passed"}:
+                status = MergeRequestStatus.REVIEW_PASSED
+                review_status = ReviewStatus.PASSED
+                summary = "GitLab webhook reported pipeline success."
+            elif pipeline_status in {"failed", "canceled", "cancelled", "skipped"}:
+                status = MergeRequestStatus.REVIEW_BLOCKED
+                review_status = ReviewStatus.BLOCKING
+                blocking_issues.append(f"GitLab pipeline status is {pipeline_status}.")
+                summary = f"GitLab webhook reported pipeline {pipeline_status}."
+            else:
+                summary = f"GitLab webhook reported pipeline {pipeline_status or 'pending'}."
+
+        elif object_kind == "note":
+            note = redact_text(self._str_value(attrs.get("note")) or "")
+            if note:
+                comments.append({
+                    "body": note,
+                    "author": self._gitlab_webhook_user_name(payload),
+                    "created_at": self._str_value(attrs.get("created_at")),
+                    "url": self._str_value(attrs.get("url")),
+                    "resolvable": bool(attrs.get("resolvable")),
+                    "resolved": bool(attrs.get("resolved")),
+                })
+            if note and bool(attrs.get("resolvable")) and not bool(attrs.get("resolved")):
+                status = MergeRequestStatus.REVIEW_BLOCKED
+                review_status = ReviewStatus.BLOCKING
+                blocking_issues.append(note[:500])
+                summary = "GitLab webhook received an unresolved review note."
+            else:
+                summary = "GitLab webhook received a merge request note."
+
+        return {
+            "status": status,
+            "review_status": review_status,
+            "summary": summary,
+            "comments": comments,
+            "blocking_issues": blocking_issues,
+            "event": event,
+        }
+
+    def _gitlab_webhook_user_name(self, payload: dict) -> str | None:
+        for key in ("user", "user_username", "user_name"):
+            value = payload.get(key)
+            if isinstance(value, dict):
+                text = self._str_value(value.get("username")) or self._str_value(value.get("name"))
+            else:
+                text = self._str_value(value)
+            if text:
+                return text
+        return None
+
+    def _github_webhook_signature_valid(self, signature: str, body: bytes, secret: str) -> bool:
+        expected = hmac.new(secret.encode("utf-8"), body, hashlib.sha256).hexdigest()
+        return hmac.compare_digest(signature.strip(), f"sha256={expected}")
+
+    def _github_webhook_number(self, payload: dict) -> str | None:
+        candidates = []
+        pull_request = payload.get("pull_request")
+        issue = payload.get("issue")
+        check_run = payload.get("check_run")
+        if isinstance(pull_request, dict):
+            candidates.append(pull_request.get("number"))
+        if isinstance(issue, dict):
+            candidates.append(issue.get("number"))
+        if isinstance(check_run, dict):
+            pull_requests = check_run.get("pull_requests")
+            if isinstance(pull_requests, list):
+                for item in pull_requests:
+                    if isinstance(item, dict):
+                        candidates.append(item.get("number"))
+        for key in ("number", "pull_request_number", "pr_number"):
+            candidates.append(payload.get(key))
+        for value in candidates:
+            text = self._str_value(value)
+            if text:
+                return text
+        return None
+
+    def _github_webhook_review_update(self, payload: dict, event_type: str) -> dict:
+        action = self._str_value(payload.get("action"))
+        event = {
+            "received_at": utc_now().isoformat(),
+            "event_type": event_type,
+            "action": action,
+            "number": self._github_webhook_number(payload),
+        }
+        status = MergeRequestStatus.REVIEWING
+        review_status = ReviewStatus.PENDING
+        blocking_issues: list[str] = []
+        comments: list[dict] = []
+        summary = f"GitHub webhook received: {event_type}."
+
+        if event_type == "pull_request":
+            pull_request = payload.get("pull_request")
+            pull_request = pull_request if isinstance(pull_request, dict) else {}
+            state = (self._str_value(pull_request.get("state")) or "").lower()
+            merged = bool(pull_request.get("merged"))
+            draft = bool(pull_request.get("draft"))
+            event["state"] = state
+            event["merged"] = merged
+            event["draft"] = draft
+            if state == "closed" and merged:
+                status = MergeRequestStatus.REVIEW_PASSED
+                review_status = ReviewStatus.PASSED
+                summary = "GitHub webhook marked the pull request merged."
+            elif state == "closed":
+                status = MergeRequestStatus.CLOSED
+                review_status = ReviewStatus.BLOCKING
+                blocking_issues.append("Pull request is closed.")
+                summary = "GitHub webhook marked the pull request closed."
+            elif draft:
+                summary = "GitHub webhook reported a draft pull request."
+            else:
+                summary = f"GitHub webhook updated pull request state: {state or action or 'unknown'}."
+
+        elif event_type == "pull_request_review":
+            review = payload.get("review")
+            review = review if isinstance(review, dict) else {}
+            review_state = (self._str_value(review.get("state")) or "").upper()
+            body = redact_text(self._str_value(review.get("body")) or "")
+            event["review_state"] = review_state
+            if review_state == "CHANGES_REQUESTED":
+                status = MergeRequestStatus.REVIEW_BLOCKED
+                review_status = ReviewStatus.BLOCKING
+                issue = body or "A GitHub reviewer requested changes."
+                blocking_issues.append(issue[:500])
+                summary = "GitHub webhook received a changes-requested review."
+            elif review_state == "APPROVED":
+                summary = "GitHub webhook received an approved review; waiting for checks."
+            else:
+                summary = f"GitHub webhook received review state {review_state or 'unknown'}."
+
+        elif event_type in {"pull_request_review_comment", "issue_comment"}:
+            comment = payload.get("comment")
+            comment = comment if isinstance(comment, dict) else {}
+            body = redact_text(self._str_value(comment.get("body")) or "")
+            if body:
+                comments.append({
+                    "body": body,
+                    "author": self._github_user_name(comment.get("user")),
+                    "created_at": self._str_value(comment.get("created_at")),
+                    "url": self._str_value(comment.get("html_url")) or self._str_value(comment.get("url")),
+                })
+            summary = "GitHub webhook received a pull request comment."
+
+        elif event_type == "check_run":
+            check_run = payload.get("check_run")
+            check_run = check_run if isinstance(check_run, dict) else {}
+            conclusion = (self._str_value(check_run.get("conclusion")) or "").lower()
+            check_status = (self._str_value(check_run.get("status")) or "").lower()
+            name = self._str_value(check_run.get("name")) or "check"
+            event["check_name"] = name
+            event["status"] = check_status
+            event["conclusion"] = conclusion
+            if conclusion in {"success", "neutral", "skipped"}:
+                status = MergeRequestStatus.REVIEW_PASSED
+                review_status = ReviewStatus.PASSED
+                summary = f"GitHub webhook reported check {name} success."
+            elif conclusion in {"failure", "timed_out", "cancelled", "action_required"}:
+                status = MergeRequestStatus.REVIEW_BLOCKED
+                review_status = ReviewStatus.BLOCKING
+                blocking_issues.append(f"GitHub check {name} concluded {conclusion}.")
+                summary = f"GitHub webhook reported check {name} {conclusion}."
+            else:
+                summary = f"GitHub webhook reported check {name} {check_status or conclusion or 'pending'}."
+
+        elif event_type == "status":
+            state = (self._str_value(payload.get("state")) or "").lower()
+            context = self._str_value(payload.get("context")) or "status"
+            event["state"] = state
+            event["context"] = context
+            if state == "success":
+                status = MergeRequestStatus.REVIEW_PASSED
+                review_status = ReviewStatus.PASSED
+                summary = f"GitHub webhook reported status {context} success."
+            elif state in {"failure", "error"}:
+                status = MergeRequestStatus.REVIEW_BLOCKED
+                review_status = ReviewStatus.BLOCKING
+                blocking_issues.append(f"GitHub status {context} is {state}.")
+                summary = f"GitHub webhook reported status {context} {state}."
+            else:
+                summary = f"GitHub webhook reported status {context} {state or 'pending'}."
+
+        return {
+            "status": status,
+            "review_status": review_status,
+            "summary": summary,
+            "comments": comments,
+            "blocking_issues": blocking_issues,
+            "event": event,
+        }
+
+    def _github_user_name(self, value: object) -> str | None:
+        if not isinstance(value, dict):
+            return None
+        return self._str_value(value.get("login")) or self._str_value(value.get("name"))
+
+    def _str_value(self, value) -> str | None:
+        if value is None:
+            return None
+        text = str(value).strip()
+        return text or None
+
+    def _project_deployment_environments(self, project_settings: dict | None) -> dict:
+        if project_settings is None:
+            return {}
+        if not isinstance(project_settings, dict):
+            raise BadRequestException("Project settings must be a JSON object")
+        delivery_settings = project_settings.get("delivery")
+        if delivery_settings is None:
+            return {}
+        if not isinstance(delivery_settings, dict):
+            raise BadRequestException("Project delivery settings must be a JSON object")
+        environments = delivery_settings.get("deployment_environments")
+        if environments is None:
+            return {}
+        return self._normalize_deployment_environment_config(environments)
+
+    def _normalize_deployment_environment_config(self, environments: dict) -> dict:
+        if not isinstance(environments, dict):
+            raise BadRequestException("Deployment environment settings must be a JSON object")
+        if len(environments) > 50:
+            raise BadRequestException("Deployment environment settings cannot exceed 50 entries")
+
+        allowed_keys = {"url", "log_url", "description", "environment_name"}
+        normalized: dict[str, dict[str, str]] = {}
+        for raw_environment, raw_config in environments.items():
+            environment = str(raw_environment).strip()
+            if not environment:
+                raise BadRequestException("Deployment environment name is required")
+            if len(environment) > 100:
+                raise BadRequestException("Deployment environment name cannot exceed 100 characters")
+
+            if isinstance(raw_config, str):
+                values = {"url": raw_config}
+            elif isinstance(raw_config, dict):
+                unknown_keys = set(raw_config) - allowed_keys
+                if unknown_keys:
+                    raise BadRequestException(
+                        f"Unsupported deployment environment setting: {sorted(unknown_keys)[0]}"
+                    )
+                values = raw_config
+            else:
+                raise BadRequestException("Deployment environment entries must be JSON objects")
+
+            sanitized = {}
+            for key in allowed_keys:
+                value = values.get(key)
+                if value is None:
+                    continue
+                text = str(value).strip()
+                if text:
+                    sanitized[key] = text
+            if sanitized:
+                normalized[environment] = sanitized
+        return normalized
+
+    def _deployment_environment_settings(
+        self,
+        environment: str,
+        project_settings: dict | None = None,
+    ) -> tuple[str | None, dict]:
+        project_environments = self._project_deployment_environments(project_settings)
+        selected_project_config = project_environments.get(environment) or project_environments.get("*")
+        if selected_project_config is not None:
+            return self._deployment_environment_entry_settings(
+                environment,
+                selected_project_config,
+                source="project_settings",
+            )
+
         config_text = settings.deploy_environment_config_json.strip()
         if not config_text:
             return None, {"environment": environment, "source": "request"}
@@ -2509,10 +3268,22 @@ class DeliveryService:
         selected = config.get(environment) or config.get("*")
         if selected is None:
             return None, {"environment": environment, "source": "request"}
+        return self._deployment_environment_entry_settings(
+            environment,
+            selected,
+            source="DEPLOY_ENVIRONMENT_CONFIG_JSON",
+        )
+
+    def _deployment_environment_entry_settings(
+        self,
+        environment: str,
+        selected: str | dict,
+        source: str,
+    ) -> tuple[str | None, dict]:
         if isinstance(selected, str):
             return selected, {
                 "environment": environment,
-                "source": "DEPLOY_ENVIRONMENT_CONFIG_JSON",
+                "source": source,
                 "url": redact_text(selected),
             }
         if not isinstance(selected, dict):
@@ -2526,7 +3297,7 @@ class DeliveryService:
             for key, value in selected.items()
             if key in allowed_keys and value is not None and str(value).strip()
         }
-        return configured_url, {"environment": environment, "source": "DEPLOY_ENVIRONMENT_CONFIG_JSON", **sanitized}
+        return configured_url, {"environment": environment, "source": source, **sanitized}
 
     def _deployment_log_evidence(self, provider_evidence: dict, environment_config: dict) -> dict:
         logs: dict[str, str] = {}
@@ -2567,7 +3338,7 @@ class DeliveryService:
         normalized_provider = (provider or "local").strip().lower()
         if normalized_provider == "local":
             return {"enabled": False, "reason": "local_provider"}
-        if normalized_provider != "gitlab":
+        if normalized_provider not in {"gitlab", "github"}:
             return {"enabled": False, "reason": "provider_not_supported", "provider": normalized_provider}
         if not settings.merge_request_auto_push_enabled:
             return {"enabled": False, "reason": "disabled"}
@@ -2620,7 +3391,7 @@ class DeliveryService:
         normalized_provider = (provider or "local").strip().lower()
         if normalized_provider == "local":
             return {"enabled": False, "reason": "local_provider"}
-        if normalized_provider != "gitlab":
+        if normalized_provider not in {"gitlab", "github"}:
             return {"enabled": False, "reason": "provider_not_supported", "provider": normalized_provider}
         if not settings.merge_request_auto_push_enabled:
             return {"enabled": False, "reason": "disabled"}
@@ -2767,6 +3538,7 @@ class DeliveryService:
         run: ExecutionRun,
         source_branch: str,
         target_branch: str,
+        evidence_links: dict | None = None,
     ) -> str:
         evidence = run.evidence_json or {}
         dispatch = evidence.get("dispatch") if isinstance(evidence, dict) else {}
@@ -2800,7 +3572,43 @@ class DeliveryService:
         lines.extend(self._markdown_items(changed_files, empty="No changed files recorded."))
         lines.extend(["", "### Allowed Paths"])
         lines.extend(self._markdown_items(task.allowed_paths_json or [], empty="No allowed paths recorded."))
+        lines.extend(["", "### Evidence Links"])
+        lines.extend(self._markdown_evidence_links(evidence_links or {}))
         return redact_text("\n".join(lines))
+
+    def _merge_request_evidence_links(
+        self,
+        *,
+        demand: DemandItem,
+        task: CodingTask,
+        run: ExecutionRun,
+    ) -> dict:
+        base_url = settings.delivery_app_base_url.strip().rstrip("/")
+        entries = {
+            "demand": {"label": f"Demand #{demand.id}", "tab": "summary"},
+            "task_package": {"label": f"Task package #{task.id}", "tab": "taskPackage"},
+            "execution": {"label": f"Execution run #{run.id}", "tab": "execution"},
+            "evidence": {"label": "Evidence timeline", "tab": "evidence"},
+        }
+        for entry in entries.values():
+            if base_url:
+                entry["url"] = f"{base_url}/?demand_id={demand.id}&tab={entry['tab']}"
+        if demand.trace_id:
+            entries["trace"] = {"label": f"Trace ID {demand.trace_id}"}
+        return entries
+
+    def _markdown_evidence_links(self, links: dict) -> list[str]:
+        if not links:
+            return ["- No evidence links recorded."]
+        items = []
+        for key in ("demand", "task_package", "execution", "evidence", "trace"):
+            value = links.get(key)
+            if not isinstance(value, dict):
+                continue
+            label = str(value.get("label") or key).strip()
+            url = str(value.get("url") or "").strip()
+            items.append(f"- [{label}]({url})" if url else f"- {label}")
+        return items or ["- No evidence links recorded."]
 
     def _check_result_lines(self, dispatch: dict) -> list[str]:
         raw_results = dispatch.get("check_results")
@@ -2890,6 +3698,35 @@ class DeliveryService:
             "repair_chain": [*previous_chain, source_run.id],
         }
 
+    def _build_retry_context(self, task: CodingTask) -> dict:
+        latest_run = self._latest_by_created_at(task.execution_runs or [])
+        if not latest_run:
+            return {}
+
+        source_evidence = latest_run.evidence_json or {}
+        execution_allowed = (
+            source_evidence.get("execution_allowed")
+            if isinstance(source_evidence, dict)
+            else None
+        )
+        previous_context = None
+        if isinstance(execution_allowed, dict):
+            previous_context = execution_allowed.get("retry_context")
+        if previous_context is None and isinstance(source_evidence, dict):
+            previous_context = source_evidence.get("retry_context")
+
+        previous_chain = []
+        if isinstance(previous_context, dict) and isinstance(previous_context.get("retry_chain"), list):
+            previous_chain = [item for item in previous_context["retry_chain"] if isinstance(item, int)]
+
+        return {
+            "source_run_id": latest_run.id,
+            "source_status": self._enum_or_str(latest_run.status),
+            "source_trigger_mode": latest_run.trigger_mode,
+            "source_summary": latest_run.result_summary,
+            "retry_chain": [*previous_chain, latest_run.id],
+        }
+
     def _build_review_repair_context(
         self,
         *,
@@ -2963,7 +3800,17 @@ class DeliveryService:
     def _latest_by_created_at(self, items):
         if not items:
             return None
-        return sorted(items, key=lambda item: (item.created_at, item.id), reverse=True)[0]
+        return sorted(
+            items,
+            key=lambda item: (self._created_at_timestamp(getattr(item, "created_at", None)), item.id or 0),
+            reverse=True,
+        )[0]
+
+    def _created_at_timestamp(self, value: datetime | None) -> float:
+        if not value:
+            return 0.0
+        normalized = value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+        return normalized.timestamp()
 
 
 delivery_service = DeliveryService()

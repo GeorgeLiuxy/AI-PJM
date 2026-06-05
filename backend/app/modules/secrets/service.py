@@ -24,6 +24,7 @@ from app.modules.secrets.schemas import SecretRecordResponse
 
 
 EXPIRING_SOON_DAYS = 14
+SECRET_STATUSES = {"active", "disabled"}
 
 
 class SecretStoreService:
@@ -115,6 +116,44 @@ class SecretStoreService:
             actor_ref=actor_ref,
             summary=f"Secret rotated: {record.name}",
             metadata={"provider": record.provider, "key_id": record.key_id},
+        )
+        await db.commit()
+        return record
+
+    async def update_secret_status(
+        self,
+        db: AsyncSession,
+        *,
+        secret_id: int,
+        status: str,
+        reason: str | None = None,
+        actor_user_id: int | None = None,
+        actor_ref: str = "system",
+    ) -> SecretRecord:
+        record = await secret_repository.get_secret(db, secret_id)
+        if not record:
+            raise NotFoundException(f"Secret {secret_id} not found")
+        normalized_status = self._normalize_status(status)
+        await secret_repository.update_secret(
+            db,
+            record,
+            status=normalized_status,
+            updated_by_user_id=actor_user_id,
+        )
+        await audit_repository.create_event(
+            db,
+            action="secret.status_updated",
+            entity_type="secret",
+            entity_id=record.id,
+            project_id=record.project_id,
+            actor_user_id=actor_user_id,
+            actor_ref=actor_ref,
+            summary=f"Secret status updated: {record.name} -> {normalized_status}",
+            metadata={
+                "provider": record.provider,
+                "status": normalized_status,
+                "reason": reason,
+            },
         )
         await db.commit()
         return record
@@ -218,6 +257,12 @@ class SecretStoreService:
         normalized = value.strip().lower()
         if not normalized:
             raise BadRequestException("Secret provider is required")
+        return normalized
+
+    def _normalize_status(self, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized not in SECRET_STATUSES:
+            raise BadRequestException("Secret status must be active or disabled")
         return normalized
 
     def _metadata_with_expiry(

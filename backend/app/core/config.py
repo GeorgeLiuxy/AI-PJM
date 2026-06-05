@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     # Server
     host: str = "0.0.0.0"
     port: int = 8010
+    delivery_app_base_url: str = ""
 
     # Database
     database_url: str = "sqlite+aiosqlite:///./data/ai_pjm_dev.db"
@@ -61,6 +62,18 @@ class Settings(BaseSettings):
     gitlab_project_id: str = ""
     gitlab_token: str = ""
     gitlab_token_secret_name: str = "gitlab_token"
+    gitlab_default_labels: str = ""
+    gitlab_reviewer_ids: str = ""
+    gitlab_assignee_ids: str = ""
+    gitlab_webhook_secret_token: str = ""
+    github_api_base_url: str = "https://api.github.com"
+    github_repository: str = ""
+    github_token: str = ""
+    github_token_secret_name: str = "github_token"
+    github_default_labels: str = ""
+    github_reviewers: str = ""
+    github_assignees: str = ""
+    github_webhook_secret: str = ""
     deploy_webhook_url: str = ""
     deploy_token: str = ""
     deploy_token_secret_name: str = "deploy_token"
@@ -71,6 +84,9 @@ class Settings(BaseSettings):
     # Observability
     observability_queue_backlog_threshold: int = 5
     observability_alert_sample_limit: int = 5
+    observability_failure_rate_window_minutes: int = 60
+    observability_failure_rate_min_runs: int = 10
+    observability_failure_rate_threshold_percent: int = 40
 
     # AI API (reserved)
     anthropic_api_key: str = ""
@@ -108,6 +124,7 @@ class Settings(BaseSettings):
     # Logging
     log_level: str = "INFO"
     log_file: str = "logs/app.log"
+    log_format: str = "text"
 
 
 @lru_cache()

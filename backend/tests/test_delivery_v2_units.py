@@ -1,8 +1,11 @@
 """Delivery v2 service rule tests that do not require a database."""
 
+import logging
 import sys
 import subprocess
 import json
+import hashlib
+import hmac
 from types import SimpleNamespace
 from datetime import timedelta
 
@@ -11,6 +14,7 @@ import pytest
 from app.core.config import settings
 from app.core.db import utc_now
 from app.core.exceptions import AIServiceException, BadRequestException
+from app.core.logging import JsonLogFormatter
 from app.modules.audit.repository import audit_repository
 from app.modules.auth.repository import auth_repository
 from app.modules.delivery.executors.base import CheckResult
@@ -34,6 +38,7 @@ from app.modules.delivery.enums import (
     VerificationStatus,
 )
 from app.modules.delivery.gates import gate_engine
+from app.modules.delivery.merge_requests.github import GitHubPullRequestClient
 from app.modules.delivery.merge_requests.gitlab import GitLabMergeRequestClient
 from app.modules.delivery.models import CodingTask, DemandItem, DeployRecord, ExecutionRun, MergeRequestRecord, RepoContext
 from app.modules.delivery.provider_credentials import ProviderCredential, resolve_provider_credential
@@ -52,7 +57,8 @@ from scripts import deployment_sync_worker
 from scripts.database_backup import backup_database, normalize_database_url_for_cli, sqlite_path_from_url
 from scripts.database_restore import RESTORE_CONFIRMATION, restore_database
 from scripts.recover_symphony_runs import recover_expired_runs
-from scripts.symphony_worker import Worker, quote_arg, tail
+from scripts.seed_delivery_capacity import seed_capacity_data, validate_safety, workload_status
+from scripts.symphony_worker import Worker, quote_arg, run_loop, tail
 
 
 def test_delivery_v2_low_risk_auto_approval_rule():
@@ -71,6 +77,30 @@ def test_delivery_v2_low_risk_auto_approval_rule():
     assert risk_level == DeliveryRiskLevel.L1
     assert confidence >= 0.7
     assert status == SpecStatus.APPROVED
+
+
+def test_json_log_formatter_outputs_structured_context():
+    formatter = JsonLogFormatter()
+    record = logging.LogRecord(
+        name="ai_pjm.test",
+        level=logging.INFO,
+        pathname=__file__,
+        lineno=12,
+        msg="delivery event",
+        args=(),
+        exc_info=None,
+    )
+    record.trace_id = "trace-123"
+    record.project_id = 42
+
+    payload = json.loads(formatter.format(record))
+
+    assert payload["level"] == "INFO"
+    assert payload["logger"] == "ai_pjm.test"
+    assert payload["message"] == "delivery event"
+    assert payload["trace_id"] == "trace-123"
+    assert payload["project_id"] == 42
+    assert "timestamp" in payload
 
 
 def test_delivery_v2_high_risk_requires_manual_review_rule():
@@ -142,6 +172,62 @@ def test_database_restore_requires_explicit_confirmation(tmp_path):
             backup_file=backup_file,
             confirm="wrong",
         )
+
+
+def test_capacity_seed_safety_requires_confirmation(monkeypatch):
+    with pytest.raises(BadRequestException, match="--confirm"):
+        validate_safety(confirm=False, allow_production=False)
+
+    monkeypatch.setattr(settings, "environment", "production")
+    with pytest.raises(BadRequestException, match="--allow-production"):
+        validate_safety(confirm=True, allow_production=False)
+
+    validate_safety(confirm=True, allow_production=True)
+    assert workload_status(20)["run_status"] == ExecutionRunStatus.QUEUED
+    assert workload_status(13)["run_status"] == ExecutionRunStatus.FAILED
+
+
+@pytest.mark.asyncio
+async def test_capacity_seed_creates_synthetic_delivery_records(db_session):
+    project = await auth_repository.create_project(
+        db_session,
+        key="capacity-seed",
+        name="Capacity Seed",
+    )
+
+    summary = await seed_capacity_data(
+        db_session,
+        count=25,
+        batch_size=10,
+        project_id=project.id,
+        prefix="load",
+        include_delivery_records=True,
+    )
+
+    assert summary["demands"] == 25
+    assert summary["execution_runs"] == 25
+    assert summary["merge_requests"] == 22
+    assert summary["deployments"] == 22
+    assert await delivery_repository.count_execution_runs(
+        db_session,
+        statuses=[ExecutionRunStatus.QUEUED],
+        project_ids=[project.id],
+    ) == 1
+    assert await delivery_repository.count_execution_runs(
+        db_session,
+        statuses=[ExecutionRunStatus.FAILED],
+        project_ids=[project.id],
+    ) == 1
+    assert await delivery_repository.count_execution_runs(
+        db_session,
+        statuses=[ExecutionRunStatus.BLOCKED],
+        project_ids=[project.id],
+    ) == 1
+    assert await delivery_repository.count_deploy_records(
+        db_session,
+        statuses=[DeploymentStatus.DEPLOYED],
+        project_ids=[project.id],
+    ) == 22
 
 
 @pytest.mark.asyncio
@@ -391,6 +477,86 @@ async def test_delivery_trace_id_backfill_restores_historical_records(db_session
 
 
 @pytest.mark.asyncio
+async def test_delivery_service_manual_retry_records_retry_context_and_reuses_active_run(db_session):
+    project = await auth_repository.create_project(
+        db_session,
+        key="retry-context-project",
+        name="Retry Context Project",
+    )
+    demand = await delivery_repository.create_demand(
+        db_session,
+        raw_input="Retry a failed task with traceable context.",
+        source_type="new_requirement",
+        title="Retry context",
+        project_id=project.id,
+    )
+    spec = await delivery_repository.create_spec_card(
+        db_session,
+        demand_id=demand.id,
+        status=SpecStatus.APPROVED,
+        title="Retry context",
+        user_story="As an operator, I can trace manual retries.",
+        scope="Execution retry evidence.",
+        acceptance_criteria=["Retry context is recorded."],
+        constraints=["Do not duplicate active runs."],
+        risks=["Low risk."],
+        open_questions=[],
+    )
+    task = await delivery_repository.create_coding_task(
+        db_session,
+        demand_id=demand.id,
+        spec_card_id=spec.id,
+        status=CodingTaskStatus.BLOCKED,
+        title="Retry context task",
+        task_prompt="Retry with evidence.",
+        allowed_paths=["backend/app"],
+        forbidden_actions=[],
+        required_checks=["python -m compileall app"],
+        expected_evidence=["retry context"],
+    )
+    source_run = await delivery_repository.create_execution_run(
+        db_session,
+        coding_task_id=task.id,
+        status=ExecutionRunStatus.FAILED,
+        executor_type="codex",
+        trigger_mode="manual",
+        result_summary="Required checks failed.",
+        evidence_json={
+            "dispatch": {
+                "check_results": [
+                    {"command": "python -m compileall app", "status": "failed", "exit_code": 1}
+                ]
+            }
+        },
+    )
+    await db_session.commit()
+
+    service = DeliveryService()
+    retried = await service.retry_coding_task_execution(
+        db_session,
+        task.id,
+        executor_type="symphony",
+    )
+
+    assert retried.status == ExecutionRunStatus.QUEUED
+    assert retried.trigger_mode == "manual_retry"
+    retry_context = retried.evidence_json["execution_allowed"]["retry_context"]
+    assert retry_context["source_run_id"] == source_run.id
+    assert retry_context["source_status"] == ExecutionRunStatus.FAILED
+    assert retry_context["source_trigger_mode"] == "manual"
+    assert retry_context["source_summary"] == "Required checks failed."
+    assert retry_context["retry_chain"] == [source_run.id]
+
+    duplicate_retry = await service.retry_coding_task_execution(
+        db_session,
+        task.id,
+        executor_type="symphony",
+    )
+
+    assert duplicate_retry.id == retried.id
+
+
+@pytest.mark.asyncio
 async def test_recover_symphony_runs_marks_expired_running_runs_failed(db_session):
     demand = await delivery_repository.create_demand(
         db_session,
@@ -613,6 +779,65 @@ def test_symphony_worker_writes_idle_status(tmp_path):
     assert status["run_id"] is None
 
 
+def test_symphony_worker_loop_continues_after_unexpected_error():
+    class FakeWorker:
+        def __init__(self):
+            self.calls = 0
+            self.statuses = []
+
+        def run_once(self):
+            self.calls += 1
+            if self.calls == 1:
+                raise RuntimeError("temporary API outage")
+            return False
+
+        def _write_status(self, state, run_id=None, message=None):
+            self.statuses.append({"state": state, "run_id": run_id, "message": message})
+
+    sleeps: list[int] = []
+    worker = FakeWorker()
+
+    exit_code = run_loop(
+        worker,
+        poll_seconds=5,
+        sleep_func=sleeps.append,
+        max_iterations=2,
+    )
+
+    assert exit_code == 0
+    assert worker.calls == 2
+    assert sleeps == [5, 5]
+    assert worker.statuses[0]["state"] == "error"
+    assert "temporary API outage" in worker.statuses[0]["message"]
+
+
+def test_symphony_worker_loop_fail_fast_exits_after_unexpected_error():
+    class FakeWorker:
+        def __init__(self):
+            self.statuses = []
+
+        def run_once(self):
+            raise RuntimeError("bad worker config")
+
+        def _write_status(self, state, run_id=None, message=None):
+            self.statuses.append({"state": state, "run_id": run_id, "message": message})
+
+    sleeps: list[int] = []
+    worker = FakeWorker()
+
+    exit_code = run_loop(
+        worker,
+        poll_seconds=5,
+        fail_fast=True,
+        sleep_func=sleeps.append,
+        max_iterations=2,
+    )
+
+    assert exit_code == 1
+    assert sleeps == []
+    assert worker.statuses[0]["state"] == "error"
+
+
 @pytest.mark.asyncio
 async def test_deployment_sync_worker_writes_success_status(tmp_path):
     captured: dict[str, object] = {}
@@ -820,6 +1045,40 @@ async def test_dify_remote_health_probe_requires_explicit_safe_url(monkeypatch):
     assert result.status == "unknown"
     assert result.remote_probe is False
     assert "DIFY_HEALTH_CHECK_URL" in result.reason
+
+
+@pytest.mark.asyncio
+async def test_github_remote_health_probe_uses_bearer_token(monkeypatch):
+    monkeypatch.setattr(settings, "github_api_base_url", "https://api.github.example")
+    captured: dict[str, object] = {}
+
+    class FakeResponse:
+        status_code = 200
+
+    class FakeAsyncClient:
+        def __init__(self, timeout):
+            captured["timeout"] = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return None
+
+        async def get(self, url, headers):
+            captured["url"] = url
+            captured["headers"] = headers
+            return FakeResponse()
+
+    monkeypatch.setattr("app.modules.secrets.provider_health.httpx.AsyncClient", FakeAsyncClient)
+
+    result = await check_remote_provider_health("github", "project-github-token")
+
+    assert result.status == "healthy"
+    assert result.remote_probe is True
+    assert result.endpoint == "github.user"
+    assert captured["url"] == "https://api.github.example/user"
+    assert captured["headers"]["Authorization"] == "Bearer project-github-token"
 
 
 @pytest.mark.asyncio
@@ -1375,6 +1634,71 @@ async def test_gitlab_merge_request_client_uses_credential_without_exposing_it(m
 
 
 @pytest.mark.asyncio
+async def test_gitlab_merge_request_client_applies_reviewers_assignees_and_labels(monkeypatch):
+    monkeypatch.setattr(settings, "gitlab_api_base_url", "https://gitlab.example/api/v4")
+    monkeypatch.setattr(settings, "gitlab_project_id", "group/demo")
+    monkeypatch.setattr(settings, "gitlab_default_labels", "ai-pjm, delivery")
+    monkeypatch.setattr(settings, "gitlab_reviewer_ids", "101, 102")
+    monkeypatch.setattr(settings, "gitlab_assignee_ids", "201")
+    captured: dict[str, object] = {}
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "id": 99,
+                "iid": 12,
+                "web_url": "https://gitlab.example/group/demo/-/merge_requests/12",
+            }
+
+    class FakeAsyncClient:
+        def __init__(self, timeout):
+            captured["timeout"] = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return None
+
+        async def post(self, url, headers, json):
+            captured["url"] = url
+            captured["headers"] = headers
+            captured["json"] = json
+            return FakeResponse()
+
+    monkeypatch.setattr("app.modules.delivery.merge_requests.gitlab.httpx.AsyncClient", FakeAsyncClient)
+    credential = ProviderCredential(
+        provider="gitlab",
+        value="project-gitlab-token",
+        source="secret_store",
+        project_id=123,
+        secret_name="gitlab_token",
+    )
+    task = CodingTask(id=11, demand_id=1, spec_card_id=2, title="Add status badge", task_prompt="Do it")
+    run = ExecutionRun(id=7, coding_task_id=11, branch_name="codex/status-badge", commit_sha="abc123")
+
+    draft = await GitLabMergeRequestClient(credential=credential).create_merge_request(
+        task=task,
+        run=run,
+        title="Add status badge",
+        description="Generated delivery summary.",
+        source_branch="codex/status-badge",
+        target_branch="main",
+    )
+
+    assert captured["json"]["labels"] == "ai-pjm,delivery"
+    assert captured["json"]["reviewer_ids"] == [101, 102]
+    assert captured["json"]["assignee_ids"] == [201]
+    assert draft.evidence["labels"] == ["ai-pjm", "delivery"]
+    assert draft.evidence["reviewer_ids"] == [101, 102]
+    assert draft.evidence["assignee_ids"] == [201]
+    assert "project-gitlab-token" not in str(draft.evidence)
+
+
+@pytest.mark.asyncio
 async def test_gitlab_merge_request_client_fetches_remote_review_and_ci(monkeypatch):
     monkeypatch.setattr(settings, "gitlab_api_base_url", "https://gitlab.example/api/v4")
     monkeypatch.setattr(settings, "gitlab_project_id", "group/demo")
@@ -1484,6 +1808,437 @@ async def test_gitlab_merge_request_client_fetches_remote_review_and_ci(monkeypa
 
 
 @pytest.mark.asyncio
+async def test_github_pull_request_client_creates_pr_and_applies_metadata(monkeypatch):
+    monkeypatch.setattr(settings, "github_api_base_url", "https://api.github.example")
+    monkeypatch.setattr(settings, "github_repository", "org/demo")
+    monkeypatch.setattr(settings, "github_default_labels", "ai-pjm, delivery")
+    monkeypatch.setattr(settings, "github_reviewers", "alice,bob")
+    monkeypatch.setattr(settings, "github_assignees", "carol")
+    requests: list[dict[str, object]] = []
+
+    class FakeResponse:
+        def __init__(self, body):
+            self._body = body
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self._body
+
+    class FakeAsyncClient:
+        def __init__(self, timeout):
+            self.timeout = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return None
+
+        async def post(self, url, headers, json):
+            requests.append({"url": url, "headers": headers, "json": json})
+            if url.endswith("/pulls"):
+                return FakeResponse(
+                    {
+                        "id": 1001,
+                        "number": 42,
+                        "html_url": "https://github.example/org/demo/pull/42",
+                    }
+                )
+            return FakeResponse({})
+
+    monkeypatch.setattr("app.modules.delivery.merge_requests.github.httpx.AsyncClient", FakeAsyncClient)
+    credential = ProviderCredential(
+        provider="github",
+        value="project-github-token",
+        source="secret_store",
+        project_id=123,
+        secret_name="github_token",
+    )
+    task = CodingTask(id=11, demand_id=1, spec_card_id=2, title="Add status badge", task_prompt="Do it")
+    run = ExecutionRun(id=7, coding_task_id=11, branch_name="codex/status-badge", commit_sha="abc123")
+
+    draft = await GitHubPullRequestClient(credential=credential).create_merge_request(
+        task=task,
+        run=run,
+        title="Add status badge",
+        description="Generated delivery summary.",
+        source_branch="codex/status-badge",
+        target_branch="main",
+    )
+
+    auth_headers = [request["headers"]["Authorization"] for request in requests]
+    assert auth_headers == ["Bearer project-github-token"] * 4
+    assert requests[0]["url"] == "https://api.github.example/repos/org/demo/pulls"
+    assert requests[0]["json"] == {
+        "head": "codex/status-badge",
+        "base": "main",
+        "title": "Add status badge",
+        "body": "Generated delivery summary.",
+        "draft": False,
+    }
+    assert requests[1]["url"].endswith("/issues/42/labels")
+    assert requests[1]["json"] == {"labels": ["ai-pjm", "delivery"]}
+    assert requests[2]["url"].endswith("/pulls/42/requested_reviewers")
+    assert requests[2]["json"] == {"reviewers": ["alice", "bob"]}
+    assert requests[3]["url"].endswith("/issues/42/assignees")
+    assert requests[3]["json"] == {"assignees": ["carol"]}
+    assert draft.provider == "github"
+    assert draft.external_id == "42"
+    assert draft.url == "https://github.example/org/demo/pull/42"
+    assert draft.evidence["credential"] == {
+        "credential_source": "secret_store",
+        "credential_project_id": 123,
+        "token_secret_name": "github_token",
+    }
+    assert draft.evidence["labels"] == ["ai-pjm", "delivery"]
+    assert draft.evidence["reviewers"] == ["alice", "bob"]
+    assert draft.evidence["assignees"] == ["carol"]
+    assert "project-github-token" not in str(draft.evidence)
+
+
+@pytest.mark.asyncio
+async def test_github_pull_request_client_fetches_remote_review_and_checks(monkeypatch):
+    monkeypatch.setattr(settings, "github_api_base_url", "https://api.github.example")
+    monkeypatch.setattr(settings, "github_repository", "org/demo")
+    requests: list[dict[str, object]] = []
+
+    class FakeResponse:
+        def __init__(self, body):
+            self._body = body
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self._body
+
+    class FakeAsyncClient:
+        def __init__(self, timeout):
+            self.timeout = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return None
+
+        async def get(self, url, headers, params=None):
+            requests.append({"url": url, "headers": headers, "params": params})
+            if url.endswith("/pulls/42"):
+                return FakeResponse(
+                    {
+                        "state": "open",
+                        "draft": False,
+                        "merged": False,
+                        "mergeable": True,
+                        "html_url": "https://github.example/org/demo/pull/42",
+                    }
+                )
+            if url.endswith("/pulls/42/comments"):
+                return FakeResponse(
+                    [
+                        {
+                            "id": 501,
+                            "body": "Please adjust this line.",
+                            "user": {"login": "reviewer"},
+                            "created_at": "2026-05-25T06:00:00Z",
+                            "html_url": "https://github.example/comment/501",
+                        }
+                    ]
+                )
+            if url.endswith("/issues/42/comments"):
+                return FakeResponse(
+                    [
+                        {
+                            "id": 502,
+                            "body": "CI should be green before merge.",
+                            "user": {"login": "maintainer"},
+                            "created_at": "2026-05-25T06:02:00Z",
+                            "html_url": "https://github.example/comment/502",
+                        }
+                    ]
+                )
+            if url.endswith("/pulls/42/reviews"):
+                return FakeResponse(
+                    [
+                        {
+                            "id": 601,
+                            "state": "CHANGES_REQUESTED",
+                            "body": "Fix the failing check before merging.",
+                            "user": {"login": "reviewer"},
+                            "submitted_at": "2026-05-25T06:03:00Z",
+                            "html_url": "https://github.example/review/601",
+                        }
+                    ]
+                )
+            if url.endswith("/commits/abc123/check-runs"):
+                return FakeResponse(
+                    {
+                        "check_runs": [
+                            {
+                                "id": 701,
+                                "name": "unit",
+                                "status": "completed",
+                                "conclusion": "failure",
+                                "html_url": "https://github.example/check/701",
+                                "completed_at": "2026-05-25T06:04:00Z",
+                            }
+                        ]
+                    }
+                )
+            if url.endswith("/commits/abc123/status"):
+                return FakeResponse({"state": "success", "total_count": 1, "statuses": []})
+            raise AssertionError(f"Unexpected GitHub URL: {url}")
+
+    monkeypatch.setattr("app.modules.delivery.merge_requests.github.httpx.AsyncClient", FakeAsyncClient)
+    credential = ProviderCredential(
+        provider="github",
+        value="project-github-token",
+        source="secret_store",
+        project_id=123,
+        secret_name="github_token",
+    )
+    record = MergeRequestRecord(
+        id=19,
+        coding_task_id=11,
+        execution_run_id=7,
+        provider="github",
+        title="Add status badge",
+        source_branch="codex/status-badge",
+        target_branch="main",
+        external_id="42",
+        evidence_json={"provider_evidence": {"github_pull_request_number": "42"}},
+    )
+
+    review = await GitHubPullRequestClient(credential=credential).fetch_remote_review(
+        record=record,
+        commit_sha="abc123",
+    )
+
+    assert [request["headers"]["Authorization"] for request in requests] == ["Bearer project-github-token"] * 6
+    assert requests[1]["params"] == {"per_page": 100}
+    assert review.status == MergeRequestStatus.REVIEW_BLOCKED
+    assert review.review_status == ReviewStatus.BLOCKING
+    assert "2 blocking issue" in review.summary
+    assert len(review.comments) == 2
+    assert review.comments[0]["author"] == "reviewer"
+    assert "Fix the failing check" in review.blocking_issues[0]
+    assert "GitHub check unit concluded failure." in review.blocking_issues
+    assert review.evidence["credential"] == {
+        "credential_source": "secret_store",
+        "credential_project_id": 123,
+        "token_secret_name": "github_token",
+    }
+    assert review.evidence["check_runs"][0]["name"] == "unit"
+    assert "project-github-token" not in str(review.evidence)
+
+
+@pytest.mark.asyncio
+async def test_delivery_service_handles_gitlab_pipeline_webhook(db_session, monkeypatch):
+    monkeypatch.setattr(settings, "gitlab_webhook_secret_token", "webhook-secret")
+    project = await auth_repository.create_project(
+        db_session,
+        key="gitlab-webhook",
+        name="GitLab Webhook",
+    )
+    demand = await delivery_repository.create_demand(
+        db_session,
+        raw_input="Handle GitLab webhook.",
+        source_type="new_requirement",
+        title="GitLab webhook",
+        project_id=project.id,
+    )
+    spec = await delivery_repository.create_spec_card(
+        db_session,
+        demand_id=demand.id,
+        status=SpecStatus.APPROVED,
+        title="GitLab webhook",
+        user_story="As an operator, GitLab webhook updates MR review state.",
+        scope="MR sync",
+        acceptance_criteria=["Webhook updates existing MR."],
+        constraints=[],
+        risks=[],
+        open_questions=[],
+    )
+    task = await delivery_repository.create_coding_task(
+        db_session,
+        demand_id=demand.id,
+        spec_card_id=spec.id,
+        status=CodingTaskStatus.COMPLETED,
+        title="GitLab webhook task",
+        task_prompt="Handle GitLab webhook.",
+        allowed_paths=["backend/app"],
+        forbidden_actions=[],
+        required_checks=[],
+        expected_evidence=[],
+    )
+    run = await delivery_repository.create_execution_run(
+        db_session,
+        coding_task_id=task.id,
+        status=ExecutionRunStatus.SUCCEEDED,
+        executor_type="codex",
+        trigger_mode="manual",
+    )
+    merge_request = await delivery_repository.create_merge_request_record(
+        db_session,
+        coding_task_id=task.id,
+        execution_run_id=run.id,
+        provider="gitlab",
+        status=MergeRequestStatus.REVIEWING,
+        review_status=ReviewStatus.PENDING,
+        title="GitLab webhook",
+        source_branch="codex/gitlab-webhook",
+        target_branch="main",
+        external_id="12",
+        url="https://gitlab.example/group/demo/-/merge_requests/12",
+    )
+    await db_session.commit()
+
+    result = await DeliveryService().handle_gitlab_webhook(
+        db_session,
+        payload={
+            "object_kind": "pipeline",
+            "object_attributes": {
+                "status": "success",
+            },
+            "merge_request": {
+                "iid": 12,
+            },
+        },
+        token="webhook-secret",
+    )
+
+    assert result["processed"] is True
+    updated = result["merge_request"]
+    assert updated.id == merge_request.id
+    assert updated.status == MergeRequestStatus.REVIEW_PASSED
+    assert updated.review_status == ReviewStatus.PASSED
+    assert updated.review_summary == "GitLab webhook reported pipeline success."
+    assert updated.evidence_json["gitlab_webhook"]["last_event"]["status"] == "success"
+
+    detail = await delivery_repository.get_demand_detail(db_session, demand.id)
+    review_gates = [gate for gate in detail.gate_checks if gate.gate_type == GateType.REVIEW_PASSED]
+    assert review_gates[-1].status == GateStatus.PASSED
+
+    audit_events = await audit_repository.list_events(
+        db_session,
+        project_id=project.id,
+        action="delivery.merge_request_gitlab_webhook_received",
+    )
+    assert audit_events
+    assert audit_events[0].actor_ref == "gitlab-webhook"
+
+
+@pytest.mark.asyncio
+async def test_delivery_service_handles_github_check_run_webhook(db_session, monkeypatch):
+    monkeypatch.setattr(settings, "github_webhook_secret", "github-webhook-secret")
+    project = await auth_repository.create_project(
+        db_session,
+        key="github-webhook",
+        name="GitHub Webhook",
+    )
+    demand = await delivery_repository.create_demand(
+        db_session,
+        raw_input="Handle GitHub webhook.",
+        source_type="new_requirement",
+        title="GitHub webhook",
+        project_id=project.id,
+    )
+    spec = await delivery_repository.create_spec_card(
+        db_session,
+        demand_id=demand.id,
+        status=SpecStatus.APPROVED,
+        title="GitHub webhook",
+        user_story="As an operator, GitHub webhook updates PR review state.",
+        scope="PR sync",
+        acceptance_criteria=["Webhook updates existing PR."],
+        constraints=[],
+        risks=[],
+        open_questions=[],
+    )
+    task = await delivery_repository.create_coding_task(
+        db_session,
+        demand_id=demand.id,
+        spec_card_id=spec.id,
+        status=CodingTaskStatus.COMPLETED,
+        title="GitHub webhook task",
+        task_prompt="Handle GitHub webhook.",
+        allowed_paths=["backend/app"],
+        forbidden_actions=[],
+        required_checks=[],
+        expected_evidence=[],
+    )
+    run = await delivery_repository.create_execution_run(
+        db_session,
+        coding_task_id=task.id,
+        status=ExecutionRunStatus.SUCCEEDED,
+        executor_type="codex",
+        trigger_mode="manual",
+    )
+    pull_request = await delivery_repository.create_merge_request_record(
+        db_session,
+        coding_task_id=task.id,
+        execution_run_id=run.id,
+        provider="github",
+        status=MergeRequestStatus.REVIEWING,
+        review_status=ReviewStatus.PENDING,
+        title="GitHub webhook",
+        source_branch="codex/github-webhook",
+        target_branch="main",
+        external_id="42",
+        url="https://github.example/org/demo/pull/42",
+    )
+    await db_session.commit()
+
+    payload = {
+        "action": "completed",
+        "check_run": {
+            "name": "unit",
+            "status": "completed",
+            "conclusion": "success",
+            "pull_requests": [{"number": 42}],
+        },
+    }
+    body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    signature = "sha256=" + hmac.new(
+        b"github-webhook-secret",
+        body,
+        hashlib.sha256,
+    ).hexdigest()
+
+    result = await DeliveryService().handle_github_webhook(
+        db_session,
+        payload=payload,
+        signature=signature,
+        event_type="check_run",
+        body=body,
+    )
+
+    assert result["processed"] is True
+    updated = result["merge_request"]
+    assert updated.id == pull_request.id
+    assert updated.status == MergeRequestStatus.REVIEW_PASSED
+    assert updated.review_status == ReviewStatus.PASSED
+    assert updated.review_summary == "GitHub webhook reported check unit success."
+    assert updated.evidence_json["github_webhook"]["last_event"]["conclusion"] == "success"
+    assert updated.reviewed_by_ref == "github-webhook"
+
+    detail = await delivery_repository.get_demand_detail(db_session, demand.id)
+    review_gates = [gate for gate in detail.gate_checks if gate.gate_type == GateType.REVIEW_PASSED]
+    assert review_gates[-1].status == GateStatus.PASSED
+
+    audit_events = await audit_repository.list_events(
+        db_session,
+        project_id=project.id,
+        action="delivery.merge_request_github_webhook_received",
+    )
+    assert audit_events
+    assert audit_events[0].actor_ref == "github-webhook"
+
+
+@pytest.mark.asyncio
 async def test_webhook_deploy_client_uses_credential_without_exposing_it(monkeypatch):
     monkeypatch.setattr(settings, "deploy_webhook_url", "https://deploy.example/hooks/test")
     captured: dict[str, object] = {}
@@ -1549,6 +2304,8 @@ async def test_webhook_deploy_client_uses_credential_without_exposing_it(monkeyp
     assert draft.provider == "webhook"
     assert draft.url == "https://test.example/deploy-123"
     assert draft.evidence["status_url"] == "https://deploy.example/status/deploy-123"
+    assert draft.evidence["raw_status"] == "deployed"
+    assert draft.evidence["normalized_status"] == "deployed"
     assert draft.evidence["credential"] == {
         "credential_source": "secret_store",
         "credential_project_id": 123,
@@ -1614,11 +2371,102 @@ async def test_webhook_deploy_client_fetches_status_without_exposing_credential(
     assert remote_status.status == DeploymentStatus.DEPLOYED
     assert remote_status.url == "https://test.example/deploy-123"
     assert remote_status.summary == "Deployment completed."
+    assert remote_status.evidence["raw_status"] == "success"
+    assert remote_status.evidence["normalized_status"] == "deployed"
     assert remote_status.evidence["credential"] == {
         "credential_source": "secret_store",
         "credential_project_id": 123,
         "token_secret_name": "deploy_token",
     }
+    assert "project-deploy-token" not in str(remote_status.evidence)
+
+
+def test_webhook_deploy_client_normalizes_common_ci_cd_status_shapes():
+    credential = ProviderCredential(
+        provider="webhook",
+        value="project-deploy-token",
+        source="secret_store",
+        project_id=123,
+        secret_name="deploy_token",
+    )
+    client = WebhookDeployClient(credential=credential, webhook_url="https://deploy.example/hooks/test")
+
+    assert client._status({"state": "timed_out"}) == DeploymentStatus.FAILED
+    assert client._status({"result": "green"}) == DeploymentStatus.DEPLOYED
+    assert client._status({"conclusion": "cancelled"}) == DeploymentStatus.FAILED
+    assert client._status({"pipeline": {"status": "manual"}}) == DeploymentStatus.PENDING
+    assert client._status({"deployment": {"detailed_status": "available"}}) == DeploymentStatus.DEPLOYED
+    assert client._status({"pipeline": {"jobs": [{"name": "build", "status": "success"}, {"name": "deploy", "status": "running"}]}}) == DeploymentStatus.PENDING
+    assert client._status({"stages": [{"name": "build", "status": "success"}, {"name": "deploy", "state": "failed"}]}) == DeploymentStatus.FAILED
+    assert client._status({"workflow_run": {"conclusion": "success"}}) == DeploymentStatus.DEPLOYED
+
+
+@pytest.mark.asyncio
+async def test_webhook_deploy_client_extracts_nested_ci_cd_status_evidence(monkeypatch):
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "platform": "gitlab",
+                "pipeline": {
+                    "jobs": [
+                        {"name": "build", "status": "success", "web_url": "https://ci.example/jobs/1"},
+                        {"name": "deploy", "status": "failed", "web_url": "https://ci.example/jobs/2"},
+                    ]
+                },
+            }
+
+    class FakeAsyncClient:
+        def __init__(self, timeout):
+            self.timeout = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return None
+
+        async def get(self, url, headers):
+            return FakeResponse()
+
+    monkeypatch.setattr("app.modules.delivery.deployments.webhook.httpx.AsyncClient", FakeAsyncClient)
+    credential = ProviderCredential(
+        provider="webhook",
+        value="project-deploy-token",
+        source="secret_store",
+        project_id=123,
+        secret_name="deploy_token",
+    )
+    deploy_record = DeployRecord(
+        id=22,
+        merge_request_id=19,
+        coding_task_id=11,
+        provider="webhook",
+        status=DeploymentStatus.PENDING,
+        environment="test",
+        evidence_json={"provider_evidence": {"status_url": "https://deploy.example/status/deploy-123"}},
+    )
+
+    remote_status = await WebhookDeployClient(credential=credential).fetch_deployment_status(
+        deploy_record=deploy_record,
+    )
+
+    assert remote_status.status == DeploymentStatus.FAILED
+    assert remote_status.evidence["status_platform"] == "gitlab"
+    assert remote_status.evidence["raw_status"] == "failed"
+    assert remote_status.evidence["status_path"] == "pipeline.jobs[1].status"
+    assert remote_status.evidence["status_item"] == "deploy"
+    assert remote_status.evidence["failed_status_items"] == [
+        {
+            "name": "deploy",
+            "raw_status": "failed",
+            "normalized_status": "failed",
+            "path": "pipeline.jobs[1].status",
+            "url": "https://ci.example/jobs/2",
+        }
+    ]
     assert "project-deploy-token" not in str(remote_status.evidence)
 
 
@@ -1635,6 +2483,7 @@ async def test_delivery_service_creates_gitlab_merge_request_with_project_secret
     monkeypatch.setattr(settings, "gitlab_token_secret_name", "gitlab_token")
     monkeypatch.setattr(settings, "merge_request_auto_push_enabled", True)
     monkeypatch.setattr(settings, "merge_request_git_remote", "origin")
+    monkeypatch.setattr(settings, "delivery_app_base_url", "https://ai-pjm.example")
     captured: dict[str, object] = {}
 
     class FakeResponse:
@@ -1760,6 +2609,10 @@ async def test_delivery_service_creates_gitlab_merge_request_with_project_secret
     assert "Demand ID" in description
     assert "Execution run ID" in description
     assert "npm run build" in description
+    assert "### Evidence Links" in description
+    assert "[Demand #" in description
+    assert "https://ai-pjm.example/?demand_id=" in description
+    assert "tab=execution" in description
     assert "project-gitlab-token" not in description
     assert record.provider == "gitlab"
     assert record.external_id == "12"
@@ -1774,12 +2627,180 @@ async def test_delivery_service_creates_gitlab_merge_request_with_project_secret
         "stdout_tail": "branch pushed",
         "stderr_tail": "",
     }
+    assert record.evidence_json["evidence_links"]["demand"]["url"].startswith(
+        f"https://ai-pjm.example/?demand_id={demand.id}"
+    )
+    assert record.evidence_json["evidence_links"]["execution"]["url"].endswith("tab=execution")
+    assert record.evidence_json["evidence_links"]["task_package"]["label"] == f"Task package #{task.id}"
     assert provider_evidence["credential"] == {
         "credential_source": "secret_store",
         "credential_project_id": project.id,
         "token_secret_name": "gitlab_token",
     }
     assert "project-gitlab-token" not in str(record.evidence_json)
+
+
+@pytest.mark.asyncio
+async def test_delivery_service_creates_github_pull_request_with_project_secret(
+    db_session,
+    monkeypatch,
+    tmp_path,
+):
+    monkeypatch.setattr(settings, "secret_store_master_key", "test-secret-master-key")
+    monkeypatch.setattr(settings, "github_api_base_url", "https://api.github.example")
+    monkeypatch.setattr(settings, "github_repository", "org/demo")
+    monkeypatch.setattr(settings, "github_token", "")
+    monkeypatch.setattr(settings, "github_token_secret_name", "github_token")
+    monkeypatch.setattr(settings, "merge_request_auto_push_enabled", True)
+    monkeypatch.setattr(settings, "merge_request_git_remote", "origin")
+    monkeypatch.setattr(settings, "delivery_app_base_url", "https://ai-pjm.example")
+    captured: dict[str, object] = {}
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "id": 1001,
+                "number": 42,
+                "html_url": "https://github.example/org/demo/pull/42",
+            }
+
+    class FakeAsyncClient:
+        def __init__(self, timeout):
+            captured["timeout"] = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return None
+
+        async def post(self, url, headers, json):
+            captured["url"] = url
+            captured["headers"] = headers
+            captured["json"] = json
+            return FakeResponse()
+
+    monkeypatch.setattr("app.modules.delivery.merge_requests.github.httpx.AsyncClient", FakeAsyncClient)
+    worktree_path = tmp_path / "worktree"
+    worktree_path.mkdir()
+
+    def fake_git_push(self, path, remote, source_branch):
+        captured["git_push"] = {
+            "path": str(path),
+            "remote": remote,
+            "source_branch": source_branch,
+        }
+        return subprocess.CompletedProcess(
+            args=["git", "push"],
+            returncode=0,
+            stdout="branch pushed",
+            stderr="",
+        )
+
+    monkeypatch.setattr(DeliveryService, "_run_git_push", fake_git_push)
+    project = await auth_repository.create_project(
+        db_session,
+        key="github-secret-project",
+        name="GitHub Secret Project",
+    )
+    demand = await delivery_repository.create_demand(
+        db_session,
+        raw_input="Add a status badge to the delivery dashboard.",
+        source_type="new_requirement",
+        title="Add status badge",
+        project_id=project.id,
+    )
+    await secret_store_service.create_secret(
+        db_session,
+        project_id=project.id,
+        name="github_token",
+        provider="github",
+        value="project-github-token",
+        actor_ref="test",
+    )
+    spec = await delivery_repository.create_spec_card(
+        db_session,
+        demand_id=demand.id,
+        status=SpecStatus.APPROVED,
+        title="Add status badge",
+        user_story="As an operator, I can see delivery status.",
+        scope="Dashboard badge only.",
+        acceptance_criteria=["Badge is visible."],
+        constraints=["Do not expose secrets."],
+        risks=["Low risk."],
+        open_questions=[],
+    )
+    task = await delivery_repository.create_coding_task(
+        db_session,
+        demand_id=demand.id,
+        spec_card_id=spec.id,
+        status=CodingTaskStatus.COMPLETED,
+        title="Add status badge",
+        task_prompt="Add a compact execution status badge.",
+        allowed_paths=["frontend/src/app/pages/DeliveryV2Page.tsx"],
+        forbidden_actions=["Do not expose secrets."],
+        required_checks=["npm run build"],
+        expected_evidence=["build output"],
+    )
+    run = await delivery_repository.create_execution_run(
+        db_session,
+        coding_task_id=task.id,
+        status=ExecutionRunStatus.SUCCEEDED,
+        executor_type="codex",
+        trigger_mode="manual",
+        result_summary="Implemented.",
+        evidence_json={"dispatch": {"branch_name": "codex/status-badge", "commit_sha": "abc123"}},
+    )
+    await delivery_repository.update_execution_run(
+        db_session,
+        run,
+        worktree_path=str(worktree_path),
+        branch_name="codex/status-badge",
+        commit_sha="abc123",
+    )
+    await db_session.commit()
+
+    record = await DeliveryService().create_merge_request_record(
+        db_session,
+        coding_task_id=task.id,
+        provider="github",
+    )
+
+    assert captured["git_push"] == {
+        "path": str(worktree_path),
+        "remote": "origin",
+        "source_branch": "codex/status-badge",
+    }
+    assert captured["headers"]["Authorization"] == "Bearer project-github-token"
+    assert captured["url"] == "https://api.github.example/repos/org/demo/pulls"
+    description = captured["json"]["body"]
+    assert "Demand ID" in description
+    assert "Execution run ID" in description
+    assert "npm run build" in description
+    assert "### Evidence Links" in description
+    assert "project-github-token" not in description
+    assert record.provider == "github"
+    assert record.external_id == "42"
+    assert record.url == "https://github.example/org/demo/pull/42"
+    provider_evidence = record.evidence_json["provider_evidence"]
+    assert record.evidence_json["git_push"] == {
+        "enabled": True,
+        "provider": "github",
+        "remote": "origin",
+        "branch": "codex/status-badge",
+        "timeout_seconds": settings.merge_request_push_timeout_seconds,
+        "stdout_tail": "branch pushed",
+        "stderr_tail": "",
+    }
+    assert provider_evidence["credential"] == {
+        "credential_source": "secret_store",
+        "credential_project_id": project.id,
+        "token_secret_name": "github_token",
+    }
+    assert "project-github-token" not in str(record.evidence_json)
 
 
 @pytest.mark.asyncio
@@ -2371,6 +3392,114 @@ async def test_delivery_service_records_deployment_environment_config_and_logs(d
 
 
 @pytest.mark.asyncio
+async def test_delivery_service_prefers_project_deployment_environment_config(db_session, monkeypatch):
+    monkeypatch.setattr(
+        settings,
+        "deploy_environment_config_json",
+        json.dumps(
+            {
+                "test": {
+                    "url": "https://global.example/app",
+                    "log_url": "https://ci.example/global",
+                    "description": "Global test environment",
+                }
+            }
+        ),
+    )
+    project = await auth_repository.create_project(
+        db_session,
+        key="project-deploy-env",
+        name="Project Deploy Env",
+    )
+    await auth_repository.update_project(
+        db_session,
+        project,
+        settings_json={
+            "delivery": {
+                "deployment_environments": {
+                    "test": {
+                        "url": "https://project.example/app",
+                        "log_url": "https://ci.example/project",
+                        "description": "Project test environment",
+                        "environment_name": "Project Test",
+                    }
+                }
+            }
+        },
+    )
+    demand = await delivery_repository.create_demand(
+        db_session,
+        raw_input="Use project deployment environment config.",
+        source_type="new_requirement",
+        title="Project deployment env config",
+        project_id=project.id,
+    )
+    spec = await delivery_repository.create_spec_card(
+        db_session,
+        demand_id=demand.id,
+        status=SpecStatus.APPROVED,
+        title="Project deployment env config",
+        user_story="As an operator, project deployment config overrides global defaults.",
+        scope="Deployment evidence.",
+        acceptance_criteria=["Project deployment config is recorded."],
+        constraints=["Do not expose secrets."],
+        risks=["Low risk."],
+        open_questions=[],
+    )
+    task = await delivery_repository.create_coding_task(
+        db_session,
+        demand_id=demand.id,
+        spec_card_id=spec.id,
+        status=CodingTaskStatus.COMPLETED,
+        title="Project deployment env config",
+        task_prompt="Record project deployment config.",
+        allowed_paths=["backend/app/modules/delivery"],
+        forbidden_actions=[],
+        required_checks=[],
+        expected_evidence=[],
+    )
+    run = await delivery_repository.create_execution_run(
+        db_session,
+        coding_task_id=task.id,
+        status=ExecutionRunStatus.SUCCEEDED,
+        executor_type="codex",
+        trigger_mode="manual",
+    )
+    merge_request = await delivery_repository.create_merge_request_record(
+        db_session,
+        coding_task_id=task.id,
+        execution_run_id=run.id,
+        provider="local",
+        status=MergeRequestStatus.REVIEW_PASSED,
+        review_status=ReviewStatus.PASSED,
+        title="Project deployment env config",
+        source_branch="codex/project-deploy-env",
+        target_branch="main",
+    )
+
+    deploy_record = await DeliveryService().create_deploy_record(
+        db_session,
+        merge_request.id,
+        provider="local",
+        environment="test",
+        actor_ref="operator",
+    )
+
+    assert deploy_record.url == "https://project.example/app"
+    assert deploy_record.evidence_json["deployment_config"] == {
+        "environment": "test",
+        "source": "project_settings",
+        "url": "https://project.example/app",
+        "log_url": "https://ci.example/project",
+        "description": "Project test environment",
+        "environment_name": "Project Test",
+    }
+    assert deploy_record.evidence_json["deployment_logs"] == {
+        "configured_log_url": "https://ci.example/project",
+    }
+
+
+@pytest.mark.asyncio
 async def test_delivery_service_redeploys_failed_deployment_with_source_evidence(db_session):
     project = await auth_repository.create_project(
         db_session,
@@ -2590,6 +3719,148 @@ async def test_delivery_service_observability_summary_reports_core_alerts(db_ses
     assert alert_entities["worker-lease-expired"] == [expired_run.id]
     assert alert_entities["deployment-failed"] == [failed_deploy.id]
     assert alert_entities["secret-unhealthy"] == [secret.id]
+
+
+@pytest.mark.asyncio
+async def test_delivery_service_observability_summary_reports_execution_failure_rate(db_session, monkeypatch):
+    monkeypatch.setattr(settings, "observability_failure_rate_window_minutes", 60)
+    monkeypatch.setattr(settings, "observability_failure_rate_min_runs", 5)
+    monkeypatch.setattr(settings, "observability_failure_rate_threshold_percent", 40)
+
+    project = await auth_repository.create_project(
+        db_session,
+        key="failure-rate",
+        name="Failure Rate",
+    )
+    demand = await delivery_repository.create_demand(
+        db_session,
+        raw_input="Track execution failure rate.",
+        source_type="new_requirement",
+        title="Failure rate",
+        project_id=project.id,
+    )
+    spec = await delivery_repository.create_spec_card(
+        db_session,
+        demand_id=demand.id,
+        status=SpecStatus.APPROVED,
+        title="Failure rate",
+        user_story="As an operator, I can detect abnormal execution failures.",
+        scope="Observability",
+        acceptance_criteria=["Failure rate alert is emitted."],
+        constraints=[],
+        risks=[],
+        open_questions=[],
+    )
+    task = await delivery_repository.create_coding_task(
+        db_session,
+        demand_id=demand.id,
+        spec_card_id=spec.id,
+        status=CodingTaskStatus.READY,
+        title="Failure rate task",
+        task_prompt="Implement execution failure rate alert.",
+        allowed_paths=["backend/app"],
+        forbidden_actions=[],
+        required_checks=[],
+        expected_evidence=[],
+    )
+
+    for _ in range(3):
+        await delivery_repository.create_execution_run(
+            db_session,
+            coding_task_id=task.id,
+            status=ExecutionRunStatus.SUCCEEDED,
+            executor_type="symphony",
+            trigger_mode="manual",
+        )
+    failed_runs = []
+    for _ in range(2):
+        failed_runs.append(
+            await delivery_repository.create_execution_run(
+                db_session,
+                coding_task_id=task.id,
+                status=ExecutionRunStatus.FAILED,
+                executor_type="symphony",
+                trigger_mode="manual",
+            )
+        )
+    await db_session.commit()
+
+    summary = await DeliveryService().get_observability_summary(db_session, project_ids=[project.id])
+
+    assert summary["status"] == "critical"
+    assert summary["metrics"]["recent_execution_runs"] == 5
+    assert summary["metrics"]["recent_failed_execution_runs"] == 2
+    assert summary["metrics"]["recent_execution_failure_rate_percent"] == 40
+    alert = next(item for item in summary["alerts"] if item["id"] == "execution-failure-rate")
+    assert alert["category"] == "execution"
+    assert alert["count"] == 2
+    assert alert["entity_ids"] == [run.id for run in reversed(failed_runs)]
+
+
+@pytest.mark.asyncio
+async def test_delivery_service_project_observability_summaries(db_session, monkeypatch):
+    monkeypatch.setattr(settings, "observability_queue_backlog_threshold", 1)
+    active_project = await auth_repository.create_project(
+        db_session,
+        key="active-health",
+        name="Active Health",
+    )
+    quiet_project = await auth_repository.create_project(
+        db_session,
+        key="quiet-health",
+        name="Quiet Health",
+    )
+    demand = await delivery_repository.create_demand(
+        db_session,
+        raw_input="Create project health summary.",
+        source_type="new_requirement",
+        title="Project health",
+        project_id=active_project.id,
+    )
+    spec = await delivery_repository.create_spec_card(
+        db_session,
+        demand_id=demand.id,
+        status=SpecStatus.APPROVED,
+        title="Project health",
+        user_story="As an operator, I can see project health.",
+        scope="Project observability summary.",
+        acceptance_criteria=["Project health includes alert counts."],
+        constraints=[],
+        risks=[],
+        open_questions=[],
+    )
+    task = await delivery_repository.create_coding_task(
+        db_session,
+        demand_id=demand.id,
+        spec_card_id=spec.id,
+        status=CodingTaskStatus.READY,
+        title="Project health task",
+        task_prompt="Implement project health.",
+        allowed_paths=[],
+        forbidden_actions=[],
+        required_checks=[],
+        expected_evidence=[],
+    )
+    await delivery_repository.create_execution_run(
+        db_session,
+        coding_task_id=task.id,
+        status=ExecutionRunStatus.QUEUED,
+        executor_type="symphony",
+        trigger_mode="manual",
+    )
+    await db_session.commit()
+
+    summaries = await DeliveryService().get_project_observability_summaries(
+        db_session,
+        project_ids=[active_project.id, quiet_project.id],
+    )
+
+    by_project = {summary["project_key"]: summary for summary in summaries}
+    assert by_project["active-health"]["status"] == "warning"
+    assert by_project["active-health"]["warning_alerts"] == 1
+    assert by_project["active-health"]["top_alerts"][0]["id"] == "queue-backlog"
+    assert by_project["quiet-health"]["status"] == "healthy"
+    assert by_project["quiet-health"]["alert_count"] == 0
 
 
 @pytest.mark.asyncio

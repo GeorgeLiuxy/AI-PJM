@@ -77,13 +77,13 @@ AI PJM 的生产级目标：
 当前仍不是生产级：
 
 - 权限仍是本地首版，但当前阶段只需要最小角色模型；企业 SSO、复杂组织角色和审计报表平台化不作为近期主线。
-- 密钥和 Token 已有本地加密存储、健康检查和过期提示首版，Dify、OpenAI、GitLab MR 和 webhook 部署已接入项目级消费；OpenAI/GitLab 凭证已有只读远端探测和失败原因写回，Dify 支持通过显式 `DIFY_HEALTH_CHECK_URL` 配置安全只读探测。尚未接 Vault/KMS 和集中轮换策略。
-- GitLab MR 创建、源分支自动推送、远端评审同步和阻塞意见自动修复已有首版；GitHub provider、GitLab webhook 和 reviewer/label 配置仍待实现。
-- webhook 测试部署 client 已有首版，失败部署重新部署入口、环境级 URL 配置和部署日志证据归档已完成；仍缺生产 CI/CD 平台深度状态轮询。
-- Symphony Bridge、最小 worker、lease 恢复、过期队列恢复脚本和暂停/恢复/取消控制已有首版；真实 Symphony daemon、失败重试幂等增强和生产 worker 运维仍待实现。
-- Alembic 迁移链路首版已完成，并已通过 Docker PostgreSQL 真库升级到 head 演练；SQLite/PostgreSQL 最小备份恢复脚本已完成，性能压测仍待实现。
-- 没有完整审计、告警和运行指标。
-- Dify/OpenAI 本地质量评分已完成；真实 Dify/OpenAI 环境生产联调仍待完成。
+- 密钥和 Token 已有本地加密存储、健康检查和过期提示首版，Dify、OpenAI、GitLab MR、GitHub PR 和 webhook 部署已接入项目级消费；OpenAI/GitLab/GitHub 凭证已有只读远端探测和失败原因写回，Dify 支持通过显式 `DIFY_HEALTH_CHECK_URL` 配置安全只读探测。尚未接 Vault/KMS 和集中轮换策略。
+- GitLab MR 创建、GitHub PR 创建、源分支自动推送、远端评审同步、阻塞意见自动修复、reviewer/assignee/label 配置和 GitLab/GitHub webhook 更新原 MR/PR 记录已有首版。
+- webhook 测试部署 client 已有首版，失败部署重新部署入口、环境级 URL 配置、部署日志证据归档、后台同步启停脚本、常见 CI/CD 状态语义归一化和通用状态节点证据已完成；仍缺目标 CI/CD 平台专用深度状态轮询。
+- Symphony Bridge、最小 worker、worker 循环异常不中断、lease 恢复、过期队列恢复脚本、失败重试幂等首版和暂停/恢复/取消控制已有首版；真实 Symphony daemon 和生产 worker 运维仍待实现。
+- Alembic 迁移链路首版已完成，并已通过 Docker PostgreSQL 真库升级到 head 演练；SQLite/PostgreSQL 最小备份恢复脚本已完成，后端只读性能烟测入口已完成。
+- 没有完整审计和集中运行指标平台；Prometheus 文本指标出口、集中告警通用 webhook 转发脚本和本地告警 worker 启停脚本已有首版。
+- Dify/OpenAI 本地质量评分和只读质量烟测脚本已完成；真实 Dify/OpenAI 环境生产联调仍待在目标环境执行。
 
 ## 4. 生产级架构原则
 
@@ -231,7 +231,7 @@ AI 不允许直接决定：
 
 目标：让 Git、AI、部署系统凭证可安全使用。
 
-当前状态：已完成本地首版。已有 `SecretStore` 服务端接口、项目级密钥表、Fernet 加密存储、密钥掩码响应、创建/轮换审计事件、访问管理页配置入口和基础权限测试。Dify Provider 会优先按项目读取 `dify_api_key`，OpenAI Provider 会优先按项目读取 `openai_api_key`，GitLab MR provider 会读取 `gitlab_token`，webhook 部署 provider 会读取 `deploy_token`；项目未配置时分别回退到全局 `DIFY_API_KEY`、`OPENAI_API_KEY`、`GITLAB_TOKEN`、`DEPLOY_TOKEN`。主密钥通过 `SECRET_STORE_MASTER_KEY` 注入，未配置时禁止写入密钥。执行日志、执行证据和自测门禁证据已在持久化前进行敏感信息脱敏。密钥列表和健康检查接口已支持过期时间、健康状态、可解密性检查、OpenAI/GitLab 只读远端探测、最近失败原因写回和最近使用时间展示。
+当前状态：已完成本地首版。已有 `SecretStore` 服务端接口、项目级密钥表、Fernet 加密存储、密钥掩码响应、创建/轮换/禁用审计事件、访问管理页配置入口、轮换修复入口、停用/启用入口和基础权限测试。Dify Provider 会优先按项目读取 `dify_api_key`，OpenAI Provider 会优先按项目读取 `openai_api_key`，GitLab MR provider 会读取 `gitlab_token`，GitHub PR provider 会读取 `github_token`，webhook 部署 provider 会读取 `deploy_token`；项目未配置时分别回退到全局 `DIFY_API_KEY`、`OPENAI_API_KEY`、`GITLAB_TOKEN`、`GITHUB_TOKEN`、`DEPLOY_TOKEN`。主密钥通过 `SECRET_STORE_MASTER_KEY` 注入，未配置时禁止写入密钥。执行日志、执行证据和自测门禁证据已在持久化前进行敏感信息脱敏。密钥列表和健康检查接口已支持过期时间、健康状态、可解密性检查、OpenAI/GitLab/GitHub 只读远端探测、最近失败原因写回和最近使用时间展示。
 
 实施内容：
 
@@ -239,7 +239,7 @@ AI 不允许直接决定：
 - 本地开发支持 `.env`，生产必须接 Vault、云密钥服务或数据库加密存储。（本地加密存储首版已完成）
 - 密钥只在服务端使用，不进入前端。（首版已完成）
 - 日志和证据链做脱敏。（API 响应、运行日志和执行证据首版已完成）
-- Token 配置支持项目级隔离。（Dify/OpenAI/GitLab/webhook 部署消费首版已完成）
+- Token 配置支持项目级隔离。（Dify/OpenAI/GitLab/GitHub/webhook 部署消费首版已完成）
 - 增加凭证健康检查和过期提示。（首版已完成）
 
 验收标准：
@@ -247,15 +247,15 @@ AI 不允许直接决定：
 - 前端和 API 响应不会返回明文密钥。（首版已验证）
 - 日志中不会出现 Token。（首版已增加回归用例）
 - GitLab/Dify/OpenAI/部署凭证可按项目配置并由 provider 服务端消费。
-- 凭证失效时页面显示明确错误和修复入口。（健康状态展示已完成，轮换修复入口待增强）
+- 凭证失效时页面显示明确错误和修复入口。（健康状态展示、访问管理页轮换入口和停用/启用入口首版已完成）
 
 剩余工作：
 
 - 接入 Vault/KMS 或生产级密钥后端，支持主密钥轮换。
-- 增加更多 Provider 的安全远端可用性探测；OpenAI/GitLab 只读远端探测已完成，Dify 显式安全 URL 探测已完成。
+- 增加更多 Provider 的安全远端可用性探测；OpenAI/GitLab/GitHub 只读远端探测已完成，Dify 显式安全 URL 探测已完成。
 - 扩展密钥健康检查，增加更多 Provider 凭证格式、最近失败原因聚合和过期告警联动。
 - 扩展日志/证据敏感信息扫描规则，增加更多 Provider 凭证格式和持续扫描告警。
-- 增加密钥轮换 UI、禁用/删除策略和审批门禁。
+- 增加密钥删除策略、审批门禁和集中轮换策略。
 
 不做风险：
 
@@ -265,7 +265,7 @@ AI 不允许直接决定：
 
 目标：替换 SQLite，保证可升级、可备份、可恢复。
 
-当前状态：迁移链路首版已完成。开发环境继续使用 SQLite、`create_all` 和少量幂等补列兼容已有本地库；生产路径提供 `backend/scripts/migrate.py` 执行 Alembic `upgrade head/current`，当前迁移可从空库升级到 head，并由 `tests/test_migrations.py` 覆盖 SQLite 干净库验证。非 SQLite 启动会在 `DATABASE_VALIDATE_MIGRATIONS=true` 时校验数据库是否到达 Alembic head。2026-06-04 已用 Docker PostgreSQL 16 真库验证 `upgrade head` 到 `012`，并确认交付主链路表已具备 `trace_id` 字段。`scripts/database_backup.py` 和 `scripts/database_restore.py` 已提供 SQLite/PostgreSQL 最小备份恢复入口。性能压测仍待完成。
+当前状态：迁移链路首版已完成。开发环境继续使用 SQLite、`create_all` 和少量幂等补列兼容已有本地库；生产路径提供 `backend/scripts/migrate.py` 执行 Alembic `upgrade head/current`，当前迁移可从空库升级到 head，并由 `tests/test_migrations.py` 覆盖 SQLite 干净库验证。非 SQLite 启动会在 `DATABASE_VALIDATE_MIGRATIONS=true` 时校验数据库是否到达 Alembic head。2026-06-04 已用 Docker PostgreSQL 16 真库验证 `upgrade head` 到 `012`，并确认交付主链路表已具备 `trace_id` 字段。`scripts/database_backup.py` 和 `scripts/database_restore.py` 已提供 SQLite/PostgreSQL 最小备份恢复入口。`scripts/seed_delivery_capacity.py` 可安全生成容量基准所需的合成交付数据，`scripts/performance_smoke.py` 已提供后端只读性能烟测入口，可验证核心读接口 p95 和错误率；1 万条任务规模的正式容量基准仍需在目标生产环境执行并固化阈值。
 
 实施内容：
 
@@ -281,7 +281,7 @@ AI 不允许直接决定：
 - 新环境可一键执行 migration 初始化。（SQLite 干净库验证和 Docker PostgreSQL 真库验证已覆盖）
 - 旧版本升级不会丢数据。
 - 测试覆盖 SQLite 和 PostgreSQL 至少一种生产等价路径。（SQLite 迁移链路和 Docker PostgreSQL 真库升级演练已覆盖）
-- 关键列表接口在 1 万条任务下仍可接受。（性能压测待完成）
+- 关键列表接口在 1 万条任务下仍可接受。（容量数据准备脚本和只读性能烟测入口已完成，正式容量基准待在目标生产环境执行）
 
 不做风险：
 
@@ -291,7 +291,7 @@ AI 不允许直接决定：
 
 目标：复用 OpenAI Symphony 的 Codex 编排模式，让长任务脱离页面请求，支持稳定批量执行。
 
-当前状态：已完成首版 internal bridge API、最小命令行 worker、`SymphonyBridgeExecutor`、lease 过期失败恢复、暂停/恢复/取消控制、同一任务活跃 run 幂等保护，以及本地常驻 worker 启停脚本和 status 文件。`executor_type=symphony` 的执行记录可以保持 queued，等待 worker claim；worker complete 后由 AI PJM 校验 required checks、allowed paths 和必要变更证据，再决定最终门禁。运行中 worker 如果超过 lease 未 heartbeat，会被标记 failed 并保留恢复证据，避免永久卡在 running；`scripts/recover_symphony_runs.py` 可手动或定时恢复过期 running run，并输出状态文件。操作者可以暂停 queued run、恢复 paused run、取消 queued/paused/running run；取消后的 worker late complete 会被拒绝。尚未完成失败重试幂等锁增强和真实 Symphony daemon 替换。
+当前状态：已完成首版 internal bridge API、最小命令行 worker、`SymphonyBridgeExecutor`、lease 过期失败恢复、暂停/恢复/取消控制、同一任务活跃 run 幂等保护、手动重试 `retry_context.retry_chain` 证据，以及本地常驻 worker 启停脚本和 status 文件。`executor_type=symphony` 的执行记录可以保持 queued，等待 worker claim；worker complete 后由 AI PJM 校验 required checks、allowed paths 和必要变更证据，再决定最终门禁。运行中 worker 如果超过 lease 未 heartbeat，会被标记 failed 并保留恢复证据，避免永久卡在 running；`scripts/recover_symphony_runs.py` 可手动或定时恢复过期 running run，并输出状态文件。操作者可以暂停 queued run、恢复 paused run、取消 queued/paused/running run；取消后的 worker late complete 会被拒绝。真实 Symphony daemon 替换仍待完成。
 
 实施内容：
 
@@ -302,7 +302,7 @@ AI 不允许直接决定：
 - 执行任务入队，不在 HTTP 请求里长时间运行。（symphony executor 首版已完成）
 - 支持排队、运行、成功、失败、取消、暂停、恢复、超时。（取消/暂停/恢复和 lease 过期失败恢复首版已完成）
 - 支持最大并发、项目级并发、任务级超时。
-- 支持失败重试和幂等锁。（同一任务活跃 run 幂等保护首版已完成，失败重试幂等锁仍需增强）
+- 支持失败重试和幂等锁。（同一任务活跃 run 幂等保护、手动重试 retry chain 和重复重试复用 active run 首版已完成）
 - worker 异常退出后能恢复 running 状态。（lease 过期标记 failed 首版已完成）
 
 建议技术方案：
@@ -353,18 +353,18 @@ AI 不允许直接决定：
 
 目标：让自测通过的代码进入真实代码评审系统。
 
-当前状态：GitLab `MergeRequestClient` 首版已实现，可用项目级 `gitlab_token` 或全局 `GITLAB_TOKEN` 调用 GitLab API 创建 MR，并把远端 URL、iid、源分支、目标分支和凭据来源写入证据。创建 MR 前可自动 `git push` 执行分支到配置的远端，push 失败会阻断 MR 创建并保留脱敏错误。远端评审同步首版已实现，可通过 `POST /api/v2/merge-requests/{id}/sync-review` 拉取 GitLab MR 状态、讨论评论和 commit CI 状态，写回 MR 状态、`review_passed` 门禁、审计事件和脱敏证据；交付工作台已提供远端 MR 的“同步评审”入口，本地 MR 仍保留人工评审通过入口。评审阻塞自动修复串联首版已实现，可通过 `POST /api/v2/merge-requests/{id}/auto-repair` 把远端阻塞项写入 `repair_context.review_issues` 并触发受控修复 run；修复成功后会把修复分支推回原 GitLab MR 源分支，并把 MR 状态重置为待同步远端评审。reviewer/label 配置、GitLab webhook 减少轮询仍待实现。GitHub provider 未实现。
+当前状态：GitLab `MergeRequestClient` 首版已实现，可用项目级 `gitlab_token` 或全局 `GITLAB_TOKEN` 调用 GitLab API 创建 MR，并把远端 URL、iid、源分支、目标分支和凭据来源写入证据。GitHub `PullRequestClient` 首版已实现，可用项目级 `github_token` 或全局 `GITHUB_TOKEN` 调用 GitHub API 创建 PR，并同步 PR review、review comment、issue comment、check run 和 combined status。创建 MR/PR 前可自动 `git push` 执行分支到配置的远端，push 失败会阻断创建并保留脱敏错误。可通过 `GITLAB_DEFAULT_LABELS`、`GITLAB_REVIEWER_IDS`、`GITLAB_ASSIGNEE_IDS` 配置 GitLab 默认标签、reviewer 和 assignee；可通过 `GITHUB_DEFAULT_LABELS`、`GITHUB_REVIEWERS`、`GITHUB_ASSIGNEES` 配置 GitHub 默认标签、reviewer 和 assignee，并写入证据。远端评审同步首版已实现，可通过 `POST /api/v2/merge-requests/{id}/sync-review` 拉取远端评审和 CI/check 状态，写回 MR/PR 状态、`review_passed` 门禁、审计事件和脱敏证据；交付工作台已提供远端 MR/PR 的“同步评审”入口，本地 MR 仍保留人工评审通过入口。`POST /api/v2/gitlab/webhook` 已支持用 `GITLAB_WEBHOOK_SECRET_TOKEN` 校验 GitLab MR、pipeline 和 note 事件，按 MR iid 更新已有 MR 记录、门禁、审计和 webhook 证据；`POST /api/v2/github/webhook` 已支持用 `GITHUB_WEBHOOK_SECRET` 校验 GitHub `X-Hub-Signature-256`，按 PR number 更新已有 PR 记录、门禁、审计和 webhook 证据，减少人工轮询。评审阻塞自动修复串联首版已实现，可通过 `POST /api/v2/merge-requests/{id}/auto-repair` 把远端阻塞项写入 `repair_context.review_issues` 并触发受控修复 run；修复成功后会把修复分支推回原 GitLab/GitHub 源分支，并把 MR/PR 状态重置为待同步远端评审。
 
 实施内容：
 
-- 增加 GitLab/GitHub `MergeRequestClient`。（GitLab 首版已完成，GitHub 待实现）
+- 增加 GitLab/GitHub `MergeRequestClient`。（GitLab MR 和 GitHub PR 首版已完成）
 - 创建真实 MR/PR。（GitLab 首版已完成，源分支自动 push 首版已完成）
-- 设置标题、描述、源分支、目标分支、标签、reviewer。
-- MR 描述自动包含需求、风险、变更范围、检查结果、证据链接。（需求、风险、分支、commit、检查结果、变更文件首版已完成，证据链接待补）
+- 设置标题、描述、源分支、目标分支、标签、reviewer。（首版已支持默认 label/reviewer/assignee 配置）
+- MR 描述自动包含需求、风险、变更范围、检查结果、证据链接。（需求、风险、分支、commit、检查结果、变更文件和 AI PJM 深链证据链接首版已完成）
 - 同步 CI 状态。（GitLab 手动同步接口首版已完成）
 - 拉取评论和阻塞意见。（GitLab 手动同步接口首版已完成）
 - 阻塞意见进入自动修复或人工处理。（状态、门禁回写、自动修复串联和修复后推回原 MR 首版已完成）
-- 支持 webhook，减少轮询。
+- 支持 webhook，减少轮询。（GitLab webhook 更新已有 MR 记录、GitHub webhook 更新已有 PR 记录首版已完成）
 
 验收标准：
 
@@ -382,15 +382,15 @@ AI 不允许直接决定：
 
 目标：让 MR 后的结果进入可验证环境。
 
-当前状态：`DeployClient` 边界和 `webhook` 部署 provider 首版已实现，可用项目级 `deploy_token` 或全局 `DEPLOY_TOKEN` 调用外部 webhook，并把部署 URL、状态、commit 和凭据来源写入 `DeployRecord` 证据。webhook 返回 `status_url` 时，可通过 `POST /api/v2/deployments/{id}/sync-status` 手动同步部署状态，也可通过 `POST /api/v2/deployments/sync-pending` 批量同步 pending 部署；`scripts/deployment_sync_worker.py --loop` 可后台定时调用服务层同步 pending 部署。同步会写回 `test_deployed` 门禁、审计事件和脱敏证据。失败状态会写入失败门禁，不会推进验收；失败部署可通过 `POST /api/v2/deployments/{id}/redeploy` 创建新部署记录并保留来源证据。`DEPLOY_ENVIRONMENT_CONFIG_JSON` 已支持按环境配置默认 URL、日志 URL 和说明，provider 返回的 `log_url/logs` 会脱敏归档到部署证据。生产 CI/CD 状态语义适配、环境配置 UI 和更完整日志归档策略仍待增强。
+当前状态：`DeployClient` 边界和 `webhook` 部署 provider 首版已实现，可用项目级 `deploy_token` 或全局 `DEPLOY_TOKEN` 调用外部 webhook，并把部署 URL、状态、commit 和凭据来源写入 `DeployRecord` 证据。webhook 返回 `status_url` 时，可通过 `POST /api/v2/deployments/{id}/sync-status` 手动同步部署状态，也可通过 `POST /api/v2/deployments/sync-pending` 批量同步 pending 部署；`scripts/deployment_sync_worker.py --loop` 可后台定时调用服务层同步 pending 部署，项目根目录的 `scripts/start-deployment-sync-worker.ps1` 和 `scripts/stop-deployment-sync-worker.ps1` 已提供本地启停入口，`scripts/start-dev.ps1 -WithDeploymentSync` 可随开发环境联动启动。同步会写回 `test_deployed` 门禁、审计事件和脱敏证据。失败状态会写入失败门禁，不会推进验收；失败部署可通过 `POST /api/v2/deployments/{id}/redeploy` 创建新部署记录并保留来源证据。`GET/PUT /api/v2/projects/{project_id}/deployment-environments` 已支持项目级测试环境 URL、日志 URL 和说明配置，访问管理页已提供最小项目测试环境配置入口；创建部署时优先使用项目配置，缺省再回退到 `DEPLOY_ENVIRONMENT_CONFIG_JSON`。provider 返回的 `log_url/logs` 会脱敏归档到部署证据。webhook provider 已能识别常见 CI/CD 状态字段、嵌套 pipeline/job/stage/step/check/task 状态和状态词，并把原始状态、归一化状态、状态路径、失败/等待节点摘要写入证据。目标 CI/CD 平台专用深度轮询和更完整日志归档策略仍待在真实环境增强。
 
 实施内容：
 
 - 增加 `DeployClient` 接口。（已完成首版）
 - 对接现有 CI/CD、测试环境平台或脚本入口。（webhook 首版已完成）
-- 支持按项目配置部署环境。（全局环境 JSON 首版已完成，项目级 UI 待增强）
-- 记录部署 URL、版本、commit、日志、状态。（部署 URL、状态、commit、日志 URL 和日志尾部首版已完成）
-- webhook `status_url` 同步部署状态。（单条同步、pending 批量同步入口和后台轮询脚本首版已完成）
+- 支持按项目配置部署环境。（项目级配置 API、访问管理页最小入口和全局环境 JSON 兜底已完成）
+- 记录部署 URL、版本、commit、日志、状态。（部署 URL、状态、commit、日志 URL、日志尾部和通用 CI/CD 状态节点证据首版已完成）
+- webhook `status_url` 同步部署状态。（单条同步、pending 批量同步入口、后台轮询脚本和项目根目录启停脚本首版已完成）
 - 部署失败保留日志并阻断验收。
 - 支持重新部署。（失败部署重新部署首版已完成）
 
@@ -398,7 +398,7 @@ AI 不允许直接决定：
 
 - 评审通过后可触发真实测试环境部署。
 - 页面展示真实测试地址。
-- 部署状态能自动回写。（单条同步、pending 批量同步入口和后台轮询脚本首版已完成）
+- 部署状态能自动回写。（单条同步、pending 批量同步入口、后台轮询脚本和项目根目录启停脚本首版已完成）
 - 部署失败不会推进验收门禁。
 
 不做风险：
@@ -453,7 +453,7 @@ AI 不允许直接决定：
 
 目标：让外部 AI 编排提高方案质量，而不是接管平台状态。
 
-当前状态：Dify/OpenAI Provider 首版已完成，默认不启用。Dify 使用配置的 workflow 生成 Spec/Impact 结构化草稿；OpenAI 使用 Responses API 的 JSON Schema 结构化输出生成 Spec/Impact 草稿。两者都只返回草稿，不直接改数据库状态、不执行代码、不绕过门禁。已具备必填字段、列表字段、风险等级和置信度校验；超时、平台级重试和本地规则降级首版已完成。降级会记录失败 provider、尝试次数和脱敏错误，并在 Spec open questions、门禁 evidence 或 Impact metadata 中可追溯。OpenAI/GitLab 凭证已有只读可用性探测，Dify 支持显式安全 URL 探测；Spec/Impact 会记录 workflow/model、schema name、schema version、prompt version 和本地确定性质量评分。远端生产联调仍待实现。
+当前状态：Dify/OpenAI Provider 首版已完成，默认不启用。Dify 使用配置的 workflow 生成 Spec/Impact 结构化草稿；OpenAI 使用 Responses API 的 JSON Schema 结构化输出生成 Spec/Impact 草稿。两者都只返回草稿，不直接改数据库状态、不执行代码、不绕过门禁。已具备必填字段、列表字段、风险等级和置信度校验；超时、平台级重试和本地规则降级首版已完成。降级会记录失败 provider、尝试次数和脱敏错误，并在 Spec open questions、门禁 evidence 或 Impact metadata 中可追溯。OpenAI/GitLab 凭证已有只读可用性探测，Dify 支持显式安全 URL 探测；Spec/Impact 会记录 workflow/model、schema name、schema version、prompt version 和本地确定性质量评分。`scripts/provider_quality_smoke.py` 已提供只读质量烟测入口，可在目标环境调用 local/Dify/OpenAI 生成草稿并输出质量分。远端生产联调仍待在真实 Dify/OpenAI 环境执行。
 
 实施内容：
 
@@ -463,7 +463,7 @@ AI 不允许直接决定：
 - 增加 Provider 输出校验。（首版已完成）
 - 增加超时、重试、降级策略。（首版已完成）
 - 记录 workflow/model/prompt 版本。（workflow/model、schema name、schema version、prompt version 首版已完成）
-- 评估 Provider 输出质量。（本地确定性质量评分首版已完成，远端生产联调待实现）
+- 评估 Provider 输出质量。（本地确定性质量评分和只读质量烟测脚本已完成，远端生产联调待在目标环境执行）
 
 验收标准：
 
@@ -481,21 +481,21 @@ AI 不允许直接决定：
 
 目标：让生产问题可发现、可定位、可恢复。
 
-当前状态：最小可观测性首版已完成。后端提供 `GET /api/v2/observability/summary`，按项目权限汇总 worker lease 过期、执行队列积压、凭证过期/禁用/即将过期、测试部署失败四类告警；交付工作台顶部展示运行告警、核心计数和前两条告警摘要。需求、Spec、门禁、上下文、影响分析、任务、执行、日志、MR、部署和验收已具备同一 `trace_id` 首版贯穿能力；`scripts/backfill_delivery_trace_ids.py` 可 dry-run 或正式回填历史记录。结构化指标、集中告警、异常失败率和项目健康后台仍待实现。
+当前状态：最小可观测性首版已完成。后端提供 `GET /api/v2/observability/summary`，按项目权限汇总 worker lease 过期、执行队列积压、凭证过期/禁用/即将过期、测试部署失败和近期执行失败率异常告警；`GET /api/v2/observability/projects` 已提供项目维度健康摘要，返回项目状态、告警数、关键指标和前三条告警；`GET /api/v2/observability/metrics` 已提供 Prometheus 0.0.4 文本指标出口，复用 summary 统计口径输出队列、worker、部署、凭证、近期失败率和告警计数。`scripts/observability_alert_worker.py` 可轮询 summary API，并在 warning/critical 时转发到外部 webhook，项目根目录的 `scripts/start-observability-alert-worker.ps1` 和 `scripts/stop-observability-alert-worker.ps1` 已提供本地启停入口，`scripts/start-dev.ps1 -WithObservabilityAlert` 可随开发环境联动启动。交付工作台顶部展示运行告警、核心计数和前两条告警摘要。需求、Spec、门禁、上下文、影响分析、任务、执行、日志、MR、部署和验收已具备同一 `trace_id` 首版贯穿能力；`scripts/backfill_delivery_trace_ids.py` 可 dry-run 或正式回填历史记录。后端 `LOG_FORMAT=json` 已提供 JSON Lines 结构化应用日志开关，可输出 timestamp、level、logger、message、位置和 extra 字段。集中指标平台接入仍待生产环境完成。
 
 实施内容：
 
-- 结构化日志。（待增强）
+- 结构化日志。（`LOG_FORMAT=json` JSON Lines 首版已完成，集中日志平台接入待完成）
 - trace id 贯穿需求、任务、执行、MR、部署、验收。（新记录首版和历史记录回填脚本已完成）
-- 指标：任务数量、成功率、失败率、平均耗时、队列积压、自动修复率。（队列、部署、凭证、worker 首版计数已完成）
-- 告警：worker 停止、队列积压、凭证失效、部署失败、异常失败率。（worker lease、队列积压、凭证、部署失败首版已完成）
-- 管理后台查看系统健康。（工作台告警条首版已完成，管理后台聚合待实现）
+- 指标：任务数量、成功率、失败率、平均耗时、队列积压、自动修复率。（队列、部署、凭证、worker、近期执行失败率和 Prometheus 文本出口首版已完成）
+- 告警：worker 停止、队列积压、凭证失效、部署失败、异常失败率。（worker lease、队列积压、凭证、部署失败、近期执行失败率和本地告警 worker 启停脚本首版已完成）
+- 管理后台查看系统健康。（工作台告警条、项目健康摘要 API、Prometheus 文本指标出口和通用 webhook 转发脚本首版已完成，完整管理后台页面待增强）
 
 验收标准：
 
 - 任一失败任务可通过 trace id 找到完整日志。（新记录首版已具备统一 trace id，历史回填脚本已完成，集中日志检索待增强）
-- 队列积压和 worker 异常能告警。（首版已完成）
-- 管理员能看到各项目健康状态。（工作台首版已完成，管理后台聚合待实现）
+- 队列积压和 worker 异常能告警。（summary API、工作台摘要和本地告警 worker 启停脚本首版已完成）
+- 管理员能看到各项目健康状态。（项目健康摘要 API、工作台首版、Prometheus 文本指标出口和通用 webhook 告警转发已完成，完整管理后台页面待增强）
 
 不做风险：
 
@@ -645,10 +645,10 @@ AI 不允许直接决定：
 1. 校准文档口径，明确项目不是企业治理平台。
 2. 按 `docs/symphony-integration-plan.md` 做 S0：拉通 Symphony 本地运行和 Codex 调用方式。
 3. 做 S1/S2：实现 AI PJM internal execution bridge API 和 `SymphonyBridgeExecutor`。
-4. 完善 SecretStore Provider 消费：Dify/OpenAI/GitLab/webhook 部署已完成首版项目级读取；OpenAI/GitLab 凭证远端探测和失败原因写回首版已完成，Dify 显式安全 URL 探测首版已完成。
+4. 完善 SecretStore Provider 消费：Dify/OpenAI/GitLab/GitHub/webhook 部署已完成首版项目级读取；OpenAI/GitLab/GitHub 凭证远端探测和失败原因写回首版已完成，Dify 显式安全 URL 探测首版已完成。
 5. 做 S3/S4：用 Symphony 执行低风险任务，并增强真实 GitLab/GitHub MR。
-6. 做 S5：增强真实测试环境部署 Provider，补生产 CI/CD 状态语义适配和环境配置 UI；重新部署、环境 JSON 配置和日志证据首版已完成。
-7. 做 S6：补性能压测、集中告警和异常失败率；备份恢复、过期队列恢复、历史 trace 回填、Alembic、Docker PostgreSQL 真库演练、trace id 和最小可观测性首版已完成。
+6. 做 S5：增强真实测试环境部署 Provider，补目标 CI/CD 平台深度状态轮询；重新部署、项目级环境配置 API、访问管理页最小入口、环境 JSON 兜底、日志证据和常见 CI/CD 状态语义归一化首版已完成。
+7. 做 S6：补目标生产容量基准和集中指标平台接入；备份恢复、过期队列恢复、历史 trace 回填、Alembic、Docker PostgreSQL 真库演练、trace id、容量数据准备脚本、只读性能烟测、异常失败率、Prometheus 文本指标出口、通用 webhook 告警转发和最小可观测性首版已完成。
 8. 增强高风险动作二次确认和任务级责任字段。
 
 这 8 项完成后，AI PJM 才具备小团队低风险任务试点价值。企业 SSO、复杂角色、审计报表平台化不作为试点前置条件。

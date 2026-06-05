@@ -48,6 +48,8 @@ function Stop-WorkspaceListeners {
 Stop-FromPidFile -Path (Join-Path $RuntimeDir "backend.pid")
 Stop-FromPidFile -Path (Join-Path $RuntimeDir "frontend.pid")
 Stop-FromPidFile -Path (Join-Path $RuntimeDir "symphony-worker.pid")
+Stop-FromPidFile -Path (Join-Path $RuntimeDir "deployment-sync-worker.pid")
+Stop-FromPidFile -Path (Join-Path $RuntimeDir "observability-alert-worker.pid")
 
 $ports = @(8010, 5173, 5174, 5175, 5176)
 $portsPath = Join-Path $RuntimeDir "ports.json"

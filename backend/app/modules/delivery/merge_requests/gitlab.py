@@ -50,6 +50,15 @@ class GitLabMergeRequestClient:
             "description": description,
             "remove_source_branch": False,
         }
+        labels = self._csv_items(settings.gitlab_default_labels)
+        reviewer_ids = self._int_items(settings.gitlab_reviewer_ids)
+        assignee_ids = self._int_items(settings.gitlab_assignee_ids)
+        if labels:
+            payload["labels"] = ",".join(labels)
+        if reviewer_ids:
+            payload["reviewer_ids"] = reviewer_ids
+        if assignee_ids:
+            payload["assignee_ids"] = assignee_ids
         try:
             async with httpx.AsyncClient(timeout=30) as client:
                 response = await client.post(
@@ -77,6 +86,9 @@ class GitLabMergeRequestClient:
                 "source_branch": source_branch,
                 "target_branch": target_branch,
                 "commit_sha": run.commit_sha,
+                "labels": labels,
+                "reviewer_ids": reviewer_ids,
+                "assignee_ids": assignee_ids,
                 "credential": self._credential.metadata(secret_name_key="token_secret_name"),
             },
         )
@@ -318,3 +330,15 @@ class GitLabMergeRequestClient:
             return None
         text = str(value).strip()
         return text or None
+
+    def _csv_items(self, value: str) -> list[str]:
+        return [item.strip() for item in value.split(",") if item.strip()]
+
+    def _int_items(self, value: str) -> list[int]:
+        items: list[int] = []
+        for item in self._csv_items(value):
+            try:
+                items.append(int(item))
+            except ValueError as exc:
+                raise BadRequestException(f"GitLab id list contains a non-integer value: {item}") from exc
+        return items

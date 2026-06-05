@@ -244,6 +244,28 @@ class DeployRecordCreateRequest(BaseModel):
     url: Optional[str] = Field(default=None, max_length=1000)
 
 
+class DeploymentEnvironmentConfigItem(BaseModel):
+    """Project-scoped deployment environment settings."""
+
+    url: Optional[str] = Field(default=None, max_length=1000)
+    log_url: Optional[str] = Field(default=None, max_length=1000)
+    description: Optional[str] = Field(default=None, max_length=1000)
+    environment_name: Optional[str] = Field(default=None, max_length=200)
+
+
+class ProjectDeploymentEnvironmentConfigUpdateRequest(BaseModel):
+    """Replace project-scoped deployment environment settings."""
+
+    environments: dict[str, DeploymentEnvironmentConfigItem] = Field(default_factory=dict)
+
+
+class ProjectDeploymentEnvironmentConfigResponse(BaseModel):
+    """Project-scoped deployment environment settings response."""
+
+    project_id: int
+    environments: dict[str, DeploymentEnvironmentConfigItem] = Field(default_factory=dict)
+
+
 class VerificationRecordCreateRequest(BaseModel):
     """Record verification result for a test deployment."""
 
@@ -305,7 +327,7 @@ class ObservabilityAlertResponse(BaseModel):
     """Actionable operational alert derived from delivery state."""
 
     id: str
-    category: Literal["worker", "queue", "secret", "deployment"]
+    category: Literal["worker", "queue", "secret", "deployment", "execution"]
     severity: Literal["warning", "critical"]
     title: str
     summary: str
@@ -321,6 +343,21 @@ class ObservabilitySummaryResponse(BaseModel):
     status: Literal["healthy", "warning", "critical"]
     metrics: dict[str, int]
     alerts: list[ObservabilityAlertResponse] = Field(default_factory=list)
+
+
+class ProjectObservabilitySummaryResponse(BaseModel):
+    """Project-level operational health summary."""
+
+    project_id: int
+    project_key: str
+    project_name: str
+    status: Literal["healthy", "warning", "critical"]
+    generated_at: datetime
+    alert_count: int
+    critical_alerts: int
+    warning_alerts: int
+    metrics: dict[str, int]
+    top_alerts: list[ObservabilityAlertResponse] = Field(default_factory=list)
 
 
 class SymphonyBridgeClaimRequest(BaseModel):

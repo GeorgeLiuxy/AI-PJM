@@ -159,6 +159,23 @@ class DeliveryRepository:
         )
         return result.scalar_one_or_none()
 
+    async def get_merge_request_by_provider_external_id(
+        self,
+        db: AsyncSession,
+        provider: str,
+        external_id: str,
+    ) -> Optional[MergeRequestRecord]:
+        result = await db.execute(
+            select(MergeRequestRecord)
+            .where(
+                MergeRequestRecord.provider == provider,
+                MergeRequestRecord.external_id == external_id,
+            )
+            .order_by(MergeRequestRecord.updated_at.desc(), MergeRequestRecord.id.desc())
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+
     async def get_deploy_record(
         self,
         db: AsyncSession,
@@ -270,6 +287,7 @@ class DeliveryRepository:
         limit: int = 30,
         offset: int = 0,
         project_ids: list[int] | None = None,
+        updated_since: datetime | None = None,
     ) -> list[ExecutionRun]:
         query = (
             select(ExecutionRun)
@@ -286,6 +304,8 @@ class DeliveryRepository:
             query = query.where(ExecutionRun.status.in_(statuses))
         if executor_types:
             query = query.where(ExecutionRun.executor_type.in_(executor_types))
+        if updated_since is not None:
+            query = query.where(ExecutionRun.updated_at >= updated_since)
         if project_ids is not None:
             if not project_ids:
                 return []
@@ -303,12 +323,15 @@ class DeliveryRepository:
         statuses: list[str] | None = None,
         executor_types: list[str] | None = None,
         project_ids: list[int] | None = None,
+        updated_since: datetime | None = None,
     ) -> int:
         query = select(func.count(ExecutionRun.id))
         if statuses:
             query = query.where(ExecutionRun.status.in_(statuses))
         if executor_types:
             query = query.where(ExecutionRun.executor_type.in_(executor_types))
+        if updated_since is not None:
+            query = query.where(ExecutionRun.updated_at >= updated_since)
         if project_ids is not None:
             if not project_ids:
                 return 0

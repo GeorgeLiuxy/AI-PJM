@@ -1,6 +1,9 @@
 """Delivery v2 API endpoints."""
 
-from fastapi import APIRouter, Depends, status
+import json
+
+from fastapi import APIRouter, Depends, Header, Request, status
+from fastapi.responses import PlainTextResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.responses import success_response
@@ -30,6 +33,9 @@ from app.modules.delivery.schemas import (
     MergeRequestRecordResponse,
     MergeRequestReviewRequest,
     ObservabilitySummaryResponse,
+    ProjectDeploymentEnvironmentConfigResponse,
+    ProjectDeploymentEnvironmentConfigUpdateRequest,
+    ProjectObservabilitySummaryResponse,
     RepoContextCreateRequest,
     RepoContextResponse,
     SpecCardResponse,
@@ -41,6 +47,44 @@ from app.modules.delivery.service import delivery_service
 
 
 router = APIRouter(tags=["delivery"])
+
+
+@router.get("/projects/{project_id}/deployment-environments", response_model=dict)
+async def get_project_deployment_environments(
+    project_id: int,
+    db: AsyncSession = Depends(get_db),
+    principal: AuthPrincipal = Depends(get_current_principal),
+):
+    require_capability(principal, "read", project_id)
+    config = await delivery_service.get_project_deployment_environment_config(db, project_id)
+    return success_response(
+        data=ProjectDeploymentEnvironmentConfigResponse.model_validate(config).model_dump(),
+        message="Success",
+    )
+
+
+@router.put("/projects/{project_id}/deployment-environments", response_model=dict)
+async def update_project_deployment_environments(
+    project_id: int,
+    request: ProjectDeploymentEnvironmentConfigUpdateRequest,
+    db: AsyncSession = Depends(get_db),
+    principal: AuthPrincipal = Depends(get_current_principal),
+):
+    require_capability(principal, "admin", project_id)
+    config = await delivery_service.update_project_deployment_environment_config(
+        db=db,
+        project_id=project_id,
+        environments={
+            key: value.model_dump(exclude_none=True)
+            for key, value in request.environments.items()
+        },
+        actor_user_id=principal.user_id,
+        actor_ref=principal.username,
+    )
+    return success_response(
+        data=ProjectDeploymentEnvironmentConfigResponse.model_validate(config).model_dump(),
+        message="Project deployment environments updated",
+    )
 
 
 @router.get("/observability/summary", response_model=dict)
@@ -56,6 +100,45 @@ async def get_observability_summary(
     return success_response(
         data=ObservabilitySummaryResponse.model_validate(summary).model_dump(),
         message="Success",
+    )
+
+
+@router.get("/observability/projects", response_model=dict)
+async def get_project_observability_summaries(
+    limit: int = 100,
+    offset: int = 0,
+    db: AsyncSession = Depends(get_db),
+    principal: AuthPrincipal = Depends(get_current_principal),
+):
+    require_capability(principal, "read")
+    summaries = await delivery_service.get_project_observability_summaries(
+        db,
+        project_ids=principal.accessible_project_ids,
+        limit=limit,
+        offset=offset,
+    )
+    return success_response(
+        data=[
+            ProjectObservabilitySummaryResponse.model_validate(summary).model_dump()
+            for summary in summaries
+        ],
+        message="Success",
+    )
+
+
+@router.get("/observability/metrics", response_class=PlainTextResponse)
+async def get_observability_metrics(
+    db: AsyncSession = Depends(get_db),
+    principal: AuthPrincipal = Depends(get_current_principal),
+):
+    require_capability(principal, "read")
+    summary = await delivery_service.get_observability_summary(
+        db,
+        project_ids=principal.accessible_project_ids,
+    )
+    return PlainTextResponse(
+        _prometheus_observability_metrics(summary),
+        media_type="text/plain; version=0.0.4; charset=utf-8",
     )
 
 
@@ -486,6 +569,67 @@ async def auto_repair_merge_request_review(
     )
 
 
+@router.post("/gitlab/webhook", response_model=dict)
+async def handle_gitlab_webhook(
+    request: Request,
+    x_gitlab_token: str | None = Header(default=None, alias="X-Gitlab-Token"),
+    db: AsyncSession = Depends(get_db),
+):
+    payload = await request.json()
+    result = await delivery_service.handle_gitlab_webhook(
+        db=db,
+        payload=payload,
+        token=x_gitlab_token,
+    )
+    data = {
+        "processed": result["processed"],
+        "reason": result["reason"],
+        "object_kind": result.get("object_kind"),
+        "external_id": result.get("external_id"),
+    }
+    record = result.get("merge_request")
+    if record:
+        data["merge_request"] = MergeRequestRecordResponse.model_validate(record).model_dump()
+    return success_response(
+        data=data,
+        message="GitLab webhook processed" if result["processed"] else "GitLab webhook ignored",
+    )
+
+
+@router.post("/github/webhook", response_model=dict)
+async def handle_github_webhook(
+    request: Request,
+    x_hub_signature_256: str | None = Header(default=None, alias="X-Hub-Signature-256"),
+    x_github_event: str | None = Header(default=None, alias="X-GitHub-Event"),
+    db: AsyncSession = Depends(get_db),
+):
+    body = await request.body()
+    try:
+        payload = json.loads(body.decode("utf-8") or "{}")
+    except json.JSONDecodeError as exc:
+        raise BadRequestException("GitHub webhook payload must be valid JSON") from exc
+    result = await delivery_service.handle_github_webhook(
+        db=db,
+        payload=payload,
+        signature=x_hub_signature_256,
+        event_type=x_github_event,
+        body=body,
+    )
+    data = {
+        "processed": result["processed"],
+        "reason": result["reason"],
+        "event_type": result.get("event_type"),
+        "external_id": result.get("external_id"),
+    }
+    record = result.get("merge_request")
+    if record:
+        data["merge_request"] = MergeRequestRecordResponse.model_validate(record).model_dump()
+    return success_response(
+        data=data,
+        message="GitHub webhook processed" if result["processed"] else "GitHub webhook ignored",
+    )
+
+
 @router.post("/merge-requests/{merge_request_id}/deployments", response_model=dict, status_code=status.HTTP_201_CREATED)
 async def create_deploy_record(
     merge_request_id: int,
@@ -823,3 +967,55 @@ def _execution_queue_item(run):
         }
     )
     return ExecutionRunQueueItemResponse.model_validate(data).model_dump()
+
+
+def _prometheus_observability_metrics(summary: dict) -> str:
+    metrics = summary.get("metrics") if isinstance(summary.get("metrics"), dict) else {}
+    alerts = summary.get("alerts") if isinstance(summary.get("alerts"), list) else []
+    status_value = str(summary.get("status") or "unknown")
+    status_code = {"healthy": 0, "warning": 1, "critical": 2}.get(status_value, -1)
+    critical_alerts = sum(1 for alert in alerts if isinstance(alert, dict) and alert.get("severity") == "critical")
+    warning_alerts = sum(1 for alert in alerts if isinstance(alert, dict) and alert.get("severity") == "warning")
+
+    lines = [
+        "# HELP ai_pjm_observability_status_code Overall observability status: 0 healthy, 1 warning, 2 critical, -1 unknown.",
+        "# TYPE ai_pjm_observability_status_code gauge",
+        f'ai_pjm_observability_status_code{{status="{_metric_label(status_value)}"}} {status_code}',
+        "# HELP ai_pjm_execution_runs Current execution run counts by state.",
+        "# TYPE ai_pjm_execution_runs gauge",
+        f'ai_pjm_execution_runs{{state="queued"}} {_metric_value(metrics.get("queued_runs"))}',
+        f'ai_pjm_execution_runs{{state="running"}} {_metric_value(metrics.get("running_runs"))}',
+        "# HELP ai_pjm_worker_expired_runs Symphony worker runs with expired leases.",
+        "# TYPE ai_pjm_worker_expired_runs gauge",
+        f'ai_pjm_worker_expired_runs {_metric_value(metrics.get("expired_worker_runs"))}',
+        "# HELP ai_pjm_failed_deployments Failed test deployment records.",
+        "# TYPE ai_pjm_failed_deployments gauge",
+        f'ai_pjm_failed_deployments {_metric_value(metrics.get("failed_deployments"))}',
+        "# HELP ai_pjm_secret_health Project credential health counts.",
+        "# TYPE ai_pjm_secret_health gauge",
+        f'ai_pjm_secret_health{{state="unhealthy"}} {_metric_value(metrics.get("unhealthy_secrets"))}',
+        f'ai_pjm_secret_health{{state="expiring_soon"}} {_metric_value(metrics.get("expiring_secrets"))}',
+        "# HELP ai_pjm_recent_execution_runs Recent terminal execution run counts.",
+        "# TYPE ai_pjm_recent_execution_runs gauge",
+        f'ai_pjm_recent_execution_runs{{result="all"}} {_metric_value(metrics.get("recent_execution_runs"))}',
+        f'ai_pjm_recent_execution_runs{{result="failed"}} {_metric_value(metrics.get("recent_failed_execution_runs"))}',
+        "# HELP ai_pjm_recent_execution_failure_rate_percent Recent execution failure rate percent.",
+        "# TYPE ai_pjm_recent_execution_failure_rate_percent gauge",
+        f'ai_pjm_recent_execution_failure_rate_percent {_metric_value(metrics.get("recent_execution_failure_rate_percent"))}',
+        "# HELP ai_pjm_alerts Current alert counts by severity.",
+        "# TYPE ai_pjm_alerts gauge",
+        f'ai_pjm_alerts{{severity="critical"}} {critical_alerts}',
+        f'ai_pjm_alerts{{severity="warning"}} {warning_alerts}',
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def _metric_value(value: object) -> int:
+    try:
+        return int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return 0
+
+
+def _metric_label(value: str) -> str:
+    return value.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")

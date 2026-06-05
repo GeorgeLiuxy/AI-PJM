@@ -275,14 +275,14 @@ AI PJM 收到完成事件后再执行：
 
 目标：让 `executor_type = symphony` 的执行记录交给 Symphony。
 
-状态：已完成首版。`get_execution_executor("symphony")` 已返回 `SymphonyBridgeExecutor`；HTTP dispatch 只记录后台投递并保持 run 为 queued，等待 worker claim，不直接运行 Codex 或本地检查。lease 过期的 running run 会被标记 failed，避免 worker 异常退出后永久卡住。平台已提供暂停、恢复、取消控制；同一 coding task 的 queued/running/paused run 会复用现有 active run，避免重复入队。
+状态：已完成首版。`get_execution_executor("symphony")` 已返回 `SymphonyBridgeExecutor`；HTTP dispatch 只记录后台投递并保持 run 为 queued，等待 worker claim，不直接运行 Codex 或本地检查。lease 过期的 running run 会被标记 failed，避免 worker 异常退出后永久卡住。平台已提供暂停、恢复、取消控制；同一 coding task 的 queued/running/paused run 会复用现有 active run，避免重复入队。手动重试会写入 `retry_context.retry_chain`，重复重试复用 active run。本地常驻 worker 循环默认在单次异常后记录 `error` 状态并继续轮询，显式 `--fail-fast` 才会在异常时退出。
 
 任务：
 
 - 增加 `SymphonyBridgeExecutor`。（已完成首版）
 - `get_execution_executor("symphony")` 返回桥接执行器。（已完成首版）
 - 桥接执行器只负责投递/等待/收集结果，不直接跑 Codex。（已完成投递部分；等待/收集由 worker complete 回写负责）
-- 支持超时、失败、取消和状态回收。（lease 过期失败恢复、暂停、恢复、取消已完成首版；常驻 worker 待完成）
+- 支持超时、失败、取消和状态回收。（lease 过期失败恢复、暂停、恢复、取消和本地常驻 worker 循环容错已完成首版；真实 Symphony daemon 替换待完成）
 
 完成标准：
 
@@ -309,11 +309,11 @@ AI PJM 收到完成事件后再执行：
 
 目标：自测通过后自动创建真实 GitLab/GitHub MR。
 
-状态：GitLab MR provider 首版已实现，可通过 AI PJM 服务端按项目读取 `gitlab_token`，创建 MR 前自动 push 执行分支，并创建 MR。GitLab 远端评审同步首版已实现，可拉取 MR 状态、讨论评论和 commit CI 状态，并回写 MR、门禁、审计和证据链；交付工作台已提供远端 MR 的“同步评审”入口。评审阻塞自动修复串联首版已实现，可把远端阻塞项写入修复 run 的 `repair_context.review_issues`，再由 Codex/Symphony 受控执行；修复成功后会把修复分支推回原 GitLab MR 源分支。后续重点是支持 GitLab webhook 和补 GitHub provider。
+状态：GitLab MR provider 和 GitHub PR provider 首版已实现，可通过 AI PJM 服务端按项目读取 `gitlab_token` 或 `github_token`，创建 MR/PR 前自动 push 执行分支，并创建远端评审记录。远端评审同步首版已实现，可拉取 GitLab MR 状态、讨论评论、commit CI 状态，以及 GitHub PR review、review comment、issue comment、check run 和 combined status，并回写 MR/PR、门禁、审计和证据链；交付工作台已提供远端 MR/PR 的“同步评审”入口。评审阻塞自动修复串联首版已实现，可把远端阻塞项写入修复 run 的 `repair_context.review_issues`，再由 Codex/Symphony 受控执行；修复成功后会把修复分支推回原 GitLab/GitHub 源分支。GitLab 默认 reviewer/assignee/label 配置、GitHub 默认 reviewer/assignee/label 配置、GitLab webhook 更新原 MR 记录和 GitHub webhook 更新原 PR 记录已完成首版。
 
 任务：
 
-- GitLab/GitHub Provider 从项目 SecretStore 读取凭证。（GitLab 首版已完成，GitHub 待实现）
+- GitLab/GitHub Provider 从项目 SecretStore 读取凭证。（GitLab MR 和 GitHub PR 首版已完成）
 - Symphony 或 AI PJM 推送分支。（AI PJM 服务端自动 push 首版已完成）
 - AI PJM 创建 `MergeRequestRecord` 并记录远端 URL。
 - 远端失败原因、评论和 CI 状态回写证据。（GitLab 手动同步接口首版已完成）
@@ -327,14 +327,14 @@ AI PJM 收到完成事件后再执行：
 
 目标：MR 后进入测试环境，完成业务验收。
 
-状态：`DeployClient` 和 webhook 部署 provider 首版已实现，可通过 AI PJM 服务端按项目读取 `deploy_token` 并回写 `DeployRecord`；webhook 返回 `status_url` 时可手动同步部署状态并回写门禁、审计和证据；失败部署可重新部署并保留来源证据。`DEPLOY_ENVIRONMENT_CONFIG_JSON` 已支持按环境配置默认 URL、日志 URL 和说明，部署 provider 返回的日志 URL 和日志尾部会脱敏进入证据。生产 CI/CD 状态语义适配、自动状态轮询和环境配置 UI 待实现。
+状态：`DeployClient` 和 webhook 部署 provider 首版已实现，可通过 AI PJM 服务端按项目读取 `deploy_token` 并回写 `DeployRecord`；webhook 返回 `status_url` 时可手动同步部署状态并回写门禁、审计和证据；`POST /api/v2/deployments/sync-pending` 和 `scripts/deployment_sync_worker.py --loop` 可自动轮询 pending 部署，项目根目录已提供 `scripts/start-deployment-sync-worker.ps1`、`scripts/stop-deployment-sync-worker.ps1` 和 `scripts/start-dev.ps1 -WithDeploymentSync`；失败部署可重新部署并保留来源证据。`GET/PUT /api/v2/projects/{project_id}/deployment-environments` 已支持项目级测试环境 URL、日志 URL 和说明配置，访问管理页已提供最小项目测试环境配置入口；创建部署时优先使用项目配置，缺省再回退到 `DEPLOY_ENVIRONMENT_CONFIG_JSON`。部署 provider 返回的日志 URL 和日志尾部会脱敏进入证据。常见 CI/CD 状态字段、嵌套 pipeline/job/stage/step/check/task 状态和状态词归一化已完成首版；目标 CI/CD 平台专用深度状态轮询待在真实环境增强。
 
 任务：
 
 - 增加 DeployClient。（已完成首版）
 - 支持脚本型、本地 webhook 型或 CI/CD 型部署入口。（webhook 首版已完成）
 - 部署结果回写 DeployRecord。（首版已完成）
-- webhook 部署状态同步。（手动同步首版已完成，自动轮询待实现）
+- webhook 部署状态同步。（手动同步、pending 批量同步、后台轮询脚本和项目根目录启停脚本首版已完成）
 - 验收失败回到修复或人工处理。
 
 完成标准：
@@ -350,8 +350,8 @@ AI PJM 收到完成事件后再执行：
 - worker heartbeat、lease 过期恢复。
 - 任务取消、暂停、恢复。
 - 队列积压和失败原因可见。
-- PostgreSQL/Alembic 迁移链路首版已完成，Docker PostgreSQL 真库升级演练和 SQLite/PostgreSQL 最小备份恢复脚本已完成；性能压测待完成。
-- 最小可观测性首版已完成，需求到验收的 trace id 首版贯穿和历史 trace 回填脚本已完成；集中告警和异常失败率待完成。
+- PostgreSQL/Alembic 迁移链路首版已完成，Docker PostgreSQL 真库升级演练、SQLite/PostgreSQL 最小备份恢复脚本、只读性能烟测和容量数据准备脚本已完成；目标生产容量基准仍需在真实环境执行。
+- 最小可观测性首版已完成，需求到验收的 trace id 首版贯穿、历史 trace 回填脚本、近期执行失败率告警、项目健康摘要 API、Prometheus 文本指标出口、通用 webhook 告警转发脚本和本地告警 worker 启停脚本已完成；集中指标平台接入待生产环境完成。
 
 完成标准：
 
@@ -368,7 +368,7 @@ AI PJM 收到完成事件后再执行：
 4. S3：用 Symphony 执行一个真实低风险任务并回写证据。
 5. S4：接 GitLab/GitHub MR。
 6. S5：接测试环境部署。
-7. S6：再补性能压测、集中告警和异常失败率；备份恢复、过期队列恢复、历史 trace 回填、Alembic 迁移链路、Docker PostgreSQL 真库演练、trace id 和最小可观测性首版已完成。
+7. S6：再补目标生产容量基准和集中指标平台接入；备份恢复、过期队列恢复、历史 trace 回填、Alembic 迁移链路、Docker PostgreSQL 真库演练、trace id、只读性能烟测、容量数据准备脚本、异常失败率、项目健康摘要 API、Prometheus 文本指标出口、通用 webhook 告警转发、本地告警 worker 启停脚本和最小可观测性首版已完成。
 
 ## 12. 验证清单
 

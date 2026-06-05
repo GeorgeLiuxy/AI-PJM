@@ -40,6 +40,18 @@ export interface AuthLoginResponse {
   user: AuthUser;
 }
 
+export interface DeploymentEnvironmentConfigItem {
+  url?: string | null;
+  log_url?: string | null;
+  description?: string | null;
+  environment_name?: string | null;
+}
+
+export interface ProjectDeploymentEnvironmentConfig {
+  project_id: number;
+  environments: Record<string, DeploymentEnvironmentConfigItem>;
+}
+
 export interface DeliveryDemand {
   id: number;
   trace_id: string | null;
@@ -170,7 +182,7 @@ export interface DeliveryExecutionQueueItem extends DeliveryExecutionRun {
 
 export interface DeliveryObservabilityAlert {
   id: string;
-  category: 'worker' | 'queue' | 'secret' | 'deployment';
+  category: 'worker' | 'queue' | 'secret' | 'deployment' | 'execution';
   severity: 'warning' | 'critical';
   title: string;
   summary: string;

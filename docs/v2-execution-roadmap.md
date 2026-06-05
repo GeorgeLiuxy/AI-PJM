@@ -17,18 +17,19 @@
 - 初版真实本地上下文收集 Provider。
 - 低风险自动修复闭环首版。
 - 本地 MR/PR 记录、评审门禁、测试环境记录和验收记录。
-- 执行队列可见性和基础并发上限保护。
+- 执行队列可见性、基础并发上限保护和本地后台 worker 启停脚本。
 - Dify/OpenAI Provider、GitLab MR provider、webhook 部署 provider 边界首版，相关凭证可按项目从 SecretStore 读取。
 - 本地认证、Bearer Token、项目成员、用户维护和交付 API 权限保护首版。
 - 前端按钮级权限首版，工作台动作和权限管理入口按角色显示或拦截。
 - 人工审批、MR 创建/评审、测试部署、验收的操作者已写入业务表结构化字段。
 - 审计查询增强首版，支持多条件筛选和 CSV 导出。
-- 本地 SecretStore 首版：项目级密钥服务端加密存储、掩码展示、创建/轮换审计。
-- 密钥健康检查首版：过期时间、健康状态、可解密性检查、OpenAI/GitLab 只读远端探测和最近使用时间展示。
+- 本地 SecretStore 首版：项目级密钥服务端加密存储、掩码展示、创建/轮换/禁用审计、访问管理页轮换修复入口和停用/启用入口。
+- 密钥健康检查首版：过期时间、健康状态、可解密性检查、OpenAI/GitLab/GitHub 只读远端探测和最近使用时间展示。
 - 中文化交付工作台页面。
 - 前后端启动/关闭脚本。
+- 后端结构化日志开关：`LOG_FORMAT=json` 输出 JSON Lines 应用日志。
 
-当前是“本地 MVP 闭环”，不是完整生产级系统。近期生产化缺口集中在主链路：真实 Symphony daemon/worker 替换、GitLab/GitHub 评审同步、部署状态轮询、生产数据库和 Provider 生产联调/质量评估。企业 SSO、复杂业务角色和审计报表平台化不是近期主线。
+当前是“本地 MVP 闭环”，不是完整生产级系统。近期生产化缺口集中在主链路：真实 Symphony daemon/worker 替换、GitLab/GitHub 评审同步、目标 CI/CD 平台专用部署状态轮询、生产数据库和 Provider 生产联调/质量评估。企业 SSO、复杂业务角色和审计报表平台化不是近期主线。
 
 ## 2. 总体目标
 
@@ -146,11 +147,11 @@
 
 目标：形成“执行 -> 检查失败 -> 修复 -> 再检查”的有限自动闭环。
 
-状态：首版已实现。低风险任务在检查失败后可调用自动修复接口，平台会把失败检查输出写入 `repair_context`，创建 `auto_repair` 执行记录并重新调用执行器；最大尝试次数由 `EXECUTION_AUTO_REPAIR_MAX_ATTEMPTS` 控制。L2/L3 风险和越权变更会阻断自动修复，要求人工处理。
+状态：首版已实现。低风险任务在检查失败后可调用自动修复接口，平台会把失败检查输出写入 `repair_context`，创建 `auto_repair` 执行记录并重新调用执行器；手动重试会写入 `retry_context`，记录 source run、source status、summary 和 `retry_chain`，重复触发时复用同一任务的 active run，避免重复入队；最大尝试次数由 `EXECUTION_AUTO_REPAIR_MAX_ATTEMPTS` 控制。L2/L3 风险和越权变更会阻断自动修复，要求人工处理。
 
 任务：
 
-- 为 `ExecutionRun` 增加迭代次数和父子关系，或记录 retry chain。
+- 为 `ExecutionRun` 增加迭代次数和父子关系，或记录 retry chain。（`repair_context` 和手动 `retry_context.retry_chain` 首版已完成）
 - 将失败检查输出追加给 Codex 作为修复输入。
 - 设置最大自动修复次数。
 - L2/L3 或越权变更必须停止并要求人工处理。
@@ -165,14 +166,14 @@
 
 目标：把通过自测的结果交给代码评审系统。
 
-状态：首版已实现本地 MR/PR 记录与评审门禁。当前默认 `local` Provider 不依赖 GitLab/GitHub Token，会记录源分支、目标分支、执行记录、链接占位、评审状态和 `review_passed` 门禁；`gitlab` Provider 已可按项目读取 `gitlab_token`，创建 MR 前自动推送执行分支，并调用 GitLab API 创建 MR。GitLab 远端评审同步首版已实现，可拉取 MR 状态、讨论评论和 commit CI 状态，并写回 MR、门禁、审计和证据链；交付工作台已提供远端 MR 的“同步评审”入口，本地 MR 保留人工评审通过入口。评审阻塞自动修复串联首版已实现，可把远端阻塞项写入修复 run 的 `repair_context.review_issues`，修复成功后把修复分支推回原 GitLab MR 源分支。GitHub provider、reviewer/label 配置和 GitLab webhook 仍作为后续增强项。
+状态：首版已实现本地 MR/PR 记录与评审门禁。当前默认 `local` Provider 不依赖 GitLab/GitHub Token，会记录源分支、目标分支、执行记录、链接占位、评审状态和 `review_passed` 门禁；`gitlab` Provider 已可按项目读取 `gitlab_token`，创建 MR 前自动推送执行分支，并调用 GitLab API 创建 MR；`github` Provider 已可按项目读取 `github_token`，创建 PR 前自动推送执行分支，并调用 GitHub API 创建 PR。远端评审同步首版已实现，可拉取 GitLab MR 状态、讨论评论、commit CI 状态，以及 GitHub PR review、review comment、issue comment、check run 和 combined status，并写回 MR/PR、门禁、审计和证据链；交付工作台已提供远端 MR/PR 的“同步评审”入口，本地 MR 保留人工评审通过入口。评审阻塞自动修复串联首版已实现，可把远端阻塞项写入修复 run 的 `repair_context.review_issues`，修复成功后把修复分支推回原 GitLab/GitHub 源分支。GitLab/GitHub 默认 reviewer/assignee/label 配置、GitLab webhook 更新原 MR 记录和 GitHub webhook 更新原 PR 记录已完成首版。
 
 任务：
 
 - 增加 `MergeRequestRecord` 数据模型。（已完成）
-- 实现 GitLab/GitHub Client 边界，优先 GitLab。（GitLab 首版已完成，GitHub 待实现）
+- 实现 GitLab/GitHub Client 边界，优先 GitLab。（GitLab MR 和 GitHub PR 首版已完成）
 - 支持创建 MR、记录 URL、源分支、目标分支、状态。（local/GitLab 首版已完成）
-- 支持拉取 MR 评论和阻塞性评审意见。（GitLab 手动同步接口首版已完成，GitHub 待实现）
+- 支持拉取 MR/PR 评论和阻塞性评审意见。（GitLab/GitHub 手动同步接口首版已完成）
 - 支持评审阻塞自动修复。（首版已完成，修复后推回原 GitLab MR 源分支已完成）
 - 将 `review_passed` 做成门禁。（已完成）
 
@@ -187,13 +188,13 @@
 
 目标：MR 后能进入测试环境验证，而不是停在代码层。
 
-状态：首版已实现本地测试环境记录与验收记录。当前 `local` 模式只记录测试环境 URL、环境名、验收状态和证据链接；`webhook` 部署 Provider 已可按项目读取 `deploy_token` 调用外部部署入口，并把部署 URL、状态和证据写入 `DeployRecord`。webhook 返回 `status_url` 时，工作台可手动同步单条部署状态并回写门禁、审计和证据；后端提供 `POST /api/v2/deployments/sync-pending` 批量同步 pending 部署，`scripts/deployment_sync_worker.py --loop` 可后台定时同步 pending 部署。失败部署可从工作台重新部署并保留来源证据。`DEPLOY_ENVIRONMENT_CONFIG_JSON` 已支持按环境配置默认 URL、日志 URL 和说明，部署 provider 返回的日志 URL 和日志尾部会脱敏进入证据。生产 CI/CD 状态语义适配和环境配置 UI 待增强。
+状态：首版已实现本地测试环境记录与验收记录。当前 `local` 模式只记录测试环境 URL、环境名、验收状态和证据链接；`webhook` 部署 Provider 已可按项目读取 `deploy_token` 调用外部部署入口，并把部署 URL、状态和证据写入 `DeployRecord`。webhook 返回 `status_url` 时，工作台可手动同步单条部署状态并回写门禁、审计和证据；后端提供 `POST /api/v2/deployments/sync-pending` 批量同步 pending 部署，`scripts/deployment_sync_worker.py --loop` 可后台定时同步 pending 部署，项目根目录已提供 `scripts/start-deployment-sync-worker.ps1`、`scripts/stop-deployment-sync-worker.ps1` 和 `scripts/start-dev.ps1 -WithDeploymentSync`。失败部署可从工作台重新部署并保留来源证据。`GET/PUT /api/v2/projects/{project_id}/deployment-environments` 已支持项目级测试环境 URL、日志 URL 和说明配置，访问管理页已提供最小项目测试环境配置入口；创建部署时优先使用项目配置，缺省再回退到 `DEPLOY_ENVIRONMENT_CONFIG_JSON`。部署 provider 返回的日志 URL 和日志尾部会脱敏进入证据。webhook provider 已支持常见 CI/CD 状态字段、嵌套 pipeline/job/stage/step/check/task 状态和状态词归一化，并保留原始状态、状态路径、失败/等待节点摘要证据。目标 CI/CD 平台专用深度状态轮询待在真实环境增强。
 
 任务：
 
 - 增加 `DeployRecord` 和 `VerificationRecord`。（已完成）
 - 对接测试环境部署入口，初期可先记录外部部署 URL。（local 记录和 webhook 部署首版已完成）
-- 支持 webhook 部署状态同步。（单条手动同步和 pending 批量同步入口已完成，自动调度待实现）
+- 支持 webhook 部署状态同步。（单条手动同步、pending 批量同步入口和本地 worker 启停脚本已完成，生产调度待增强）
 - 支持人工验收：通过、拒绝、备注、截图或证据链接。（通过/失败和链接记录已完成）
 - 将 `test_deployed`、`verification_passed` 做成门禁。（已完成）
 
@@ -207,11 +208,11 @@
 
 目标：通过 Symphony Bridge 把执行从 HTTP 请求迁移到后台编排，并支撑批量任务能力。
 
-状态：首版已实现执行队列可见性、并发上限保护、Symphony internal bridge API、最小命令行 worker、`SymphonyBridgeExecutor`、lease 过期失败恢复、暂停/恢复/取消控制、同一任务活跃 run 幂等保护，以及本地常驻 worker 启停脚本和 status 文件。`executor_type=symphony` 的 dispatch 不再退回本地检查，也不会在 HTTP 请求中长时间执行；它会保持 queued，等待 worker claim 后通过 bridge complete 回写最终状态。失败重试幂等锁增强、真实 Symphony daemon 替换和真正并行调度仍待实现。
+状态：首版已实现执行队列可见性、并发上限保护、Symphony internal bridge API、最小命令行 worker、`SymphonyBridgeExecutor`、lease 过期失败恢复、暂停/恢复/取消控制、同一任务活跃 run 幂等保护、手动重试 retry chain，以及本地常驻 worker 启停脚本和 status 文件。常驻 worker 循环默认会在单次异常后记录 `error` 状态并继续轮询，显式 `--fail-fast` 才会在异常时退出。`executor_type=symphony` 的 dispatch 不再退回本地检查，也不会在 HTTP 请求中长时间执行；它会保持 queued，等待 worker claim 后通过 bridge complete 回写最终状态。真实 Symphony daemon 替换和真正并行调度仍待实现。
 
 任务：
 
-- 按 `docs/symphony-integration-plan.md` 完成 S0-S3。（S0-S2 已完成，S3 已有最小 worker、lease 过期失败恢复和本地常驻启停脚本）
+- 按 `docs/symphony-integration-plan.md` 完成 S0-S3。（S0-S2 已完成，S3 已有最小 worker、lease 过期失败恢复、本地常驻启停脚本和 worker 循环异常不中断）
 - 引入任务队列和运行中状态管理。（执行记录队列查询已完成）
 - 增加 internal claim、heartbeat、event、complete API。（已完成首版）
 - 增加 `SymphonyBridgeExecutor`，支持 `executor_type = symphony`。（已完成首版）
@@ -290,9 +291,9 @@ V2 主链路已经完成本地 MVP 闭环，下一步应转入生产化基础建
 1. 完成文档口径清理，让 README、路线图、蓝图、交互说明和生产化计划一致。
 2. 按 `docs/symphony-integration-plan.md` 做 S0：拉通 Symphony 本地运行和 Codex 调用方式。
 3. 做 S1/S2：实现 AI PJM internal execution bridge API 和 `SymphonyBridgeExecutor`。
-4. 完善 SecretStore Provider 消费：Dify/OpenAI/GitLab/webhook 部署已完成首版项目级读取，Dify/OpenAI 已有平台级重试和本地降级，OpenAI/GitLab 凭证已有只读远端探测和失败原因写回，Dify 支持显式安全 URL 探测。
-5. 做 S3/S4：用 Symphony 执行低风险任务，创建真实 GitLab/GitHub MR，并补远端评审同步。
-6. 做 S5：增强真实测试环境部署 Provider，补生产 CI/CD 状态语义适配和环境配置 UI；重新部署入口、环境 JSON 配置和日志证据首版已完成。
-7. 再补性能压测、生产级 Dify/OpenAI 质量评估、集中告警和产品化交互；备份恢复、过期队列恢复、历史 trace 回填、Alembic 迁移链路、Docker PostgreSQL 真库演练、trace id、最小可观测性和 OpenAI Provider 首版已完成。
+4. 完善 SecretStore Provider 消费：Dify/OpenAI/GitLab/GitHub/webhook 部署已完成首版项目级读取，Dify/OpenAI 已有平台级重试和本地降级，OpenAI/GitLab/GitHub 凭证已有只读远端探测、失败原因写回和访问管理页轮换修复入口，Dify 支持显式安全 URL 探测。
+5. 做 S3/S4：用 Symphony 执行低风险任务，创建真实 GitLab/GitHub MR，并补远端评审同步；GitLab 创建、同步、webhook 更新原 MR、自动修复推回源分支已完成首版，GitHub PR 创建、同步、webhook 更新原 PR 和自动修复推回源分支已完成首版。
+6. 做 S5：增强真实测试环境部署 Provider，补目标 CI/CD 平台深度状态轮询；重新部署入口、项目级环境配置 API、访问管理页最小入口、环境 JSON 兜底、日志证据、后台同步启停脚本、常见 CI/CD 状态语义归一化和通用状态节点证据首版已完成。
+7. 再补生产级 Dify/OpenAI 真实环境联调、目标生产容量基准、集中指标平台接入和产品化交互；备份恢复、过期队列恢复、历史 trace 回填、Alembic 迁移链路、Docker PostgreSQL 真库演练、trace id、只读性能烟测、容量数据准备脚本、异常失败率、Prometheus 文本指标出口、通用 webhook 告警转发、最小可观测性和 OpenAI Provider 首版已完成。
 
 原因：生产使用时最大的风险不是缺少复杂组织治理，而是主链路仍需人工搬运、真实 MR/部署没有打通、执行和证据不够可靠。先补这些直接影响交付效率的能力，平台才能真实减少人工介入。

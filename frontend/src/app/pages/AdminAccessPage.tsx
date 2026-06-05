@@ -1,14 +1,14 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { useOutletContext } from 'react-router';
-import { KeyRound, Loader2, Plus, RefreshCw, ShieldCheck, Trash2, UserCog, UserPlus } from 'lucide-react';
-import { authApi } from '../lib/api';
+import { KeyRound, Loader2, Plus, RefreshCw, Rocket, ShieldCheck, Trash2, UserCog, UserPlus } from 'lucide-react';
+import { authApi, deliveryApi } from '../lib/api';
 import { canAdmin } from '../lib/permissions';
-import type { AuthManagedUser, AuthProject, SecretRecord } from '../types';
+import type { AuthManagedUser, AuthProject, ProjectDeploymentEnvironmentConfig, SecretRecord } from '../types';
 import type { AppOutletContext } from '../Root';
 
 const globalRoles = ['admin', 'operator', 'reviewer', 'viewer'];
 const projectRoles = ['owner', 'operator', 'reviewer', 'viewer'];
-const secretProviders = ['dify', 'gitlab', 'openai', 'codex', 'custom'];
+const secretProviders = ['dify', 'gitlab', 'github', 'openai', 'codex', 'custom'];
 const userStatuses = ['active', 'disabled'];
 
 export default function AdminAccessPage() {
@@ -20,6 +20,9 @@ export default function AdminAccessPage() {
   const [savingProject, setSavingProject] = useState(false);
   const [savingUser, setSavingUser] = useState(false);
   const [savingSecret, setSavingSecret] = useState(false);
+  const [savingSecretRotate, setSavingSecretRotate] = useState(false);
+  const [loadingDeploymentEnv, setLoadingDeploymentEnv] = useState(false);
+  const [savingDeploymentEnv, setSavingDeploymentEnv] = useState(false);
   const [savingAccessAction, setSavingAccessAction] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -46,6 +49,21 @@ export default function AdminAccessPage() {
     description: '',
     expires_at: '',
   });
+  const [secretRotateForm, setSecretRotateForm] = useState<SecretRotateFormValue>({
+    secret_id: '',
+    value: '',
+    description: '',
+    expires_at: '',
+  });
+  const [deploymentEnvironments, setDeploymentEnvironments] = useState<ProjectDeploymentEnvironmentConfig['environments']>({});
+  const [deploymentEnvForm, setDeploymentEnvForm] = useState<DeploymentEnvironmentFormValue>({
+    project_id: '',
+    environment: 'test',
+    url: '',
+    log_url: '',
+    description: '',
+    environment_name: '',
+  });
   const [maintenanceForm, setMaintenanceForm] = useState<MaintenanceFormValue>({
     user_id: '',
     display_name: '',
@@ -63,6 +81,36 @@ export default function AdminAccessPage() {
   }, [projects]);
   const hasAdminAccess = canAdmin(user);
 
+  const loadProjectDeploymentEnvironment = async (projectId: string, environmentName = 'test') => {
+    if (!projectId) {
+      setDeploymentEnvironments({});
+      setDeploymentEnvForm((current) => ({ ...current, project_id: '', environment: environmentName || 'test' }));
+      return;
+    }
+    const environment = environmentName.trim() || 'test';
+    setLoadingDeploymentEnv(true);
+    try {
+      const response = await deliveryApi.getProjectDeploymentEnvironments(Number(projectId));
+      const environments = response.data.environments || {};
+      const selected = environments[environment] || {};
+      setDeploymentEnvironments(environments);
+      setDeploymentEnvForm((current) => ({
+        ...current,
+        project_id: projectId,
+        environment,
+        url: selected.url || '',
+        log_url: selected.log_url || '',
+        description: selected.description || '',
+        environment_name: selected.environment_name || '',
+      }));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '加载测试环境配置失败';
+      setError(message);
+    } finally {
+      setLoadingDeploymentEnv(false);
+    }
+  };
+
   const loadAccessData = async () => {
     setLoading(true);
     setError(null);
@@ -73,7 +121,9 @@ export default function AdminAccessPage() {
         authApi.listSecrets(),
       ]);
       const projectIds = new Set(projectResponse.data.map((project) => String(project.id)));
+      const secretIds = new Set(secretResponse.data.map((secret) => String(secret.id)));
       const defaultProjectId = projectResponse.data[0]?.id ? String(projectResponse.data[0].id) : '';
+      const defaultSecretId = secretResponse.data[0]?.id ? String(secretResponse.data[0].id) : '';
       setProjects(projectResponse.data);
       setUsers(userResponse.data);
       setSecrets(secretResponse.data);
@@ -85,6 +135,22 @@ export default function AdminAccessPage() {
         ...current,
         project_id: current.project_id && projectIds.has(current.project_id) ? current.project_id : defaultProjectId,
       }));
+      setSecretRotateForm((current) => {
+        const keepsCurrent = Boolean(current.secret_id && secretIds.has(current.secret_id));
+        const selectedSecretId = keepsCurrent ? current.secret_id : defaultSecretId;
+        const selectedSecret = secretResponse.data.find((secret) => String(secret.id) === selectedSecretId);
+        return {
+          ...current,
+          secret_id: selectedSecretId,
+          description: keepsCurrent ? current.description : selectedSecret?.description || '',
+          expires_at: keepsCurrent ? current.expires_at : toDateTimeLocal(selectedSecret?.expires_at),
+        };
+      });
+      const deploymentProjectId =
+        deploymentEnvForm.project_id && projectIds.has(deploymentEnvForm.project_id)
+          ? deploymentEnvForm.project_id
+          : defaultProjectId;
+      setDeploymentEnvForm((current) => ({ ...current, project_id: deploymentProjectId }));
       setMaintenanceForm((current) => {
         const selectedUser = userResponse.data.find((user) => String(user.id) === current.user_id) || userResponse.data[0];
         if (!selectedUser) {
@@ -108,6 +174,7 @@ export default function AdminAccessPage() {
           password: '',
         };
       });
+      await loadProjectDeploymentEnvironment(deploymentProjectId, deploymentEnvForm.environment || 'test');
     } catch (err) {
       const message = err instanceof Error ? err.message : '加载权限配置失败';
       setError(message);
@@ -208,6 +275,101 @@ export default function AdminAccessPage() {
     }
   };
 
+  const submitDeploymentEnvironment = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!deploymentEnvForm.project_id) {
+      return;
+    }
+    const environment = deploymentEnvForm.environment.trim();
+    if (!environment) {
+      setError('环境名不能为空');
+      return;
+    }
+    setSavingDeploymentEnv(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const config = {
+        url: deploymentEnvForm.url.trim() || null,
+        log_url: deploymentEnvForm.log_url.trim() || null,
+        description: deploymentEnvForm.description.trim() || null,
+        environment_name: deploymentEnvForm.environment_name.trim() || null,
+      };
+      const response = await deliveryApi.updateProjectDeploymentEnvironments(Number(deploymentEnvForm.project_id), {
+        environments: {
+          ...deploymentEnvironments,
+          [environment]: config,
+        },
+      });
+      const environments = response.data.environments || {};
+      setDeploymentEnvironments(environments);
+      setDeploymentEnvForm((current) => ({
+        ...current,
+        environment,
+        url: environments[environment]?.url || '',
+        log_url: environments[environment]?.log_url || '',
+        description: environments[environment]?.description || '',
+        environment_name: environments[environment]?.environment_name || '',
+      }));
+      setNotice(`测试环境配置已保存：${environment}`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '保存测试环境配置失败';
+      setError(message);
+    } finally {
+      setSavingDeploymentEnv(false);
+    }
+  };
+
+  const selectDeploymentEnvironmentProject = (projectId: string) => {
+    setDeploymentEnvForm((current) => ({ ...current, project_id: projectId }));
+    void loadProjectDeploymentEnvironment(projectId, deploymentEnvForm.environment || 'test');
+  };
+
+  const reloadDeploymentEnvironment = () => {
+    void loadProjectDeploymentEnvironment(deploymentEnvForm.project_id, deploymentEnvForm.environment || 'test');
+  };
+
+  const selectSecretForRotate = (secretId: string) => {
+    const selectedSecret = secrets.find((secret) => String(secret.id) === secretId);
+    setSecretRotateForm((current) => ({
+      ...current,
+      secret_id: secretId,
+      value: '',
+      description: selectedSecret?.description || '',
+      expires_at: toDateTimeLocal(selectedSecret?.expires_at),
+    }));
+  };
+
+  const submitSecretRotate = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!secretRotateForm.secret_id) {
+      return;
+    }
+    setSavingSecretRotate(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const secret = (await authApi.rotateSecret(Number(secretRotateForm.secret_id), {
+        value: secretRotateForm.value,
+        description: secretRotateForm.description.trim() || null,
+        expires_at: secretRotateForm.expires_at ? new Date(secretRotateForm.expires_at).toISOString() : null,
+      })).data;
+      setSecretRotateForm((current) => ({
+        ...current,
+        value: '',
+        description: secret.description || '',
+        expires_at: toDateTimeLocal(secret.expires_at),
+      }));
+      setNotice(`密钥已轮换：${secret.name}`);
+      await loadAccessData();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '轮换密钥失败';
+      setError(message);
+    } finally {
+      setSavingSecretRotate(false);
+    }
+  };
+
   const checkSecretHealth = async (secret: SecretRecord) => {
     setSavingAccessAction(`secret-health-${secret.id}`);
     setError(null);
@@ -218,6 +380,32 @@ export default function AdminAccessPage() {
       await loadAccessData();
     } catch (err) {
       const message = err instanceof Error ? err.message : '密钥健康检查失败';
+      setError(message);
+    } finally {
+      setSavingAccessAction(null);
+    }
+  };
+
+  const updateSecretStatus = async (secret: SecretRecord, status: 'active' | 'disabled') => {
+    const actionLabel = status === 'disabled' ? '停用' : '启用';
+    if (
+      status === 'disabled'
+      && !window.confirm(`确认停用密钥「${secret.name}」？相关 Provider 将无法继续使用该凭证。`)
+    ) {
+      return;
+    }
+    setSavingAccessAction(`secret-status-${secret.id}`);
+    setError(null);
+    setNotice(null);
+    try {
+      const updated = (await authApi.updateSecretStatus(secret.id, {
+        status,
+        reason: status === 'disabled' ? 'access management disabled' : 'access management enabled',
+      })).data;
+      setNotice(`密钥已${actionLabel}：${updated.name}`);
+      await loadAccessData();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : `${actionLabel}密钥失败`;
       setError(message);
     } finally {
       setSavingAccessAction(null);
@@ -400,6 +588,25 @@ export default function AdminAccessPage() {
             onChange={setSecretForm}
             onSubmit={submitSecret}
           />
+          <SecretRotateForm
+            value={secretRotateForm}
+            secrets={secrets}
+            projectNameById={projectNameById}
+            saving={savingSecretRotate}
+            onChange={setSecretRotateForm}
+            onSelectSecret={selectSecretForRotate}
+            onSubmit={submitSecretRotate}
+          />
+          <DeploymentEnvironmentForm
+            value={deploymentEnvForm}
+            projects={projects}
+            loading={loadingDeploymentEnv}
+            saving={savingDeploymentEnv}
+            onChange={setDeploymentEnvForm}
+            onSelectProject={selectDeploymentEnvironmentProject}
+            onReload={reloadDeploymentEnvironment}
+            onSubmit={submitDeploymentEnvironment}
+          />
           <UserMaintenanceForm
             value={maintenanceForm}
             users={users}
@@ -425,6 +632,7 @@ export default function AdminAccessPage() {
             loading={loading}
             savingAction={savingAccessAction}
             onCheckHealth={checkSecretHealth}
+            onUpdateStatus={updateSecretStatus}
           />
         </div>
       </section>
@@ -603,6 +811,151 @@ function SecretForm({
   );
 }
 
+function SecretRotateForm({
+  value,
+  secrets,
+  projectNameById,
+  saving,
+  onChange,
+  onSelectSecret,
+  onSubmit,
+}: {
+  value: SecretRotateFormValue;
+  secrets: SecretRecord[];
+  projectNameById: Map<number, string>;
+  saving: boolean;
+  onChange: (value: SecretRotateFormValue) => void;
+  onSelectSecret: (secretId: string) => void;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+}) {
+  return (
+    <form onSubmit={onSubmit} className="rounded border border-slate-200 bg-slate-50 p-3">
+      <div className="mb-3 flex items-center gap-2 text-sm font-medium text-slate-900">
+        <RefreshCw className="h-4 w-4 text-blue-600" />
+        轮换项目密钥
+      </div>
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-1 2xl:grid-cols-2">
+        <SelectInput
+          label="选择密钥"
+          value={value.secret_id}
+          options={secrets.map((secret) => ({
+            label: `${secret.name} / ${formatProviderLabel(secret.provider)} / ${
+              projectNameById.get(secret.project_id) || `#${secret.project_id}`
+            }`,
+            value: String(secret.id),
+          }))}
+          onChange={onSelectSecret}
+          formatter={identityLabel}
+          emptyLabel="暂无密钥"
+        />
+        <TextInput
+          label="新密钥值"
+          value={value.value}
+          onChange={(secretValue) => onChange({ ...value, value: secretValue })}
+          type="password"
+          required
+        />
+        <TextInput
+          label="新过期时间"
+          value={value.expires_at}
+          onChange={(expires_at) => onChange({ ...value, expires_at })}
+          type="datetime-local"
+        />
+        <TextInput
+          label="轮换说明"
+          value={value.description}
+          onChange={(description) => onChange({ ...value, description })}
+        />
+      </div>
+      <SubmitButton
+        label="轮换密钥"
+        saving={saving}
+        disabled={!value.secret_id || !value.value.trim()}
+      />
+    </form>
+  );
+}
+
+function DeploymentEnvironmentForm({
+  value,
+  projects,
+  loading,
+  saving,
+  onChange,
+  onSelectProject,
+  onReload,
+  onSubmit,
+}: {
+  value: DeploymentEnvironmentFormValue;
+  projects: AuthProject[];
+  loading: boolean;
+  saving: boolean;
+  onChange: (value: DeploymentEnvironmentFormValue) => void;
+  onSelectProject: (projectId: string) => void;
+  onReload: () => void;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+}) {
+  return (
+    <form onSubmit={onSubmit} className="rounded border border-slate-200 bg-slate-50 p-3">
+      <div className="mb-3 flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2 text-sm font-medium text-slate-900">
+          <Rocket className="h-4 w-4 text-blue-600" />
+          测试环境配置
+        </div>
+        <button
+          type="button"
+          onClick={onReload}
+          disabled={loading || !value.project_id}
+          className="inline-flex h-8 items-center gap-1 rounded border border-slate-200 bg-white px-2 text-xs text-slate-600 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
+          读取
+        </button>
+      </div>
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-1 2xl:grid-cols-2">
+        <SelectInput
+          label="项目"
+          value={value.project_id}
+          options={projects.map((project) => ({ label: project.name, value: String(project.id) }))}
+          onChange={onSelectProject}
+          formatter={identityLabel}
+        />
+        <TextInput
+          label="环境名"
+          value={value.environment}
+          onChange={(environment) => onChange({ ...value, environment })}
+          required
+        />
+        <TextInput
+          label="访问地址"
+          value={value.url}
+          onChange={(url) => onChange({ ...value, url })}
+        />
+        <TextInput
+          label="日志地址"
+          value={value.log_url}
+          onChange={(log_url) => onChange({ ...value, log_url })}
+        />
+        <TextInput
+          label="显示名称"
+          value={value.environment_name}
+          onChange={(environment_name) => onChange({ ...value, environment_name })}
+        />
+        <TextInput
+          label="说明"
+          value={value.description}
+          onChange={(description) => onChange({ ...value, description })}
+        />
+      </div>
+      <SubmitButton
+        label="保存环境"
+        saving={saving}
+        disabled={!value.project_id || !value.environment.trim() || (!value.url.trim() && !value.log_url.trim())}
+      />
+    </form>
+  );
+}
+
 function UserMaintenanceForm({
   value,
   users,
@@ -743,6 +1096,22 @@ type SecretFormValue = {
   expires_at: string;
 };
 
+type SecretRotateFormValue = {
+  secret_id: string;
+  value: string;
+  description: string;
+  expires_at: string;
+};
+
+type DeploymentEnvironmentFormValue = {
+  project_id: string;
+  environment: string;
+  url: string;
+  log_url: string;
+  description: string;
+  environment_name: string;
+};
+
 type MaintenanceFormValue = {
   user_id: string;
   display_name: string;
@@ -787,12 +1156,14 @@ function SelectInput({
   options,
   onChange,
   formatter = formatRoleLabel,
+  emptyLabel = '暂无项目',
 }: {
   label: string;
   value: string;
   options: Array<string | { label: string; value: string }>;
   onChange: (value: string) => void;
   formatter?: (value: string) => string;
+  emptyLabel?: string;
 }) {
   return (
     <label className="block text-sm font-medium text-slate-700">
@@ -802,7 +1173,7 @@ function SelectInput({
         onChange={(event) => onChange(event.target.value)}
         className="mt-1 h-9 w-full rounded border border-slate-200 bg-white px-3 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
       >
-        {options.length === 0 ? <option value="">暂无项目</option> : null}
+        {options.length === 0 ? <option value="">{emptyLabel}</option> : null}
         {options.map((option) => {
           const labelValue = typeof option === 'string' ? option : option.label;
           const optionValue = typeof option === 'string' ? option : option.value;
@@ -947,12 +1318,14 @@ function SecretTable({
   loading,
   savingAction,
   onCheckHealth,
+  onUpdateStatus,
 }: {
   secrets: SecretRecord[];
   projectNameById: Map<number, string>;
   loading: boolean;
   savingAction: string | null;
   onCheckHealth: (secret: SecretRecord) => void;
+  onUpdateStatus: (secret: SecretRecord, status: 'active' | 'disabled') => void;
 }) {
   return (
     <div className="overflow-hidden rounded border border-slate-200 bg-white">
@@ -998,7 +1371,7 @@ function SecretTable({
                   <td className="px-3 py-2">
                     <Badge>{formatStatus(secret.status)}</Badge>
                   </td>
-                  <td className="px-3 py-2">
+                  <td className="space-y-1 px-3 py-2">
                     <button
                       type="button"
                       onClick={() => onCheckHealth(secret)}
@@ -1009,6 +1382,21 @@ function SecretTable({
                         className={`h-3.5 w-3.5 ${savingAction === `secret-health-${secret.id}` ? 'animate-spin' : ''}`}
                       />
                       检查
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onUpdateStatus(secret, secret.status === 'active' ? 'disabled' : 'active')}
+                      disabled={savingAction === `secret-status-${secret.id}`}
+                      className={`inline-flex h-8 items-center gap-1 rounded border bg-white px-2 text-xs disabled:cursor-not-allowed disabled:opacity-50 ${
+                        secret.status === 'active'
+                          ? 'border-red-200 text-red-700 hover:bg-red-50'
+                          : 'border-emerald-200 text-emerald-700 hover:bg-emerald-50'
+                      }`}
+                    >
+                      <RefreshCw
+                        className={`h-3.5 w-3.5 ${savingAction === `secret-status-${secret.id}` ? 'animate-spin' : ''}`}
+                      />
+                      {secret.status === 'active' ? '停用' : '启用'}
                     </button>
                   </td>
                 </tr>
@@ -1065,6 +1453,7 @@ function formatProviderLabel(value: string) {
   const labels: Record<string, string> = {
     dify: 'Dify',
     gitlab: 'GitLab',
+    github: 'GitHub',
     openai: 'OpenAI',
     codex: 'Codex',
     custom: '自定义',
@@ -1135,4 +1524,16 @@ function formatDate(value?: string | null) {
     hour: '2-digit',
     minute: '2-digit',
   }).format(new Date(value));
+}
+
+function toDateTimeLocal(value?: string | null) {
+  if (!value) {
+    return '';
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return '';
+  }
+  const localDate = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
+  return localDate.toISOString().slice(0, 16);
 }

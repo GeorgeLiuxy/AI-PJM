@@ -129,10 +129,10 @@ export default function Root() {
   const outletContext: AppOutletContext = { user };
 
   return (
-    <div className="min-h-screen bg-slate-50">
+    <div className="min-h-screen overflow-x-hidden bg-slate-50">
       <header className="border-b border-slate-200 bg-white">
-        <div className="mx-auto flex max-w-[1400px] items-center justify-between gap-6 px-8 py-4">
-          <div className="flex min-w-0 items-center gap-6">
+        <div className="mx-auto flex max-w-[1400px] flex-wrap items-center justify-between gap-3 px-3 py-3 sm:px-4 lg:flex-nowrap lg:px-8 lg:py-4">
+          <div className="flex min-w-0 flex-1 items-center gap-3 sm:gap-6">
             <Link to="/" className="flex shrink-0 items-center gap-3 hover:opacity-85">
               <div className="flex h-8 w-8 items-center justify-center rounded bg-blue-600">
                 <Sparkles className="h-5 w-5 text-white" />

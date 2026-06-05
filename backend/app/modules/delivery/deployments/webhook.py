@@ -60,9 +60,12 @@ class WebhookDeployClient:
             raise BadRequestException(f"Deployment webhook failed: {exc}") from exc
 
         body = self._response_body(response)
-        status = self._status(body)
         deployment_url = url or self._str_or_none(body.get("url")) or self._str_or_none(body.get("deployment_url"))
         status_url = self._str_or_none(body.get("status_url")) or self._str_or_none(body.get("deployment_status_url"))
+        raw_status = self._raw_status(body)
+        status = self._normalize_status(raw_status) if raw_status else (
+            DeploymentStatus.PENDING if status_url else DeploymentStatus.DEPLOYED
+        )
         return DeployDraft(
             provider=self.provider,
             status=status,
@@ -73,8 +76,11 @@ class WebhookDeployClient:
                 "environment": environment,
                 "external_id": self._str_or_none(body.get("id")) or self._str_or_none(body.get("external_id")),
                 "status_url": status_url,
+                "raw_status": raw_status,
+                "normalized_status": self._enum_or_str(status),
                 "commit_sha": payload["commit_sha"],
                 "credential": self._credential.metadata(secret_name_key="token_secret_name"),
+                **self._status_evidence(body),
                 **self._log_evidence(body),
             },
         )
@@ -99,7 +105,8 @@ class WebhookDeployClient:
             raise BadRequestException(f"Deployment status sync failed: {exc}") from exc
 
         body = self._response_body(response)
-        status = self._status(body)
+        raw_status = self._raw_status(body)
+        status = self._normalize_status(raw_status) if raw_status else DeploymentStatus.PENDING
         deployment_url = (
             self._str_or_none(body.get("url"))
             or self._str_or_none(body.get("deployment_url"))
@@ -114,8 +121,11 @@ class WebhookDeployClient:
                 "mode": "webhook_status_sync",
                 "status_url": status_url,
                 "external_id": self._external_id(deploy_record),
-                "status": status,
+                "raw_status": raw_status,
+                "status": self._enum_or_str(status),
+                "normalized_status": self._enum_or_str(status),
                 "credential": self._credential.metadata(secret_name_key="token_secret_name"),
+                **self._status_evidence(body),
                 **self._log_evidence(body),
             },
         )
@@ -132,14 +142,198 @@ class WebhookDeployClient:
         return body if isinstance(body, dict) else {}
 
     def _status(self, body: dict) -> str:
-        raw_status = (self._str_or_none(body.get("status")) or "").lower()
-        if raw_status in {"failed", "failure", "error", "canceled", "cancelled"}:
+        return self._normalize_status(self._raw_status(body))
+
+    def _normalize_status(self, raw_value: object | None) -> str:
+        raw_status = (self._str_or_none(raw_value) or "").lower().replace("-", "_").replace(" ", "_")
+        if raw_status in {
+            "failed",
+            "failure",
+            "error",
+            "errored",
+            "canceled",
+            "cancelled",
+            "rejected",
+            "timed_out",
+            "timeout",
+            "skipped",
+            "red",
+        }:
             return DeploymentStatus.FAILED
-        if raw_status in {"deployed", "succeeded", "success", "passed", "complete", "completed"}:
+        if raw_status in {
+            "deployed",
+            "succeeded",
+            "success",
+            "successful",
+            "passed",
+            "pass",
+            "complete",
+            "completed",
+            "green",
+            "ok",
+            "ready",
+            "available",
+        }:
             return DeploymentStatus.DEPLOYED
-        if raw_status in {"pending", "queued", "running", "in_progress", "deploying"}:
+        if raw_status in {
+            "pending",
+            "queued",
+            "running",
+            "in_progress",
+            "deploying",
+            "created",
+            "waiting",
+            "preparing",
+            "processing",
+            "manual",
+            "scheduled",
+            "blocked",
+        }:
             return DeploymentStatus.PENDING
         return DeploymentStatus.DEPLOYED
+
+    def _raw_status(self, body: dict) -> str | None:
+        signal = self._status_signal(body)
+        if signal:
+            return self._str_or_none(signal.get("raw_status"))
+        return None
+
+    def _status_signal(self, body: dict, path: str = "") -> dict | None:
+        for key in (
+            "status",
+            "state",
+            "result",
+            "conclusion",
+            "deployment_status",
+            "detailed_status",
+            "pipeline_status",
+            "job_status",
+        ):
+            value = self._str_or_none(body.get(key))
+            if value:
+                return {
+                    "raw_status": value,
+                    "path": self._child_path(path, key),
+                    "name": self._status_item_name(body),
+                }
+
+        for key in ("pipeline", "job", "deployment", "deploy", "ci", "build"):
+            nested = body.get(key)
+            if isinstance(nested, dict):
+                signal = self._status_signal(nested, self._child_path(path, key))
+                if signal:
+                    return signal
+
+        list_signal = self._list_status_signal(body, path)
+        if list_signal:
+            return list_signal
+        return None
+
+    def _list_status_signal(self, body: dict, path: str) -> dict | None:
+        signals: list[dict] = []
+        for key in ("jobs", "stages", "steps", "checks", "tasks", "deployments", "pods", "resources"):
+            items = body.get(key)
+            if not isinstance(items, list):
+                continue
+            for index, item in enumerate(items):
+                if not isinstance(item, dict):
+                    continue
+                signal = self._status_signal(item, self._child_path(path, f"{key}[{index}]"))
+                if signal:
+                    signals.append(signal)
+        return self._choose_status_signal(signals)
+
+    def _choose_status_signal(self, signals: list[dict]) -> dict | None:
+        if not signals:
+            return None
+        for status in (DeploymentStatus.FAILED, DeploymentStatus.PENDING, DeploymentStatus.DEPLOYED):
+            for signal in signals:
+                if self._normalize_status(signal.get("raw_status")) == status:
+                    return signal
+        return signals[0]
+
+    def _status_evidence(self, body: dict) -> dict:
+        evidence: dict[str, object] = {}
+        signal = self._status_signal(body)
+        if signal:
+            evidence["status_path"] = signal["path"]
+            if signal.get("name"):
+                evidence["status_item"] = signal["name"]
+
+        platform = self._status_platform(body)
+        if platform:
+            evidence["status_platform"] = platform
+
+        items = self._status_items(body)
+        if items:
+            evidence["status_items"] = items[:20]
+            failed_items = [
+                item for item in items if item["normalized_status"] == self._enum_or_str(DeploymentStatus.FAILED)
+            ]
+            pending_items = [
+                item for item in items if item["normalized_status"] == self._enum_or_str(DeploymentStatus.PENDING)
+            ]
+            if failed_items:
+                evidence["failed_status_items"] = failed_items[:10]
+            if pending_items:
+                evidence["pending_status_items"] = pending_items[:10]
+        return evidence
+
+    def _status_items(self, body: dict, path: str = "") -> list[dict]:
+        items: list[dict] = []
+        for key in ("jobs", "stages", "steps", "checks", "tasks", "deployments", "pods", "resources"):
+            raw_items = body.get(key)
+            if not isinstance(raw_items, list):
+                continue
+            for index, item in enumerate(raw_items):
+                if not isinstance(item, dict):
+                    continue
+                signal = self._status_signal(item, self._child_path(path, f"{key}[{index}]"))
+                if not signal:
+                    continue
+                items.append(
+                    {
+                        "name": self._status_item_name(item),
+                        "raw_status": signal["raw_status"],
+                        "normalized_status": self._enum_or_str(self._normalize_status(signal["raw_status"])),
+                        "path": signal["path"],
+                        "url": (
+                            self._str_or_none(item.get("url"))
+                            or self._str_or_none(item.get("web_url"))
+                            or self._str_or_none(item.get("html_url"))
+                        ),
+                    }
+                )
+        for key in ("pipeline", "job", "deployment", "deploy", "ci", "build", "workflow", "workflow_run"):
+            nested = body.get(key)
+            if isinstance(nested, dict):
+                items.extend(self._status_items(nested, self._child_path(path, key)))
+        return items
+
+    def _status_platform(self, body: dict) -> str | None:
+        for key in ("platform", "provider", "ci_provider", "system"):
+            value = self._str_or_none(body.get(key))
+            if value:
+                return value.lower()
+        if body.get("object_kind") or body.get("project") or body.get("pipeline"):
+            return "gitlab"
+        if body.get("workflow_run") or body.get("check_suite") or body.get("check_run"):
+            return "github"
+        if body.get("application") and (body.get("sync") or body.get("health")):
+            return "argocd"
+        if body.get("build") or body.get("job"):
+            return "jenkins"
+        return None
+
+    def _status_item_name(self, body: dict) -> str | None:
+        for key in ("name", "stage", "job", "job_name", "display_name", "task", "id"):
+            value = self._str_or_none(body.get(key))
+            if value:
+                return value
+        return None
+
+    def _child_path(self, path: str, key: str) -> str:
+        return f"{path}.{key}" if path else key
 
     def _commit_sha(self, merge_request: MergeRequestRecord) -> str | None:
         evidence = merge_request.evidence_json or {}
@@ -195,3 +389,6 @@ class WebhookDeployClient:
             return None
         text = str(value).strip()
         return text or None
+
+    def _enum_or_str(self, value: object) -> str:
+        return value.value if hasattr(value, "value") else str(value)

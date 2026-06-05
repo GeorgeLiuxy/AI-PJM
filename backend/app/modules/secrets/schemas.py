@@ -25,6 +25,13 @@ class SecretRotateRequest(BaseModel):
     expires_at: Optional[datetime] = None
 
 
+class SecretStatusUpdateRequest(BaseModel):
+    """Enable or disable an existing project secret."""
+
+    status: str = Field(..., min_length=1, max_length=50)
+    reason: Optional[str] = Field(default=None, max_length=500)
+
+
 class SecretRecordResponse(BaseModel):
     """Secret metadata response. Plaintext is never returned."""
 

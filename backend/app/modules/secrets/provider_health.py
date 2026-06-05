@@ -30,6 +30,8 @@ async def check_remote_provider_health(provider: str, secret_value: str) -> Prov
         return await _check_dify(secret_value)
     if normalized == "gitlab":
         return await _check_gitlab(secret_value)
+    if normalized == "github":
+        return await _check_github(secret_value)
     return ProviderHealthProbeResult(
         status="unknown",
         reason=f"Remote probe is not supported for provider '{normalized}'.",
@@ -79,6 +81,25 @@ async def _check_gitlab(token: str) -> ProviderHealthProbeResult:
         url=f"{base_url}/user",
         headers={"PRIVATE-TOKEN": token},
         endpoint="gitlab.user",
+    )
+
+
+async def _check_github(token: str) -> ProviderHealthProbeResult:
+    base_url = settings.github_api_base_url.strip().rstrip("/")
+    if not base_url:
+        return ProviderHealthProbeResult(
+            status="unknown",
+            reason="GITHUB_API_BASE_URL is not configured.",
+            remote_probe=False,
+        )
+    return await _get_with_token(
+        url=f"{base_url}/user",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+        },
+        endpoint="github.user",
     )
 
 

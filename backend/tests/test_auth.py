@@ -691,3 +691,34 @@ async def test_project_secret_access_is_project_scoped(
         json={"value": "new-value"},
     )
     assert beta_rotate.status_code == 403
+
+    beta_disable = await client.patch(
+        f"/api/v2/secrets/{secret_id}/status",
+        headers={"Authorization": f"Bearer {beta_token}"},
+        json={"status": "disabled", "reason": "outside project"},
+    )
+    assert beta_disable.status_code == 403
+
+    invalid_status = await client.patch(
+        f"/api/v2/secrets/{secret_id}/status",
+        headers={"Authorization": f"Bearer {alpha_token}"},
+        json={"status": "deleted"},
+    )
+    assert invalid_status.status_code == 400
+
+    disabled = await client.patch(
+        f"/api/v2/secrets/{secret_id}/status",
+        headers={"Authorization": f"Bearer {alpha_token}"},
+        json={"status": "disabled", "reason": "credential compromised"},
+    )
+    assert disabled.status_code == 200
+    disabled_payload = disabled.json()["data"]
+    assert disabled_payload["status"] == "disabled"
+    assert disabled_payload["health_status"] == "disabled"
+
+    health = await client.get(
+        f"/api/v2/secrets/{secret_id}/health",
+        headers={"Authorization": f"Bearer {alpha_token}"},
+    )
+    assert health.status_code == 200
+    assert health.json()["data"]["health_status"] == "disabled"

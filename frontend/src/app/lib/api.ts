@@ -21,6 +21,7 @@ import type {
   DeliveryRepoContext,
   DeliverySpecCard,
   DeliveryVerificationRecord,
+  ProjectDeploymentEnvironmentConfig,
   SecretRecord,
 } from '../types';
 
@@ -206,6 +207,12 @@ export const authApi = {
       body: JSON.stringify(params),
     });
   },
+  updateSecretStatus: (secretId: number, params: { status: 'active' | 'disabled'; reason?: string | null }) => {
+    return fetchAPI<SecretRecord>(`/api/v2/secrets/${secretId}/status`, {
+      method: 'PATCH',
+      body: JSON.stringify(params),
+    });
+  },
   checkSecretHealth: (secretId: number, remote = true) => {
     return fetchAPI<SecretRecord>(`/api/v2/secrets/${secretId}/health${remote ? '?remote=true' : ''}`);
   },
@@ -213,6 +220,18 @@ export const authApi = {
 
 export const deliveryApi = {
   getObservabilitySummary: () => fetchAPI<DeliveryObservabilitySummary>('/api/v2/observability/summary'),
+  getProjectDeploymentEnvironments: (projectId: number) => {
+    return fetchAPI<ProjectDeploymentEnvironmentConfig>(`/api/v2/projects/${projectId}/deployment-environments`);
+  },
+  updateProjectDeploymentEnvironments: (
+    projectId: number,
+    params: { environments: ProjectDeploymentEnvironmentConfig['environments'] },
+  ) => {
+    return fetchAPI<ProjectDeploymentEnvironmentConfig>(`/api/v2/projects/${projectId}/deployment-environments`, {
+      method: 'PUT',
+      body: JSON.stringify(params),
+    });
+  },
   listAuditEvents: (params: {
     project_id?: number;
     entity_type?: string;

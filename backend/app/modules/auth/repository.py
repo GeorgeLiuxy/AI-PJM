@@ -91,6 +91,12 @@ class AuthRepository:
         result = await db.execute(select(AuthProject).where(AuthProject.id == project_id))
         return result.scalar_one_or_none()
 
+    async def update_project(self, db: AsyncSession, project: AuthProject, **values) -> AuthProject:
+        for key, value in values.items():
+            setattr(project, key, value)
+        await db.flush()
+        return project
+
     async def list_projects(
         self,
         db: AsyncSession,

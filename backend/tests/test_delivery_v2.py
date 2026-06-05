@@ -1,6 +1,8 @@
 """Delivery v2 API tests."""
 
 import json
+import hashlib
+import hmac
 import os
 import shutil
 import subprocess
@@ -10,7 +12,9 @@ from pathlib import Path
 import pytest
 
 from app.core.config import settings
-from app.modules.delivery.enums import ExecutionRunStatus
+from app.modules.audit.repository import audit_repository
+from app.modules.auth.repository import auth_repository
+from app.modules.delivery.enums import CodingTaskStatus, ExecutionRunStatus, GateType, MergeRequestStatus, ReviewStatus, SpecStatus
 from app.modules.delivery.repository import delivery_repository
 
 
@@ -166,6 +170,160 @@ async def test_observability_summary_endpoint(client):
     assert data["status"] == "healthy"
     assert data["metrics"]["queued_runs"] == 0
     assert data["alerts"] == []
+
+
+@pytest.mark.asyncio
+async def test_observability_metrics_endpoint(client):
+    response = await client.get("/api/v2/observability/metrics")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/plain")
+    body = response.text
+    assert "# TYPE ai_pjm_observability_status_code gauge" in body
+    assert 'ai_pjm_observability_status_code{status="healthy"} 0' in body
+    assert 'ai_pjm_execution_runs{state="queued"} 0' in body
+    assert "ai_pjm_recent_execution_failure_rate_percent 0" in body
+
+
+@pytest.mark.asyncio
+async def test_github_webhook_endpoint_updates_existing_pull_request(client, db_session, monkeypatch):
+    monkeypatch.setattr(settings, "github_webhook_secret", "github-webhook-secret")
+    project = await auth_repository.create_project(
+        db_session,
+        key="api-github-webhook",
+        name="API GitHub Webhook",
+    )
+    demand = await delivery_repository.create_demand(
+        db_session,
+        raw_input="Handle GitHub webhook.",
+        source_type="new_requirement",
+        title="GitHub webhook",
+        project_id=project.id,
+    )
+    spec = await delivery_repository.create_spec_card(
+        db_session,
+        demand_id=demand.id,
+        status=SpecStatus.APPROVED,
+        title="GitHub webhook",
+        user_story="As an operator, GitHub webhook updates PR review state.",
+        scope="PR sync.",
+        acceptance_criteria=["Webhook updates existing PR."],
+        constraints=[],
+        risks=[],
+        open_questions=[],
+    )
+    task = await delivery_repository.create_coding_task(
+        db_session,
+        demand_id=demand.id,
+        spec_card_id=spec.id,
+        status=CodingTaskStatus.COMPLETED,
+        title="GitHub webhook task",
+        task_prompt="Handle GitHub webhook.",
+        allowed_paths=["backend/app"],
+        forbidden_actions=[],
+        required_checks=[],
+        expected_evidence=[],
+    )
+    run = await delivery_repository.create_execution_run(
+        db_session,
+        coding_task_id=task.id,
+        status=ExecutionRunStatus.SUCCEEDED,
+        executor_type="codex",
+        trigger_mode="manual",
+    )
+    pull_request = await delivery_repository.create_merge_request_record(
+        db_session,
+        coding_task_id=task.id,
+        execution_run_id=run.id,
+        provider="github",
+        status=MergeRequestStatus.REVIEWING,
+        review_status=ReviewStatus.PENDING,
+        title="GitHub webhook",
+        source_branch="codex/github-webhook",
+        target_branch="main",
+        external_id="42",
+        url="https://github.example/org/demo/pull/42",
+    )
+    await db_session.commit()
+
+    payload = {
+        "state": "success",
+        "context": "ci/unit",
+        "pull_request_number": 42,
+    }
+    body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    signature = "sha256=" + hmac.new(
+        b"github-webhook-secret",
+        body,
+        hashlib.sha256,
+    ).hexdigest()
+
+    response = await client.post(
+        "/api/v2/github/webhook",
+        content=body,
+        headers={
+            "X-GitHub-Event": "status",
+            "X-Hub-Signature-256": signature,
+            "Content-Type": "application/json",
+        },
+    )
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["processed"] is True
+    assert data["external_id"] == "42"
+    assert data["merge_request"]["id"] == pull_request.id
+    assert data["merge_request"]["status"] == "review_passed"
+    assert data["merge_request"]["review_status"] == "passed"
+
+    detail = await delivery_repository.get_demand_detail(db_session, demand.id)
+    review_gates = [gate for gate in detail.gate_checks if gate.gate_type == GateType.REVIEW_PASSED]
+    assert review_gates[-1].status == "passed"
+
+
+@pytest.mark.asyncio
+async def test_project_deployment_environment_config_endpoint(client, db_session):
+    project = await auth_repository.create_project(
+        db_session,
+        key="api-deploy-env",
+        name="API Deploy Env",
+    )
+    await db_session.commit()
+
+    update_response = await client.put(
+        f"/api/v2/projects/{project.id}/deployment-environments",
+        json={
+            "environments": {
+                "test": {
+                    "url": "https://test.example/app",
+                    "log_url": "https://ci.example/jobs/123",
+                    "description": "Shared test environment",
+                    "environment_name": "Test",
+                }
+            }
+        },
+    )
+
+    assert update_response.status_code == 200
+    payload = update_response.json()["data"]
+    assert payload["project_id"] == project.id
+    assert payload["environments"]["test"]["url"] == "https://test.example/app"
+    assert payload["environments"]["test"]["log_url"] == "https://ci.example/jobs/123"
+
+    get_response = await client.get(f"/api/v2/projects/{project.id}/deployment-environments")
+    assert get_response.status_code == 200
+    assert get_response.json()["data"]["environments"]["test"]["description"] == "Shared test environment"
+
+    loaded_project = await auth_repository.get_project(db_session, project.id)
+    assert loaded_project.settings_json["delivery"]["deployment_environments"]["test"]["environment_name"] == "Test"
+
+    audit_events = await audit_repository.list_events(
+        db_session,
+        project_id=project.id,
+        action="delivery.project_deployment_environments_updated",
+    )
+    assert audit_events
+    assert audit_events[0].metadata_json == {"environments": ["test"]}
 
 
 @pytest.mark.asyncio

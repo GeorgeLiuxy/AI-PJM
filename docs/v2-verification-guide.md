@@ -492,6 +492,8 @@ L2/L3 tasks and changed-file violations must not enter automatic repair.
 After a task has a succeeded execution run:
 
 ```powershell
+$env:DELIVERY_APP_BASE_URL="http://127.0.0.1:5174"
+
 Invoke-RestMethod -Method Post `
   -Uri "http://127.0.0.1:8010/api/v2/coding-tasks/<task_id>/merge-request" `
   -ContentType "application/json" `
@@ -506,7 +508,11 @@ merge_request.status = created
 merge_request.review_status = pending
 merge_request.source_branch = execution_run.branch_name
 merge_request.url = local://merge-requests/<id>
+merge_request.evidence_json.evidence_links.demand.url contains ?demand_id=<id>&tab=summary when DELIVERY_APP_BASE_URL is configured
+MR description contains AI PJM Delivery Summary, Check Results, Changed Files, and Evidence Links
 ```
+
+Open a generated evidence link such as `http://127.0.0.1:5174/?demand_id=<id>&tab=execution`. The delivery workspace should load that demand and open the requested tab without browser console errors.
 
 Record a local review result:
 
@@ -524,6 +530,74 @@ merge_request.status = review_passed
 merge_request.review_status = passed
 gate_check.gate_type = review_passed
 gate_check.status = passed
+```
+
+For GitLab MR provider defaults, configure labels and reviewers before creating the MR:
+
+```powershell
+$env:GITLAB_DEFAULT_LABELS="ai-pjm,delivery"
+$env:GITLAB_REVIEWER_IDS="101,102"
+$env:GITLAB_ASSIGNEE_IDS="201"
+```
+
+For GitHub PR provider, configure the repository, token, and optional defaults before creating the PR:
+
+```powershell
+$env:GITHUB_API_BASE_URL="https://api.github.com"
+$env:GITHUB_REPOSITORY="<owner>/<repo>"
+$env:GITHUB_TOKEN="<github-token>"
+$env:GITHUB_DEFAULT_LABELS="ai-pjm,delivery"
+$env:GITHUB_REVIEWERS="alice,bob"
+$env:GITHUB_ASSIGNEES="carol"
+```
+
+Project SecretStore can be used instead of `GITHUB_TOKEN` by creating a `github_token` secret with provider `github`.
+
+For GitHub webhook verification, configure the webhook secret and post a signed check-run event after a GitHub PR record exists:
+
+```powershell
+$env:GITHUB_WEBHOOK_SECRET="local-github-webhook-secret"
+$body = '{"action":"completed","check_run":{"name":"unit","status":"completed","conclusion":"success","pull_requests":[{"number":42}]}}'
+$secretBytes = [Text.Encoding]::UTF8.GetBytes($env:GITHUB_WEBHOOK_SECRET)
+$bodyBytes = [Text.Encoding]::UTF8.GetBytes($body)
+$hmac = [System.Security.Cryptography.HMACSHA256]::new($secretBytes)
+$signature = "sha256=" + ([BitConverter]::ToString($hmac.ComputeHash($bodyBytes)).Replace("-", "").ToLowerInvariant())
+
+Invoke-RestMethod -Method Post `
+  -Uri "http://127.0.0.1:8010/api/v2/github/webhook" `
+  -Headers @{"X-GitHub-Event"="check_run"; "X-Hub-Signature-256"=$signature} `
+  -ContentType "application/json" `
+  -Body $body
+```
+
+Expected evidence:
+
+```text
+The existing GitHub PR record whose external_id is 42 is updated.
+review_status becomes passed for a successful check_run or status event.
+gate_check.gate_type = review_passed is written through the same gate path.
+evidence_json.github_webhook.last_event stores the redacted webhook event.
+```
+
+For GitLab webhook verification, configure the secret token and post a pipeline event after a GitLab MR record exists:
+
+```powershell
+$env:GITLAB_WEBHOOK_SECRET_TOKEN="local-webhook-secret"
+
+Invoke-RestMethod -Method Post `
+  -Uri "http://127.0.0.1:8010/api/v2/gitlab/webhook" `
+  -Headers @{"X-Gitlab-Token"="local-webhook-secret"} `
+  -ContentType "application/json" `
+  -Body '{"object_kind":"pipeline","object_attributes":{"status":"success"},"merge_request":{"iid":12}}'
+```
+
+Expected evidence:
+
+```text
+The existing GitLab MR record whose external_id is 12 is updated.
+review_status becomes passed for a success pipeline.
+gate_check.gate_type = review_passed is written through the same gate path.
+evidence_json.gitlab_webhook.last_event stores the redacted webhook event.
 ```
 
 ## 13. Deployment and Verification Record Verification
@@ -564,7 +638,41 @@ deploy_record.evidence_json.deployment_config.source = DEPLOY_ENVIRONMENT_CONFIG
 deploy_record.evidence_json.deployment_logs.configured_log_url = https://ci.example/jobs/42
 ```
 
+Project-level deployment environment settings take precedence over the global fallback. Configure and verify them through the API:
+
+```powershell
+Invoke-RestMethod -Method Put `
+  -Uri "http://127.0.0.1:8010/api/v2/projects/<project_id>/deployment-environments" `
+  -ContentType "application/json" `
+  -Body '{"environments":{"test":{"url":"https://project-test.example/app","log_url":"https://ci.example/project/jobs/42","description":"Project test environment","environment_name":"Project Test"}}}'
+
+Invoke-RestMethod -Method Get `
+  -Uri "http://127.0.0.1:8010/api/v2/projects/<project_id>/deployment-environments"
+```
+
+When creating a deployment for a demand in that project with `environment = test` and no request URL, expected evidence is:
+
+```text
+deploy_record.url = https://project-test.example/app
+deploy_record.evidence_json.deployment_config.source = project_settings
+deploy_record.evidence_json.deployment_config.log_url = https://ci.example/project/jobs/42
+```
+
+The same project-level settings can be edited from the frontend: open `Access` / `访问管理`, use the `测试环境配置` panel, select a project, fill `环境名 = test`, and save the URL/log URL.
+
 For webhook deployments, if the provider response includes `log_url`, `logs_url`, `deployment_log_url`, `logs`, `log`, or `output`, the evidence should contain redacted `deployment_logs.provider_log_url` and/or `deployment_logs.logs_tail`.
+
+Webhook status sync also normalizes common CI/CD status shapes. A response with nested `pipeline.jobs`, `stages`, `steps`, `checks`, `tasks`, or `deployments` should produce:
+
+```text
+deploy_record.evidence_json.remote_status.raw_status = failed/running/success/...
+deploy_record.evidence_json.remote_status.normalized_status = failed/pending/deployed
+deploy_record.evidence_json.remote_status.status_path = pipeline.jobs[1].status
+deploy_record.evidence_json.remote_status.status_item = deploy
+deploy_record.evidence_json.remote_status.failed_status_items = [failed node summary]
+```
+
+If a create response has no explicit status but includes `status_url`, the deployment remains `pending` until status sync resolves it.
 
 Record verification:
 
@@ -605,6 +713,9 @@ Expected evidence:
 execution queue items include run id, status, trigger mode, task title, demand id, and risk level
 dispatch refuses to start when running executions >= EXECUTION_MAX_CONCURRENCY
 queued runs remain queued when the concurrency limit is reached
+manual retry evidence contains execution_allowed.retry_context.source_run_id
+manual retry evidence contains execution_allowed.retry_context.retry_chain
+repeating retry while a queued/running/paused run exists returns the active run instead of creating another queued run
 ```
 
 Recover expired running Symphony runs:
@@ -621,6 +732,20 @@ Expired running Symphony runs are marked failed.
 The coding task is moved to blocked.
 A failed self_test_passed gate and execution log are recorded.
 The status file records recovered_count and recovered_run_ids.
+```
+
+Run the local Symphony worker continuously:
+
+```powershell
+.\scripts\start-symphony-worker.ps1
+```
+
+Expected behavior:
+
+```text
+.runtime/symphony-worker/worker-status.json is written.
+Loop mode keeps polling after a transient worker/API error and writes state = error.
+Pass --fail-fast to backend/scripts/symphony_worker.py only when a supervisor should restart the process on first error.
 ```
 
 ## 15. Dify Provider Configuration Verification
@@ -735,6 +860,24 @@ Spec fallback adds an open question warning.
 Spec gates and impact metadata include provider_recovery with failed provider, fallback provider, attempts, and redacted errors.
 ```
 
+Provider quality smoke test:
+
+```powershell
+cd backend
+python scripts/provider_quality_smoke.py --provider local
+python scripts/provider_quality_smoke.py --provider openai --min-score 0.65
+python scripts/provider_quality_smoke.py --provider dify --min-score 0.65
+```
+
+Expected behavior:
+
+```text
+The script does not write delivery state.
+It generates Spec and Impact drafts through the selected provider.
+It prints deterministic quality scores, findings, redacted provider metadata, and exits non-zero when the score is below threshold.
+Dify/OpenAI runs require the same environment variables described above.
+```
+
 Dify remote credential probing is intentionally opt-in because calling an arbitrary workflow could produce side effects. Configure a safe read-only endpoint first:
 
 ```powershell
@@ -756,6 +899,19 @@ $env:DEPLOYMENT_SYNC_POLL_SECONDS="120"
 python scripts/deployment_sync_worker.py --loop --limit 20 --status-file .runtime/deployment-sync-status.json
 ```
 
+From the repository root, the same background worker can be started and stopped through the project script:
+
+```powershell
+.\scripts\start-deployment-sync-worker.ps1
+.\scripts\stop-deployment-sync-worker.ps1
+```
+
+It can also be started together with the development stack:
+
+```powershell
+.\scripts\start-dev.ps1 -WithDeploymentSync
+```
+
 Expected behavior:
 
 ```text
@@ -763,6 +919,140 @@ Pending deploy records are scanned.
 Remote status is synced through the same service path as POST /api/v2/deployments/sync-pending.
 Successful or failed deployment status updates write gates, audit events, and redacted evidence.
 The optional status file records state, counts, synced ids, and redacted errors.
+```
+
+## 16.2 Performance Smoke Verification
+
+To prepare a controlled capacity dataset in a test or pre-production database, run from `backend/`:
+
+```powershell
+python scripts/seed_delivery_capacity.py --count 10000 --batch-size 500 --prefix capacity --include-delivery-records --confirm
+```
+
+Production safety:
+
+```powershell
+# Only for a controlled benchmark environment, never for live business data.
+python scripts/seed_delivery_capacity.py --count 10000 --confirm --allow-production
+```
+
+Expected seed behavior:
+
+```text
+The script refuses to write without --confirm.
+ENVIRONMENT=production also requires --allow-production.
+It creates synthetic demand, Spec, task, execution run, and optionally local MR/deployment records.
+Synthetic rows are marked with source_type = capacity_seed and context_payload.capacity_seed = true.
+```
+
+After the backend is running, execute a read-only smoke test from `backend/`:
+
+```powershell
+python scripts/performance_smoke.py --base-url http://127.0.0.1:8010 --requests 80 --concurrency 8
+```
+
+When auth is enabled, pass a bearer token:
+
+```powershell
+$env:AI_PJM_API_TOKEN="<token>"
+python scripts/performance_smoke.py --base-url http://127.0.0.1:8010 --requests 120 --concurrency 12 --max-p95-ms 1000 --max-error-rate-percent 1
+```
+
+Expected behavior:
+
+```text
+The script calls core read endpoints only.
+It prints total requests, p50, p95, max latency, error rate, per-endpoint status codes, and sample errors.
+The process exits non-zero when p95 or error-rate thresholds are exceeded.
+```
+
+## 16.3 Observability Alert Worker Verification
+
+Project-level health summary:
+
+```powershell
+Invoke-RestMethod -Method Get `
+  -Uri "http://127.0.0.1:8010/api/v2/observability/projects"
+```
+
+Expected response:
+
+```text
+Each project item includes project id/key/name, status, alert counts, metrics, and up to three top alerts.
+When auth is enabled, only projects visible to the current user are returned.
+```
+
+Prometheus-compatible text metrics:
+
+```powershell
+Invoke-WebRequest -Method Get `
+  -Uri "http://127.0.0.1:8010/api/v2/observability/metrics"
+```
+
+Expected response:
+
+```text
+Content-Type starts with text/plain.
+Body contains ai_pjm_observability_status_code, ai_pjm_execution_runs, ai_pjm_worker_expired_runs, ai_pjm_failed_deployments, ai_pjm_secret_health, ai_pjm_recent_execution_failure_rate_percent, and ai_pjm_alerts.
+When auth is enabled, metrics are computed only from projects visible to the current user.
+```
+
+Run a one-shot check from `backend/`:
+
+```powershell
+python scripts/observability_alert_worker.py --api-base-url http://127.0.0.1:8010/api/v2 --status-file .runtime/observability-alert-status.json
+```
+
+Forward warnings or critical alerts to an external webhook:
+
+```powershell
+$env:OBSERVABILITY_ALERT_WEBHOOK_URL="https://<alert-system>/webhook"
+python scripts/observability_alert_worker.py --api-base-url http://127.0.0.1:8010/api/v2 --fail-on-warning
+```
+
+For continuous polling:
+
+```powershell
+$env:OBSERVABILITY_ALERT_POLL_SECONDS="120"
+python scripts/observability_alert_worker.py --loop --api-base-url http://127.0.0.1:8010/api/v2 --status-file .runtime/observability-alert-status.json
+```
+
+From the repository root, the same background worker can be started and stopped through the project script:
+
+```powershell
+.\scripts\start-observability-alert-worker.ps1 -ApiBaseUrl http://127.0.0.1:8010/api/v2
+.\scripts\stop-observability-alert-worker.ps1
+```
+
+It can also be started together with the development stack:
+
+```powershell
+.\scripts\start-dev.ps1 -WithObservabilityAlert
+```
+
+Expected behavior:
+
+```text
+The worker reads GET /api/v2/observability/summary.
+warning/critical summaries are optionally forwarded as JSON to OBSERVABILITY_ALERT_WEBHOOK_URL.
+The status file records state, generated_at, alert_count, and metrics.
+One-shot mode returns code 2 for critical status and can return code 1 for warning with --fail-on-warning.
+```
+
+Structured application logs:
+
+```powershell
+cd backend
+$env:LOG_FORMAT="json"
+python -c "import logging; import app.core.logging; logging.getLogger('ai_pjm.verify').info('structured log probe', extra={'trace_id':'trace-demo','project_id':1})"
+```
+
+Expected output:
+
+```text
+One JSON object per line.
+Fields include timestamp, level, logger, message, trace_id, and project_id.
+Use LOG_FORMAT=text to keep the local human-readable format.
 ```
 
 ## 17. Auth and Project Access Verification
@@ -810,10 +1100,13 @@ Expected behavior:
 - API responses include `value_mask`, but never include the plaintext secret value.
 - Project-scoped users cannot list or rotate secrets outside their project.
 - Secret creation and rotation create audit events.
+- Secret status updates support only `active` and `disabled`; cross-project users cannot update status.
+- Disabled secrets return `health_status = disabled` and are not consumed by providers.
 - Dify Provider can resolve `dify_api_key` from project SecretStore without returning the key to the frontend.
 - OpenAI Provider can resolve `openai_api_key` from project SecretStore without returning the key to the frontend.
-- `GET /api/v2/secrets/{id}/health?remote=true` decrypts only server-side, probes OpenAI/GitLab with read-only endpoints, probes Dify only when `DIFY_HEALTH_CHECK_URL` is configured, writes `metadata_json.last_provider_health`, and never returns plaintext.
+- `GET /api/v2/secrets/{id}/health?remote=true` decrypts only server-side, probes OpenAI/GitLab/GitHub with read-only endpoints, probes Dify only when `DIFY_HEALTH_CHECK_URL` is configured, writes `metadata_json.last_provider_health`, and never returns plaintext.
 - The access management page health-check button uses the remote probe and shows the latest remote provider status when available.
+- The access management page provides a key rotation repair entry. Select an unhealthy or expiring secret, enter the new value, submit rotation, and verify that the table still shows only masked values.
 
 Manual local configuration:
 
@@ -831,6 +1124,10 @@ After startup, open the access management page and verify:
 Saving a secret succeeds when the master key is set.
 The secret table shows only masked values, for example ****alue.
 Plaintext secret values never appear after save or refresh.
+轮换项目密钥 section is visible.
+Rotating a secret succeeds and refreshes the masked secret table.
+停用/启用 buttons are visible in the project secret table.
+Disabling a secret changes health_status to disabled.
 ```
 
 ## 19. Slice-level Acceptance Criteria

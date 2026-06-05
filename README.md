@@ -1,5 +1,7 @@
 # AI PJM
 
+> 当前状态校正：生产化进度以 `docs/v2-execution-roadmap.md` 和 `docs/production-readiness-plan.md` 为准。当前 GitLab MR、GitHub PR、GitLab/GitHub webhook、部署 pending 后台同步、最小告警 worker、Prometheus 文本指标出口、PostgreSQL/Alembic 迁移链路和 Dify/OpenAI Provider 首版都已具备本地可验证实现；仍需在真实环境完成 Symphony daemon 替换、目标 CI/CD 深度轮询、Dify/OpenAI 生产联调、容量基准和集中监控接入。
+
 AI PJM 是一个 AI 辅助工程交付编排平台。它不是通用项目管理工具，不是企业治理平台，也不是替代 Codex 的编码器；它负责把业务输入转成可审计、可验证、可协作的工程交付链路。
 
 当前主流程：
@@ -32,7 +34,7 @@ AI PJM 是一个 AI 辅助工程交付编排平台。它不是通用项目管理
 - 本地 MR/PR 记录、评审门禁、测试环境记录和验收记录。
 - 执行队列可见性和基础并发上限保护。
 - Dify/OpenAI Provider 边界首版，可通过配置接入 Spec/Impact workflow，并优先按项目从 SecretStore 读取 `dify_api_key` / `openai_api_key`。
-- GitLab MR client 与 webhook 部署 client 首版已建立，均优先按项目从 SecretStore 读取 `gitlab_token` / `deploy_token`，落库证据只保留凭据来源和密钥名；GitLab MR 可手动同步远端评审评论和 commit CI 状态。
+- GitLab MR client、GitHub PR client 与 webhook 部署 client 首版已建立，均优先按项目从 SecretStore 读取 `gitlab_token` / `github_token` / `deploy_token`，落库证据只保留凭据来源和密钥名；GitLab/GitHub 可同步远端评审评论和 CI/check 状态。
 - Symphony 融合方案已落地到文档，后续 Codex 编排优先采用 AI PJM 控制平面 + Symphony 执行编排引擎。
 - 本地认证与项目权限首版：账号密码登录、Bearer Token、项目成员、角色权限、交付 API 权限保护。
 - 权限管理页面首版：查看项目/用户、创建项目、创建本地用户、维护用户状态/角色、重置密码并调整项目角色。
@@ -41,22 +43,22 @@ AI PJM 是一个 AI 辅助工程交付编排平台。它不是通用项目管理
 - 审计查询增强首版：支持操作者、动作、对象、时间范围、关键词筛选，并可导出 CSV。
 - 审计事件首版：关键人工/敏感动作落库，并在工作台审计页签展示。
 - 项目密钥管理首版：服务端加密存储项目级凭证，访问管理页只展示掩码，不回显明文。
-- 密钥健康检查首版：支持登记过期时间、展示健康状态、手动检查可解密性；OpenAI/GitLab 支持只读远端可用性探测并写回最近健康结果，不返回明文。
+- 密钥健康检查首版：支持登记过期时间、展示健康状态、手动检查可解密性；OpenAI/GitLab/GitHub 支持只读远端可用性探测并写回最近健康结果，不返回明文。
 - 执行日志和执行证据脱敏首版：持久化前清洗 Token、API Key、密码、Authorization 等敏感片段。
-- 最小可观测性首版：工作台展示 worker lease 异常、队列积压、凭证不可用/即将过期、测试部署失败告警，后端提供 `/api/v2/observability/summary`。
+- 最小可观测性首版：工作台展示 worker lease 异常、队列积压、凭证不可用/即将过期、测试部署失败告警，后端提供 `/api/v2/observability/summary`、`/api/v2/observability/projects` 和 Prometheus 文本指标 `/api/v2/observability/metrics`。
 - 中文化交付工作台页面。
 - 前后端启动/关闭脚本。
 
 尚未实现或未生产化：
 
 - 真实本地代码上下文收集和任务范围推断已有首版，仍待增强语义匹配和历史需求读取。
-- OpenAI Provider 首版已实现；Dify/OpenAI Provider 已有平台级重试和本地规则降级首版，OpenAI/GitLab 凭证已有只读远端探测首版，Dify 支持显式安全 URL 探测；仍需生产联调、质量评估和监控。
+- OpenAI Provider 首版已实现；Dify/OpenAI Provider 已有平台级重试和本地规则降级首版，OpenAI/GitLab/GitHub 凭证已有只读远端探测首版，Dify 支持显式安全 URL 探测；仍需生产联调、质量评估和监控。
 - Codex CLI 首版已可用，但仍需继续做自动修复闭环、性能优化和生产化运维配置。本机 WindowsApps 下的 `codex.exe` 仍会返回 `Access is denied`，当前使用全局 npm 版 `@openai/codex`。
-- 当前 MR/PR、测试环境部署和验收默认仍是本地记录闭环；GitLab MR 和 webhook 部署已有首版 provider，GitLab MR 创建前可自动推送执行分支，并可手动同步远端评审评论和 commit CI 状态；评审阻塞可触发自动修复 run，修复成功后会把修复分支推回原 GitLab MR 源分支；webhook 部署返回 `status_url` 时可手动同步部署状态，后端也提供 pending 部署批量同步入口，失败部署可从工作台重新部署。自动调度、GitLab webhook 和 GitHub provider 仍待补齐。
+- 当前 MR/PR、测试环境部署和验收已有本地记录闭环；GitLab MR、GitHub PR 和 webhook 部署已有首版 provider，创建 MR/PR 前可自动推送执行分支，并可同步远端评审评论、CI/check 状态。GitLab/GitHub webhook 可更新原 MR/PR 记录；评审阻塞可触发自动修复 run，修复成功后会把修复分支推回原远端源分支；webhook 部署返回 `status_url` 时可手动或通过后台 worker 同步部署状态，失败部署可从工作台重新部署。
 - Symphony Bridge 已完成首版 internal API、最小 worker、lease 恢复和暂停/恢复/取消控制；真实 Symphony daemon 替换和更强队列恢复仍待实现。
 - 认证授权和项目权限保留最小角色模型；企业 SSO、复杂业务角色和审计报表平台化不作为近期主线。
-- 密钥管理已有本地加密存储、健康检查和执行证据脱敏首版，Dify/OpenAI/GitLab/部署 provider 已可按项目消费凭证。
-- PostgreSQL 真库演练、备份恢复流程、后台 Worker 运维、trace/集中告警和异常失败率指标仍待实现。
+- 密钥管理已有本地加密存储、健康检查和执行证据脱敏首版，Dify/OpenAI/GitLab/GitHub/部署 provider 已可按项目消费凭证。
+- PostgreSQL 真库演练、备份恢复流程、后台 Worker 启停脚本、trace、集中告警、异常失败率指标和 Prometheus 文本指标出口已有首版；生产容量基准、真实 Symphony daemon、目标 CI/CD 深度轮询和集中监控接入仍待目标环境完成。
 - 默认子 Agent 评审、多仓库编排、自动生产发布暂不做。
 
 后续功能执行顺序以 [v2-execution-roadmap.md](docs/v2-execution-roadmap.md) 为准；生产级落地以 [production-readiness-plan.md](docs/production-readiness-plan.md) 为准。

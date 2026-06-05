@@ -94,10 +94,7 @@ def main() -> int:
     )
 
     if args.loop:
-        while True:
-            handled = worker.run_once()
-            if not handled:
-                time.sleep(args.poll_seconds)
+        return run_loop(worker, args.poll_seconds, fail_fast=args.fail_fast)
     handled = worker.run_once()
     return 0 if handled else 3
 
@@ -162,12 +159,44 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--loop", action="store_true", help="Continuously poll for work.")
     parser.add_argument(
+        "--fail-fast",
+        action="store_true",
+        help="Exit the loop after the first unexpected worker error instead of continuing.",
+    )
+    parser.add_argument(
         "--poll-seconds",
         type=int,
         default=int(os.environ.get("SYMPHONY_WORKER_POLL_SECONDS", "5")),
         help="Poll interval when --loop is enabled.",
     )
     return parser.parse_args()
+
+
+def run_loop(
+    worker: "Worker",
+    poll_seconds: int,
+    *,
+    fail_fast: bool = False,
+    sleep_func=time.sleep,
+    max_iterations: int | None = None,
+) -> int:
+    iterations = 0
+    while max_iterations is None or iterations < max_iterations:
+        iterations += 1
+        try:
+            handled = worker.run_once()
+        except KeyboardInterrupt:
+            raise
+        except Exception as exc:
+            worker._write_status("error", message=f"Worker loop error: {exc}")
+            print(f"Worker loop error: {exc}", file=sys.stderr)
+            if fail_fast:
+                return 1
+            sleep_func(poll_seconds)
+            continue
+        if not handled:
+            sleep_func(poll_seconds)
+    return 0
 
 
 class Worker:

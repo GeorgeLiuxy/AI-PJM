@@ -12,6 +12,7 @@ from app.modules.secrets.repository import secret_repository
 from app.modules.secrets.schemas import (
     SecretCreateRequest,
     SecretRotateRequest,
+    SecretStatusUpdateRequest,
 )
 from app.modules.secrets.service import secret_store_service
 
@@ -91,6 +92,31 @@ async def rotate_secret(
     return success_response(
         data=secret_store_service.to_response(rotated).model_dump(),
         message="Secret rotated",
+    )
+
+
+@router.patch("/{secret_id}/status", response_model=dict)
+async def update_secret_status(
+    secret_id: int,
+    request: SecretStatusUpdateRequest,
+    db: AsyncSession = Depends(get_db),
+    principal: AuthPrincipal = Depends(get_current_principal),
+):
+    record = await secret_repository.get_secret(db, secret_id)
+    if not record:
+        raise NotFoundException(f"Secret {secret_id} not found")
+    require_capability(principal, "admin", record.project_id)
+    updated = await secret_store_service.update_secret_status(
+        db,
+        secret_id=secret_id,
+        status=request.status,
+        reason=request.reason,
+        actor_user_id=principal.user_id,
+        actor_ref=principal.username,
+    )
+    return success_response(
+        data=secret_store_service.to_response(updated).model_dump(),
+        message="Secret status updated",
     )
 
 

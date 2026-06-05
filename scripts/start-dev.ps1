@@ -3,7 +3,9 @@ param(
     [switch]$WithWorker,
     [int]$BackendPort = 8010,
     [int]$FrontendPort = 5173,
-    [switch]$BackendReload
+    [switch]$BackendReload,
+    [switch]$WithDeploymentSync,
+    [switch]$WithObservabilityAlert
 )
 
 $ErrorActionPreference = "Stop"
@@ -84,6 +86,8 @@ function Get-AvailablePort {
 Stop-FromPidFile -Path (Join-Path $RuntimeDir "backend.pid")
 Stop-FromPidFile -Path (Join-Path $RuntimeDir "frontend.pid")
 Stop-FromPidFile -Path (Join-Path $RuntimeDir "symphony-worker.pid")
+Stop-FromPidFile -Path (Join-Path $RuntimeDir "deployment-sync-worker.pid")
+Stop-FromPidFile -Path (Join-Path $RuntimeDir "observability-alert-worker.pid")
 Stop-WorkspaceListeners -Ports @($BackendPort, $FrontendPort, ($FrontendPort + 1), ($FrontendPort + 2), ($FrontendPort + 3))
 Start-Sleep -Seconds 1
 
@@ -158,6 +162,15 @@ if ($WithWorker) {
         -Workspace $Root
 }
 
+if ($WithDeploymentSync) {
+    & (Join-Path $PSScriptRoot "start-deployment-sync-worker.ps1")
+}
+
+if ($WithObservabilityAlert) {
+    & (Join-Path $PSScriptRoot "start-observability-alert-worker.ps1") `
+        -ApiBaseUrl "http://127.0.0.1:$BackendPort/api/v2"
+}
+
 if (-not $NoFrontend) {
     $frontendOut = Join-Path $LogDir "frontend.out.log"
     $frontendErr = Join-Path $LogDir "frontend.err.log"
@@ -186,5 +199,11 @@ if (-not $NoFrontend) {
 }
 if ($WithWorker) {
     Write-Host "Worker:   $RuntimeDir\symphony-worker\worker-status.json"
+}
+if ($WithDeploymentSync) {
+    Write-Host "Deploy sync worker: $RuntimeDir\deployment-sync-worker\status.json"
+}
+if ($WithObservabilityAlert) {
+    Write-Host "Alert worker:       $RuntimeDir\observability-alert-worker\status.json"
 }
 Write-Host "Logs:     $LogDir"

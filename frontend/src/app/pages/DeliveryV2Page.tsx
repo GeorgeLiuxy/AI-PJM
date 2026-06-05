@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useOutletContext } from 'react-router';
+import { useOutletContext, useSearchParams } from 'react-router';
 import {
   Activity,
   AlertTriangle,
@@ -45,6 +45,8 @@ type StepKey = 'demand' | 'spec' | 'repo' | 'impact' | 'task' | 'run' | 'mr' | '
 type StepState = 'idle' | 'running' | 'done' | 'failed';
 type TabKey = 'summary' | 'spec' | 'execution' | 'taskPackage' | 'evidence' | 'queue' | 'audit';
 
+const detailTabKeys: TabKey[] = ['summary', 'spec', 'execution', 'taskPackage', 'evidence', 'queue', 'audit'];
+
 type DeliveryResult = {
   demand?: DeliveryDemand;
   detail?: DeliveryDemandDetail;
@@ -75,6 +77,17 @@ type CheckEvidence = {
   stdout_tail?: string;
   stderr_tail?: string;
   error?: string | null;
+};
+
+type WorkbenchAction = {
+  key: string;
+  label: string;
+  description: string;
+  icon: typeof Play;
+  disabled: boolean;
+  visible: boolean;
+  tone?: 'primary' | 'danger' | 'default';
+  onClick: () => void;
 };
 
 const defaultInput = '为交付工作台添加紧凑的执行状态标识。';
@@ -132,6 +145,7 @@ const initialAuditFilters: AuditFilterState = {
 
 export default function DeliveryV2Page() {
   const { user } = useOutletContext<AppOutletContext>();
+  const [searchParams] = useSearchParams();
   const [rawInput, setRawInput] = useState(defaultInput);
   const [allowedPaths, setAllowedPaths] = useState('');
   const [requiredChecks, setRequiredChecks] = useState('npm run build');
@@ -152,6 +166,7 @@ export default function DeliveryV2Page() {
   const [recovering, setRecovering] = useState(false);
   const [activeTab, setActiveTab] = useState<TabKey>('summary');
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const [approvalNote, setApprovalNote] = useState('');
   const [auditFilters, setAuditFilters] = useState<AuditFilterState>(initialAuditFilters);
 
@@ -351,7 +366,9 @@ export default function DeliveryV2Page() {
   };
 
   useEffect(() => {
-    void loadDemandList();
+    const linkedDemandId = Number(searchParams.get('demand_id') || '');
+    const linkedTab = parseTabKey(searchParams.get('tab')) || 'summary';
+    void loadDemandList(Number.isFinite(linkedDemandId) && linkedDemandId > 0 ? linkedDemandId : undefined, linkedTab);
     void loadExecutionQueue();
     void loadObservability();
     void loadAuditEvents();
@@ -878,10 +895,138 @@ export default function DeliveryV2Page() {
     }
   };
 
+  const workflowActions: WorkbenchAction[] = [
+    {
+      key: 'continue',
+      label: '继续流程',
+      description: '从当前阶段继续生成或执行下一步。',
+      icon: Play,
+      visible: Boolean(result.demand && hasResumableWork(result) && !manualApprovalRequired),
+      disabled: !canContinue,
+      tone: 'primary',
+      onClick: () => void continueWorkflow(),
+    },
+    {
+      key: 'auto-repair-checks',
+      label: '自动修复检查',
+      description: '根据失败检查输出生成修复执行。',
+      icon: Wrench,
+      visible: canAutoRepairChecks,
+      disabled: !canAutoRepairChecks,
+      tone: 'primary',
+      onClick: () => void autoRepairChecks(),
+    },
+    {
+      key: 'retry-checks',
+      label: '重试检查',
+      description: '重新执行必要检查，保留新的执行证据。',
+      icon: RefreshCw,
+      visible: canRetryChecks && !canAutoRepairChecks,
+      disabled: !canRetryChecks,
+      onClick: () => void retryChecks(),
+    },
+    {
+      key: 'create-mr',
+      label: '创建 MR',
+      description: '把自测通过的执行结果送入评审。',
+      icon: GitPullRequest,
+      visible: Boolean(result.task && result.run?.status === 'succeeded' && !result.mergeRequest),
+      disabled: !canCreateMergeRequest,
+      tone: 'primary',
+      onClick: () => void createMergeRequest(),
+    },
+    {
+      key: 'sync-review',
+      label: '同步评审',
+      description: '拉取远端 MR 状态、评论和 CI 结果。',
+      icon: RefreshCw,
+      visible: Boolean(result.mergeRequest && result.mergeRequest.provider !== 'local'),
+      disabled: !canSyncRemoteReview,
+      tone: 'primary',
+      onClick: () => void syncRemoteReview(),
+    },
+    {
+      key: 'repair-review',
+      label: '修复评审',
+      description: '把阻塞评审意见转成受控修复任务。',
+      icon: Wrench,
+      visible: canAutoRepairReview,
+      disabled: !canAutoRepairReview,
+      tone: 'primary',
+      onClick: () => void autoRepairReview(),
+    },
+    {
+      key: 'mark-review-passed',
+      label: '评审通过',
+      description: '记录本地评审结论并推进部署门禁。',
+      icon: CheckCircle2,
+      visible: Boolean(result.mergeRequest?.provider === 'local' && result.mergeRequest?.review_status !== 'passed'),
+      disabled: !canMarkReviewPassed,
+      tone: 'primary',
+      onClick: () => void markReviewPassed(),
+    },
+    {
+      key: 'deploy',
+      label: '部署测试',
+      description: '创建或触发测试环境部署。',
+      icon: ExternalLink,
+      visible: Boolean(result.mergeRequest?.review_status === 'passed' && !result.deployRecord),
+      disabled: !canCreateDeployment,
+      tone: 'primary',
+      onClick: () => void createDeployment(),
+    },
+    {
+      key: 'sync-deploy',
+      label: '同步部署',
+      description: '拉取测试环境最新部署状态。',
+      icon: RefreshCw,
+      visible: Boolean(result.deployRecord?.provider !== 'local' && !result.verificationRecord),
+      disabled: !canSyncDeploymentStatus,
+      tone: 'primary',
+      onClick: () => void syncDeploymentStatus(),
+    },
+    {
+      key: 'redeploy',
+      label: '重新部署',
+      description: '对失败部署重新创建部署记录。',
+      icon: RefreshCw,
+      visible: Boolean(result.deployRecord?.status === 'failed' || result.verificationRecord?.status === 'failed'),
+      disabled: !canRedeployDeployment,
+      tone: 'primary',
+      onClick: () => void redeployDeployment(),
+    },
+    {
+      key: 'verify-pass',
+      label: '验收通过',
+      description: '记录测试验收通过，完成证据链。',
+      icon: FileCheck2,
+      visible: Boolean(result.deployRecord?.status === 'deployed' && !result.verificationRecord),
+      disabled: !canRecordVerification,
+      tone: 'primary',
+      onClick: () => void recordVerification('passed'),
+    },
+    {
+      key: 'verify-fail',
+      label: '验收失败',
+      description: '记录验收失败，避免错误推进。',
+      icon: AlertTriangle,
+      visible: Boolean(result.deployRecord?.status === 'deployed' && !result.verificationRecord),
+      disabled: !canRecordVerification,
+      tone: 'danger',
+      onClick: () => void recordVerification('failed'),
+    },
+  ];
+  const visibleWorkflowActions = workflowActions.filter((action) => action.visible);
+  const primaryWorkflowAction = visibleWorkflowActions.find((action) => !action.disabled) || null;
+  const secondaryWorkflowActions = visibleWorkflowActions.filter(
+    (action) => action.key !== primaryWorkflowAction?.key && !action.disabled,
+  );
+
   return (
-    <main className="mx-auto max-w-[1500px] px-3 py-2 lg:px-4">
-      <div className="grid gap-2 xl:grid-cols-[minmax(0,1fr)_300px]">
+    <main className="mx-auto min-w-0 max-w-[1500px] px-3 py-2 lg:px-4">
+      <div className="grid min-w-0 gap-3 xl:grid-cols-[280px_minmax(0,1fr)]">
         <HistoryPanel
+          className="hidden xl:block xl:self-start"
           demands={demands}
           selectedDemandId={selectedDemandId}
           loading={listLoading}
@@ -890,15 +1035,29 @@ export default function DeliveryV2Page() {
           onSelect={(demandId) => void loadDemandDetail(demandId)}
         />
 
-        <div className="order-1 min-w-0 xl:order-1">
+        <div className="order-1 min-w-0 xl:order-2">
+          <MobileHistoryPanel
+            open={historyOpen}
+            demands={demands}
+            selectedDemandId={selectedDemandId}
+            loading={listLoading}
+            disabled={busy}
+            onToggle={() => setHistoryOpen((open) => !open)}
+            onRefresh={() => void refreshCurrent()}
+            onSelect={(demandId) => {
+              setHistoryOpen(false);
+              void loadDemandDetail(demandId);
+            }}
+          />
+
           <ObservabilityBanner
             summary={observability}
             loading={observabilityLoading}
             onRefresh={() => void loadObservability()}
           />
 
-          <section className="mb-2 grid gap-2 lg:grid-cols-[minmax(0,1fr)_300px]">
-            <div className="rounded border border-slate-200 bg-white">
+          <section className="mb-2 grid min-w-0 gap-2 lg:grid-cols-[minmax(0,1fr)_320px]">
+            <div className="min-w-0 rounded border border-slate-200 bg-white">
               <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 px-3 py-2">
                 <div className="min-w-0">
                   <div className="flex items-center gap-2 text-sm font-medium text-blue-700">
@@ -907,7 +1066,7 @@ export default function DeliveryV2Page() {
                   </div>
                   <h1 className="mt-0.5 text-base font-semibold text-slate-950">AI 交付编排工作台</h1>
                 </div>
-                <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
+                <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
                   <button
                     type="button"
                     onClick={() => void refreshCurrent()}
@@ -916,114 +1075,6 @@ export default function DeliveryV2Page() {
                   >
                     <RefreshCw className={`h-4 w-4 ${listLoading || detailLoading ? 'animate-spin' : ''}`} />
                     刷新
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void continueWorkflow()}
-                    disabled={!canContinue}
-                    className={`h-8 items-center gap-1.5 rounded border border-slate-200 bg-white px-2.5 text-sm text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 ${canContinue ? 'inline-flex' : 'hidden'}`}
-                  >
-                    {recovering ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
-                    继续
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void retryChecks()}
-                    disabled={!canRetryChecks}
-                    className={`h-8 items-center gap-1.5 rounded border border-slate-200 bg-white px-2.5 text-sm text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 ${canRetryChecks ? 'inline-flex' : 'hidden'}`}
-                  >
-                    <RefreshCw className={`h-4 w-4 ${recovering ? 'animate-spin' : ''}`} />
-                    重试检查
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void autoRepairChecks()}
-                    disabled={!canAutoRepairChecks}
-                    className={`h-8 items-center gap-1.5 rounded border border-slate-200 bg-white px-2.5 text-sm text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 ${canAutoRepairChecks ? 'inline-flex' : 'hidden'}`}
-                  >
-                    {recovering ? <Loader2 className="h-4 w-4 animate-spin" /> : <Wrench className="h-4 w-4" />}
-                    自动修复
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void createMergeRequest()}
-                    disabled={!canCreateMergeRequest}
-                    className={`h-8 items-center gap-1.5 rounded border border-slate-200 bg-white px-2.5 text-sm text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 ${canCreateMergeRequest ? 'inline-flex' : 'hidden'}`}
-                  >
-                    {recovering ? <Loader2 className="h-4 w-4 animate-spin" /> : <GitPullRequest className="h-4 w-4" />}
-                    创建 MR
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void syncRemoteReview()}
-                    disabled={!canSyncRemoteReview}
-                    className={`h-8 items-center gap-1.5 rounded border border-slate-200 bg-white px-2.5 text-sm text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 ${canSyncRemoteReview ? 'inline-flex' : 'hidden'}`}
-                  >
-                    {recovering ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-                    同步评审
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void autoRepairReview()}
-                    disabled={!canAutoRepairReview}
-                    className={`h-8 items-center gap-1.5 rounded border border-slate-200 bg-white px-2.5 text-sm text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 ${canAutoRepairReview ? 'inline-flex' : 'hidden'}`}
-                  >
-                    {recovering ? <Loader2 className="h-4 w-4 animate-spin" /> : <Wrench className="h-4 w-4" />}
-                    修复评审
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void markReviewPassed()}
-                    disabled={!canMarkReviewPassed}
-                    className={`h-8 items-center gap-1.5 rounded border border-slate-200 bg-white px-2.5 text-sm text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 ${canMarkReviewPassed ? 'inline-flex' : 'hidden'}`}
-                  >
-                    {recovering ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
-                    评审通过
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void createDeployment()}
-                    disabled={!canCreateDeployment}
-                    className={`h-8 items-center gap-1.5 rounded border border-slate-200 bg-white px-2.5 text-sm text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 ${canCreateDeployment ? 'inline-flex' : 'hidden'}`}
-                  >
-                    {recovering ? <Loader2 className="h-4 w-4 animate-spin" /> : <ExternalLink className="h-4 w-4" />}
-                    部署测试
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void syncDeploymentStatus()}
-                    disabled={!canSyncDeploymentStatus}
-                    className={`h-8 items-center gap-1.5 rounded border border-slate-200 bg-white px-2.5 text-sm text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 ${canSyncDeploymentStatus ? 'inline-flex' : 'hidden'}`}
-                  >
-                    {recovering ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-                    同步部署
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void redeployDeployment()}
-                    disabled={!canRedeployDeployment}
-                    className={`h-8 items-center gap-1.5 rounded border border-slate-200 bg-white px-2.5 text-sm text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 ${canRedeployDeployment ? 'inline-flex' : 'hidden'}`}
-                  >
-                    {recovering ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-                    重新部署
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void recordVerification('passed')}
-                    disabled={!canRecordVerification}
-                    className={`h-8 items-center gap-1.5 rounded border border-slate-200 bg-white px-2.5 text-sm text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 ${canRecordVerification ? 'inline-flex' : 'hidden'}`}
-                  >
-                    {recovering ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileCheck2 className="h-4 w-4" />}
-                    验收通过
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void recordVerification('failed')}
-                    disabled={!canRecordVerification}
-                    className={`h-8 items-center gap-1.5 rounded border border-slate-200 bg-white px-2.5 text-sm text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 ${canRecordVerification ? 'inline-flex' : 'hidden'}`}
-                  >
-                    <AlertTriangle className="h-4 w-4" />
-                    验收失败
                   </button>
                   <button
                     type="button"
@@ -1041,27 +1092,29 @@ export default function DeliveryV2Page() {
                     <RotateCcw className="h-4 w-4" />
                     新建
                   </button>
-                  <button
-                    type="button"
-                    onClick={runWorkflow}
-                    disabled={!canRun}
-                    className="inline-flex h-8 items-center gap-1.5 rounded bg-blue-600 px-3 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-slate-300"
-                  >
-                    {running ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
-                    执行
-                  </button>
                 </div>
               </div>
 
               <div className="p-2.5">
-                <label className="block">
-                  <span className="mb-1.5 block text-sm font-medium text-slate-800">业务需求输入</span>
-                  <textarea
-                    value={rawInput}
-                    onChange={(event) => setRawInput(event.target.value)}
-                    className="h-16 w-full resize-none rounded border border-slate-200 bg-white px-3 py-2 text-sm leading-6 text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                  />
-                </label>
+                <div className="grid min-w-0 gap-2 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end">
+                  <label className="block min-w-0">
+                    <span className="mb-1.5 block text-sm font-medium text-slate-800">业务需求输入</span>
+                    <textarea
+                      value={rawInput}
+                      onChange={(event) => setRawInput(event.target.value)}
+                      className="h-16 w-full resize-none rounded border border-slate-200 bg-white px-3 py-2 text-sm leading-6 text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    onClick={runWorkflow}
+                    disabled={!canRun}
+                    className="inline-flex h-10 items-center justify-center gap-1.5 rounded bg-blue-600 px-4 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+                  >
+                    {running ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
+                    执行新需求
+                  </button>
+                </div>
 
                 {settingsOpen && (
                   <div className="mt-3 grid gap-3 rounded border border-slate-200 bg-slate-50 p-3 lg:grid-cols-2">
@@ -1106,6 +1159,9 @@ export default function DeliveryV2Page() {
               checkCount={checks.length}
               passedChecks={passedChecks}
               running={running || recovering}
+              primaryAction={primaryWorkflowAction}
+              secondaryActions={secondaryWorkflowActions}
+              manualApprovalRequired={manualApprovalRequired}
             />
           </section>
 
@@ -1220,6 +1276,7 @@ function ObservabilityBanner({
 }
 
 function HistoryPanel({
+  className = '',
   demands,
   selectedDemandId,
   loading,
@@ -1227,6 +1284,7 @@ function HistoryPanel({
   onRefresh,
   onSelect,
 }: {
+  className?: string;
   demands: DeliveryDemand[];
   selectedDemandId: number | null;
   loading: boolean;
@@ -1235,7 +1293,7 @@ function HistoryPanel({
   onSelect: (demandId: number) => void;
 }) {
   return (
-    <aside className="order-2 rounded border border-slate-200 bg-white xl:order-2">
+    <aside className={`min-w-0 overflow-hidden rounded border border-slate-200 bg-white ${className}`}>
       <div className="flex items-center justify-between gap-2 border-b border-slate-200 px-3 py-2">
         <div className="min-w-0">
           <div className="text-sm font-medium text-slate-950">最近任务</div>
@@ -1253,38 +1311,117 @@ function HistoryPanel({
       </div>
 
       <div className="p-2">
-        {demands.length > 0 ? (
-          <div className="space-y-1">
-            {demands.slice(0, 5).map((demand) => (
-              <button
-                key={demand.id}
-                type="button"
-                onClick={() => onSelect(demand.id)}
-                disabled={disabled}
-                className={`block w-full rounded border px-2.5 py-1.5 text-left transition-colors ${
-                  selectedDemandId === demand.id
-                    ? 'border-blue-200 bg-blue-50'
-                    : 'border-transparent hover:border-slate-200 hover:bg-slate-50'
-                } disabled:cursor-not-allowed disabled:opacity-60`}
-              >
-                <div className="mb-1 flex items-center justify-between gap-2">
-                  <span className="truncate text-sm font-medium text-slate-900">#{demand.id} {localizeText(demand.title)}</span>
-                  <StatusBadge value={demand.risk_level || 'risk'} />
-                </div>
-                <div className="flex items-center justify-between gap-2">
-                  <StatusBadge value={demand.status} />
-                  <span className="text-xs text-slate-400">{formatDateTime(demand.updated_at)}</span>
-                </div>
-              </button>
-            ))}
-          </div>
-        ) : (
-          <div className="rounded border border-dashed border-slate-200 px-3 py-8 text-center text-sm text-slate-400">
-            暂无交付记录
-          </div>
-        )}
+        <HistoryList
+          demands={demands}
+          selectedDemandId={selectedDemandId}
+          disabled={disabled}
+          onSelect={onSelect}
+        />
       </div>
     </aside>
+  );
+}
+
+function MobileHistoryPanel({
+  open,
+  demands,
+  selectedDemandId,
+  loading,
+  disabled,
+  onToggle,
+  onRefresh,
+  onSelect,
+}: {
+  open: boolean;
+  demands: DeliveryDemand[];
+  selectedDemandId: number | null;
+  loading: boolean;
+  disabled: boolean;
+  onToggle: () => void;
+  onRefresh: () => void;
+  onSelect: (demandId: number) => void;
+}) {
+  return (
+    <section className="mb-2 min-w-0 overflow-hidden rounded border border-slate-200 bg-white xl:hidden">
+      <div className="flex items-center justify-between gap-2 px-3 py-2">
+        <button
+          type="button"
+          onClick={onToggle}
+          className="min-w-0 flex-1 text-left"
+        >
+          <div className="text-sm font-medium text-slate-950">最近任务</div>
+          <div className="truncate text-xs text-slate-500">显示 {Math.min(demands.length, 5)} / {demands.length} 条</div>
+        </button>
+        <button
+          type="button"
+          onClick={onRefresh}
+          disabled={loading}
+          className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+          title="刷新历史"
+        >
+          <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+        </button>
+      </div>
+      {open ? (
+        <div className="border-t border-slate-200 p-2">
+          <HistoryList
+            demands={demands}
+            selectedDemandId={selectedDemandId}
+            disabled={disabled}
+            onSelect={onSelect}
+          />
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function HistoryList({
+  demands,
+  selectedDemandId,
+  disabled,
+  onSelect,
+}: {
+  demands: DeliveryDemand[];
+  selectedDemandId: number | null;
+  disabled: boolean;
+  onSelect: (demandId: number) => void;
+}) {
+  if (demands.length === 0) {
+    return (
+      <div className="rounded border border-dashed border-slate-200 px-3 py-8 text-center text-sm text-slate-400">
+        暂无交付记录
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-1">
+      {demands.slice(0, 5).map((demand) => (
+        <button
+          key={demand.id}
+          type="button"
+          onClick={() => onSelect(demand.id)}
+          disabled={disabled}
+          className={`block w-full min-w-0 rounded border px-2.5 py-1.5 text-left transition-colors ${
+            selectedDemandId === demand.id
+              ? 'border-blue-200 bg-blue-50'
+              : 'border-transparent hover:border-slate-200 hover:bg-slate-50'
+          } disabled:cursor-not-allowed disabled:opacity-60`}
+        >
+          <div className="mb-1 flex min-w-0 items-center justify-between gap-2">
+            <span className="min-w-0 flex-1 truncate text-sm font-medium text-slate-900">
+              #{demand.id} {localizeText(demand.title)}
+            </span>
+            <StatusBadge value={demand.risk_level || 'risk'} />
+          </div>
+          <div className="flex min-w-0 items-center justify-between gap-2">
+            <StatusBadge value={demand.status} />
+            <span className="shrink-0 text-xs text-slate-400">{formatDateTime(demand.updated_at)}</span>
+          </div>
+        </button>
+      ))}
+    </div>
   );
 }
 
@@ -1315,18 +1452,64 @@ function RunSummary({
   checkCount,
   passedChecks,
   running,
+  primaryAction,
+  secondaryActions,
+  manualApprovalRequired,
 }: {
   outcome: string;
   result: DeliveryResult;
   checkCount: number;
   passedChecks: number;
   running: boolean;
+  primaryAction: WorkbenchAction | null;
+  secondaryActions: WorkbenchAction[];
+  manualApprovalRequired: boolean;
 }) {
+  const nextTitle = manualApprovalRequired
+    ? '需要人工审批'
+    : primaryAction
+      ? primaryAction.label
+      : result.demand
+        ? '暂无待执行动作'
+        : '录入需求后执行';
+  const nextDescription = manualApprovalRequired
+    ? '该任务需要评审人员确认后才能继续执行。'
+    : primaryAction
+      ? primaryAction.description
+      : result.demand
+        ? '当前任务没有可用自动动作，请查看证据或切换任务。'
+        : '输入业务需求后创建交付任务。';
+  const PrimaryIcon = primaryAction?.icon || Activity;
+
   return (
-    <aside className="rounded border border-slate-200 bg-white">
-      <div className="flex items-center gap-2 border-b border-slate-200 px-3 py-2 text-sm font-medium text-slate-900">
-        <ShieldCheck className="h-4 w-4 text-emerald-600" />
-        当前结果
+    <aside className="min-w-0 overflow-hidden rounded border border-slate-200 bg-white">
+      <div className="border-b border-slate-200 px-3 py-2">
+        <div className="flex items-center gap-2 text-sm font-medium text-slate-900">
+          <ShieldCheck className="h-4 w-4 text-emerald-600" />
+          下一步
+        </div>
+        <div className="mt-2 rounded border border-slate-200 bg-slate-50 p-2">
+          <div className="flex min-w-0 items-start gap-2">
+            <PrimaryIcon className={`mt-0.5 h-4 w-4 shrink-0 ${primaryAction ? 'text-blue-600' : 'text-slate-500'}`} />
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-sm font-medium text-slate-950">{nextTitle}</div>
+              <div className="mt-1 text-xs leading-5 text-slate-600">{nextDescription}</div>
+            </div>
+          </div>
+          {primaryAction ? (
+            <ActionButton action={primaryAction} loading={running} prominent />
+          ) : null}
+        </div>
+        {secondaryActions.length > 0 ? (
+          <div className="mt-2">
+            <div className="mb-1 text-xs font-medium text-slate-500">更多操作</div>
+            <div className="grid gap-1.5 sm:grid-cols-2 lg:grid-cols-1">
+              {secondaryActions.map((action) => (
+                <ActionButton key={action.key} action={action} loading={running} />
+              ))}
+            </div>
+          </div>
+        ) : null}
       </div>
       <div className="grid grid-cols-2 gap-px bg-slate-100">
         <SummaryRow label="结果" value={running ? 'running' : outcome} />
@@ -1337,6 +1520,35 @@ function RunSummary({
         <SummaryRow label="验收" value={result.verificationRecord?.status || 'empty'} />
       </div>
     </aside>
+  );
+}
+
+function ActionButton({
+  action,
+  loading,
+  prominent = false,
+}: {
+  action: WorkbenchAction;
+  loading: boolean;
+  prominent?: boolean;
+}) {
+  const Icon = action.icon;
+  const tone =
+    action.tone === 'danger'
+      ? 'border-red-200 bg-white text-red-700 hover:bg-red-50'
+      : prominent || action.tone === 'primary'
+        ? 'border-blue-600 bg-blue-600 text-white hover:bg-blue-700'
+        : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50';
+  return (
+    <button
+      type="button"
+      onClick={action.onClick}
+      disabled={action.disabled}
+      className={`mt-2 inline-flex min-h-9 w-full items-center justify-center gap-1.5 rounded border px-3 text-sm font-medium disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400 ${tone}`}
+    >
+      {loading && !action.disabled ? <Loader2 className="h-4 w-4 animate-spin" /> : <Icon className="h-4 w-4" />}
+      <span className="truncate">{action.label}</span>
+    </button>
   );
 }
 
@@ -2147,6 +2359,13 @@ function hydrateDemandDetail(detail: DeliveryDemandDetail): DeliveryResult {
     deployRecord,
     verificationRecord,
   };
+}
+
+function parseTabKey(value: string | null): TabKey | null {
+  if (!value) {
+    return null;
+  }
+  return detailTabKeys.includes(value as TabKey) ? (value as TabKey) : null;
 }
 
 function deriveSteps(result: DeliveryResult): Record<StepKey, StepState> {
