@@ -9,7 +9,7 @@ import subprocess
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Awaitable, Callable, TypeVar
+from typing import Any, Awaitable, Callable, TypeVar
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -540,6 +540,30 @@ class DeliveryService:
                 "top_alerts": alerts[:3],
             })
         return summaries
+
+    async def get_trace_detail(
+        self,
+        db: AsyncSession,
+        trace_id: str,
+        project_ids: list[int] | None = None,
+    ) -> dict:
+        normalized_trace_id = " ".join(trace_id.split())
+        if not normalized_trace_id:
+            raise BadRequestException("Trace id is required")
+
+        demand = await delivery_repository.get_demand_by_trace_id(
+            db,
+            normalized_trace_id,
+            project_ids=project_ids,
+        )
+        if not demand:
+            raise NotFoundException(f"Trace {normalized_trace_id} not found")
+
+        detail = await delivery_repository.get_demand_detail(db, demand.id)
+        if not detail:
+            raise NotFoundException(f"Trace {normalized_trace_id} not found")
+
+        return self._trace_detail_payload(detail)
 
     async def get_project_deployment_environment_config(
         self,
@@ -2555,6 +2579,295 @@ class DeliveryService:
         evidence["controls"] = controls
         evidence["last_control"] = controls[-1]
         return redact_value(evidence)
+
+    def _trace_detail_payload(self, demand: DemandItem) -> dict:
+        timeline: list[dict[str, Any]] = [
+            self._trace_event(
+                at=demand.created_at,
+                stage="demand",
+                entity_type="demand",
+                entity_id=demand.id,
+                status=demand.status,
+                title=demand.title,
+                summary=demand.raw_input,
+                metadata={
+                    "source_type": demand.source_type,
+                    "requester_ref": demand.requester_ref,
+                    "manual_approval_status": demand.manual_approval_status,
+                },
+            )
+        ]
+
+        for spec in demand.spec_cards:
+            timeline.append(
+                self._trace_event(
+                    at=spec.created_at,
+                    stage="spec",
+                    entity_type="spec_card",
+                    entity_id=spec.id,
+                    status=spec.status,
+                    title=spec.title,
+                    summary=spec.scope,
+                    metadata={
+                        "created_by": spec.created_by,
+                        "acceptance_criteria": spec.acceptance_criteria_json,
+                        "open_questions": spec.open_questions_json,
+                    },
+                )
+            )
+
+        for gate in demand.gate_checks:
+            timeline.append(
+                self._trace_event(
+                    at=gate.created_at,
+                    stage="gate",
+                    entity_type="gate_check",
+                    entity_id=gate.id,
+                    status=gate.status,
+                    title=gate.gate_type,
+                    summary=gate.reason,
+                    metadata={"evidence": gate.evidence_json or {}},
+                )
+            )
+
+        for repo_context in demand.repo_contexts:
+            timeline.append(
+                self._trace_event(
+                    at=repo_context.created_at,
+                    stage="context",
+                    entity_type="repo_context",
+                    entity_id=repo_context.id,
+                    status=repo_context.status,
+                    title=repo_context.provider,
+                    summary=repo_context.summary,
+                    metadata={
+                        "confidence_score": repo_context.confidence_score,
+                        "source_refs": repo_context.source_refs_json[:20],
+                        "discovered_files": repo_context.discovered_files_json[:40],
+                        "dependency_refs": repo_context.dependency_refs_json[:20],
+                        "provider_metadata": repo_context.provider_metadata_json or {},
+                    },
+                )
+            )
+
+        for impact in demand.impact_analyses:
+            timeline.append(
+                self._trace_event(
+                    at=impact.created_at,
+                    stage="impact",
+                    entity_type="impact_analysis",
+                    entity_id=impact.id,
+                    status=impact.status,
+                    title=impact.provider,
+                    summary=impact.summary,
+                    metadata={
+                        "repo_context_id": impact.repo_context_id,
+                        "risk_level": impact.risk_level,
+                        "confidence_score": impact.confidence_score,
+                        "impacted_areas": impact.impacted_areas_json,
+                        "affected_files": impact.affected_files_json,
+                        "recommendations": impact.recommendations_json,
+                    },
+                )
+            )
+
+        for task in demand.coding_tasks:
+            timeline.append(
+                self._trace_event(
+                    at=task.created_at,
+                    stage="task",
+                    entity_type="coding_task",
+                    entity_id=task.id,
+                    status=task.status,
+                    title=task.title,
+                    summary=task.task_prompt,
+                    metadata={
+                        "spec_card_id": task.spec_card_id,
+                        "allowed_paths": task.allowed_paths_json,
+                        "forbidden_actions": task.forbidden_actions_json,
+                        "required_checks": task.required_checks_json,
+                        "expected_evidence": task.expected_evidence_json,
+                    },
+                )
+            )
+            for run in task.execution_runs:
+                timeline.append(
+                    self._trace_event(
+                        at=run.created_at,
+                        stage="execution",
+                        entity_type="execution_run",
+                        entity_id=run.id,
+                        status=run.status,
+                        title=run.executor_type,
+                        summary=run.result_summary,
+                        metadata={
+                            "trigger_mode": run.trigger_mode,
+                            "worktree_path": run.worktree_path,
+                            "branch_name": run.branch_name,
+                            "commit_sha": run.commit_sha,
+                            "started_at": run.started_at.isoformat() if run.started_at else None,
+                            "finished_at": run.finished_at.isoformat() if run.finished_at else None,
+                            "evidence": run.evidence_json or {},
+                        },
+                    )
+                )
+                for log in run.logs:
+                    timeline.append(
+                        self._trace_event(
+                            at=log.created_at,
+                            stage="execution_log",
+                            entity_type="execution_log",
+                            entity_id=log.id,
+                            status=log.level,
+                            title=f"run #{run.id}",
+                            summary=log.message,
+                            metadata={"event": log.event_json or {}},
+                        )
+                    )
+
+            for record in task.merge_requests:
+                timeline.append(
+                    self._trace_event(
+                        at=record.created_at,
+                        stage="merge_request",
+                        entity_type="merge_request",
+                        entity_id=record.id,
+                        status=record.status,
+                        title=record.title,
+                        summary=record.review_summary,
+                        metadata={
+                            "provider": record.provider,
+                            "review_status": record.review_status,
+                            "source_branch": record.source_branch,
+                            "target_branch": record.target_branch,
+                            "external_id": record.external_id,
+                            "url": record.url,
+                            "review_comments": record.review_comments_json,
+                            "evidence": record.evidence_json or {},
+                        },
+                    )
+                )
+                for deploy_record in record.deploy_records:
+                    timeline.append(
+                        self._trace_event(
+                            at=deploy_record.created_at,
+                            stage="deployment",
+                            entity_type="deploy_record",
+                            entity_id=deploy_record.id,
+                            status=deploy_record.status,
+                            title=deploy_record.environment,
+                            summary=deploy_record.url,
+                            metadata={
+                                "provider": deploy_record.provider,
+                                "merge_request_id": deploy_record.merge_request_id,
+                                "coding_task_id": deploy_record.coding_task_id,
+                                "created_by_ref": deploy_record.created_by_ref,
+                                "evidence": deploy_record.evidence_json or {},
+                            },
+                        )
+                    )
+                    for verification in deploy_record.verification_records:
+                        timeline.append(
+                            self._trace_event(
+                                at=verification.created_at,
+                                stage="verification",
+                                entity_type="verification_record",
+                                entity_id=verification.id,
+                                status=verification.status,
+                                title=verification.verifier_ref,
+                                summary=verification.summary,
+                                metadata={
+                                    "evidence_links": verification.evidence_links_json,
+                                    "evidence": verification.evidence_json or {},
+                                },
+                            )
+                        )
+
+        timeline.sort(
+            key=lambda item: (
+                item["at"] or datetime.min.replace(tzinfo=timezone.utc),
+                self._trace_stage_order(item["stage"]),
+                item["entity_id"],
+            )
+        )
+
+        counts = {
+            "spec_cards": len(demand.spec_cards),
+            "gate_checks": len(demand.gate_checks),
+            "repo_contexts": len(demand.repo_contexts),
+            "impact_analyses": len(demand.impact_analyses),
+            "coding_tasks": len(demand.coding_tasks),
+            "execution_runs": sum(len(task.execution_runs) for task in demand.coding_tasks),
+            "execution_logs": sum(
+                len(run.logs)
+                for task in demand.coding_tasks
+                for run in task.execution_runs
+            ),
+            "merge_requests": sum(len(task.merge_requests) for task in demand.coding_tasks),
+            "deployments": sum(
+                len(record.deploy_records)
+                for task in demand.coding_tasks
+                for record in task.merge_requests
+            ),
+            "verifications": sum(
+                len(deploy_record.verification_records)
+                for task in demand.coding_tasks
+                for record in task.merge_requests
+                for deploy_record in record.deploy_records
+            ),
+            "timeline_events": len(timeline),
+        }
+
+        return {
+            "trace_id": demand.trace_id,
+            "project_id": demand.project_id,
+            "demand_id": demand.id,
+            "demand_title": demand.title,
+            "current_status": demand.status,
+            "risk_level": demand.risk_level,
+            "counts": counts,
+            "timeline": timeline,
+        }
+
+    def _trace_event(
+        self,
+        *,
+        at: datetime | None,
+        stage: str,
+        entity_type: str,
+        entity_id: int,
+        status: str | None = None,
+        title: str | None = None,
+        summary: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        safe_metadata = redact_value(metadata or {})
+        return {
+            "at": at,
+            "stage": stage,
+            "entity_type": entity_type,
+            "entity_id": entity_id,
+            "status": status,
+            "title": redact_text(title) if title else None,
+            "summary": redact_text(summary)[:1200] if summary else None,
+            "metadata": safe_metadata if isinstance(safe_metadata, dict) else {"value": safe_metadata},
+        }
+
+    def _trace_stage_order(self, stage: str) -> int:
+        order = {
+            "demand": 10,
+            "spec": 20,
+            "gate": 30,
+            "context": 40,
+            "impact": 50,
+            "task": 60,
+            "execution": 70,
+            "execution_log": 80,
+            "merge_request": 90,
+            "deployment": 100,
+            "verification": 110,
+        }
+        return order.get(stage, 999)
 
     async def _record_execution_control(
         self,

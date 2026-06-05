@@ -360,6 +360,32 @@ class ProjectObservabilitySummaryResponse(BaseModel):
     top_alerts: list[ObservabilityAlertResponse] = Field(default_factory=list)
 
 
+class TraceTimelineEventResponse(BaseModel):
+    """One timeline entry in a trace lookup."""
+
+    at: Optional[datetime] = None
+    stage: str
+    entity_type: str
+    entity_id: int
+    status: Optional[str] = None
+    title: Optional[str] = None
+    summary: Optional[str] = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class TraceDetailResponse(BaseModel):
+    """Trace-level delivery evidence for production troubleshooting."""
+
+    trace_id: str
+    project_id: Optional[int] = None
+    demand_id: int
+    demand_title: Optional[str] = None
+    current_status: str
+    risk_level: Optional[str] = None
+    counts: dict[str, int]
+    timeline: list[TraceTimelineEventResponse] = Field(default_factory=list)
+
+
 class SymphonyBridgeClaimRequest(BaseModel):
     """Claim a queued Symphony execution run."""
 

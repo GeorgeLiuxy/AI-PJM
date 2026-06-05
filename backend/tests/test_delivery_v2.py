@@ -186,6 +186,26 @@ async def test_observability_metrics_endpoint(client):
 
 
 @pytest.mark.asyncio
+async def test_observability_trace_endpoint_returns_trace_timeline(client):
+    demand_response = await client.post(
+        "/api/v2/demands",
+        json={"raw_input": "Trace this delivery item.", "title": "Trace API"},
+    )
+    assert demand_response.status_code == 201
+    demand_data = demand_response.json()["data"]
+
+    response = await client.get(f"/api/v2/observability/traces/{demand_data['trace_id']}")
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["trace_id"] == demand_data["trace_id"]
+    assert data["demand_id"] == demand_data["id"]
+    assert data["counts"]["timeline_events"] == 1
+    assert data["timeline"][0]["stage"] == "demand"
+    assert data["timeline"][0]["summary"] == "Trace this delivery item."
+
+
+@pytest.mark.asyncio
 async def test_github_webhook_endpoint_updates_existing_pull_request(client, db_session, monkeypatch):
     monkeypatch.setattr(settings, "github_webhook_secret", "github-webhook-secret")
     project = await auth_repository.create_project(

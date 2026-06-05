@@ -40,6 +40,7 @@ from app.modules.delivery.schemas import (
     RepoContextResponse,
     SpecCardResponse,
     SpecGenerateRequest,
+    TraceDetailResponse,
     VerificationRecordCreateRequest,
     VerificationRecordResponse,
 )
@@ -139,6 +140,24 @@ async def get_observability_metrics(
     return PlainTextResponse(
         _prometheus_observability_metrics(summary),
         media_type="text/plain; version=0.0.4; charset=utf-8",
+    )
+
+
+@router.get("/observability/traces/{trace_id}", response_model=dict)
+async def get_observability_trace(
+    trace_id: str,
+    db: AsyncSession = Depends(get_db),
+    principal: AuthPrincipal = Depends(get_current_principal),
+):
+    require_capability(principal, "read")
+    detail = await delivery_service.get_trace_detail(
+        db,
+        trace_id=trace_id,
+        project_ids=principal.accessible_project_ids,
+    )
+    return success_response(
+        data=TraceDetailResponse.model_validate(detail).model_dump(),
+        message="Success",
     )
 
 

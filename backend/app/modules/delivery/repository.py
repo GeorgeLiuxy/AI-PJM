@@ -57,6 +57,27 @@ class DeliveryRepository:
         result = await db.execute(select(DemandItem).where(DemandItem.id == demand_id))
         return result.scalar_one_or_none()
 
+    async def get_demand_by_trace_id(
+        self,
+        db: AsyncSession,
+        trace_id: str,
+        project_ids: list[int] | None = None,
+    ) -> Optional[DemandItem]:
+        if project_ids is not None and not project_ids:
+            return None
+
+        query = (
+            select(DemandItem)
+            .where(DemandItem.trace_id == trace_id)
+            .order_by(DemandItem.created_at.desc(), DemandItem.id.desc())
+            .limit(1)
+        )
+        if project_ids is not None:
+            query = query.where(DemandItem.project_id.in_(project_ids))
+
+        result = await db.execute(query)
+        return result.scalar_one_or_none()
+
     async def list_demands(
         self,
         db: AsyncSession,

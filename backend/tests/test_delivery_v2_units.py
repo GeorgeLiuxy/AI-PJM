@@ -418,6 +418,28 @@ async def test_delivery_trace_id_propagates_across_main_workflow(db_session):
         verification.trace_id,
     } == {demand.trace_id}
 
+    trace_detail = await DeliveryService().get_trace_detail(db_session, demand.trace_id)
+    stages = [event["stage"] for event in trace_detail["timeline"]]
+
+    assert trace_detail["trace_id"] == demand.trace_id
+    assert trace_detail["demand_id"] == demand.id
+    assert trace_detail["counts"]["timeline_events"] == 11
+    assert trace_detail["counts"]["execution_logs"] == 1
+    assert stages == [
+        "demand",
+        "spec",
+        "gate",
+        "context",
+        "impact",
+        "task",
+        "execution",
+        "execution_log",
+        "merge_request",
+        "deployment",
+        "verification",
+    ]
+    assert trace_detail["timeline"][7]["summary"] == "Trace log."
+
 
 @pytest.mark.asyncio
 async def test_delivery_trace_id_backfill_restores_historical_records(db_session):
