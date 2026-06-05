@@ -231,6 +231,80 @@ async def test_capacity_seed_creates_synthetic_delivery_records(db_session):
 
 
 @pytest.mark.asyncio
+async def test_delivery_service_adds_same_project_historical_demand_context(db_session):
+    service = DeliveryService()
+    alpha = await auth_repository.create_project(
+        db_session,
+        key="history-alpha",
+        name="History Alpha",
+    )
+    beta = await auth_repository.create_project(
+        db_session,
+        key="history-beta",
+        name="History Beta",
+    )
+    alpha_previous = await service.create_demand(
+        db_session,
+        raw_input="Add a compact execution status badge to the delivery dashboard.",
+        source_type="new_requirement",
+        title="Delivery status badge",
+        project_id=alpha.id,
+    )
+    beta_previous = await service.create_demand(
+        db_session,
+        raw_input="Add a compact execution status badge to the delivery dashboard.",
+        source_type="new_requirement",
+        title="Delivery status badge",
+        project_id=beta.id,
+    )
+
+    demand = await service.create_demand(
+        db_session,
+        raw_input="Improve the delivery dashboard status badge for execution results.",
+        source_type="new_requirement",
+        title="Improve delivery status badge",
+        context_payload={"files": ["frontend/src/App.tsx"]},
+        project_id=alpha.id,
+    )
+
+    payload = demand.context_payload or {}
+    history = payload["historical_demands"]
+    history_ids = [item["id"] for item in history["items"]]
+
+    assert payload["files"] == ["frontend/src/App.tsx"]
+    assert history["generated_by"] == "ai_pjm"
+    assert history["source"] == "same_project_recent_demands"
+    assert alpha_previous.id in history_ids
+    assert beta_previous.id not in history_ids
+    assert history["items"][0]["similarity_score"] > 0
+    assert "raw_input" not in history["items"][0]
+
+
+@pytest.mark.asyncio
+async def test_delivery_service_preserves_explicit_historical_demand_context(db_session):
+    service = DeliveryService()
+    await service.create_demand(
+        db_session,
+        raw_input="Add a reusable OpenAI provider quality gate.",
+        source_type="new_requirement",
+        title="OpenAI quality gate",
+    )
+
+    demand = await service.create_demand(
+        db_session,
+        raw_input="Add another OpenAI provider quality gate check.",
+        source_type="new_requirement",
+        title="OpenAI quality gate follow-up",
+        context_payload={"historical_demands": {"items": [{"id": "manual"}]}},
+    )
+
+    payload = demand.context_payload or {}
+
+    assert payload["historical_demands"] == {"items": [{"id": "manual"}]}
+    assert payload["generated_historical_demands"]["items"][0]["title"] == "OpenAI quality gate"
+
+
+@pytest.mark.asyncio
 async def test_delivery_trace_id_propagates_across_main_workflow(db_session):
     demand = await delivery_repository.create_demand(
         db_session,

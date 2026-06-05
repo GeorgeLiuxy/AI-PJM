@@ -79,6 +79,26 @@ class DeliveryRepository:
         )
         return list(result.scalars().all())
 
+    async def list_recent_demands_for_history(
+        self,
+        db: AsyncSession,
+        *,
+        project_id: int | None,
+        limit: int = 50,
+    ) -> list[DemandItem]:
+        query = (
+            select(DemandItem)
+            .order_by(DemandItem.updated_at.desc(), DemandItem.id.desc())
+            .limit(max(1, min(limit, 200)))
+        )
+        if project_id is None:
+            query = query.where(DemandItem.project_id.is_(None))
+        else:
+            query = query.where(DemandItem.project_id == project_id)
+
+        result = await db.execute(query)
+        return list(result.scalars().all())
+
     async def get_demand_detail(self, db: AsyncSession, demand_id: int) -> Optional[DemandItem]:
         result = await db.execute(
             select(DemandItem)

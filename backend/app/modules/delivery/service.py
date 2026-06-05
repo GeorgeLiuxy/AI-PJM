@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import hmac
 import json
+import re
 import subprocess
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
@@ -203,13 +204,21 @@ class DeliveryService:
         created_by_user_id: int | None = None,
         actor_ref: str | None = None,
     ) -> DemandItem:
+        demand_title = title or self._derive_title(raw_input)
+        enriched_context_payload = await self._context_payload_with_similar_demands(
+            db=db,
+            raw_input=raw_input,
+            title=demand_title,
+            project_id=project_id,
+            context_payload=context_payload,
+        )
         demand = await delivery_repository.create_demand(
             db=db,
             raw_input=raw_input,
             source_type=source_type,
-            title=title or self._derive_title(raw_input),
+            title=demand_title,
             requester_ref=requester_ref,
-            context_payload=context_payload,
+            context_payload=enriched_context_payload,
             project_id=project_id,
             created_by_user_id=created_by_user_id,
         )
@@ -2592,6 +2601,105 @@ class DeliveryService:
     def _derive_title(self, raw_input: str) -> str:
         compact = " ".join(raw_input.split())
         return compact[:80] if compact else "Untitled demand"
+
+    async def _context_payload_with_similar_demands(
+        self,
+        *,
+        db: AsyncSession,
+        raw_input: str,
+        title: str,
+        project_id: int | None,
+        context_payload: dict | None,
+    ) -> dict | None:
+        payload = dict(context_payload or {})
+        candidates = await delivery_repository.list_recent_demands_for_history(
+            db=db,
+            project_id=project_id,
+            limit=50,
+        )
+        entries = self._similar_demand_entries(
+            raw_input=raw_input,
+            title=title,
+            candidates=candidates,
+            limit=5,
+        )
+        if not entries:
+            return payload or None
+
+        context_key = "historical_demands"
+        if context_key in payload:
+            context_key = "generated_historical_demands"
+        payload[context_key] = {
+            "generated_by": "ai_pjm",
+            "source": "same_project_recent_demands",
+            "items": entries,
+        }
+        return payload
+
+    def _similar_demand_entries(
+        self,
+        *,
+        raw_input: str,
+        title: str,
+        candidates: list[DemandItem],
+        limit: int,
+    ) -> list[dict]:
+        target_tokens = self._tokenize_history_text(f"{title}\n{raw_input}")
+        scored: list[tuple[float, DemandItem]] = []
+        for candidate in candidates:
+            score = self._demand_similarity_score(target_tokens, candidate)
+            if score >= 0.12:
+                scored.append((score, candidate))
+
+        scored.sort(
+            key=lambda item: (
+                item[0],
+                item[1].updated_at or item[1].created_at,
+                item[1].id,
+            ),
+            reverse=True,
+        )
+
+        entries: list[dict] = []
+        for score, candidate in scored[: max(1, limit)]:
+            summary = " ".join((candidate.raw_input or "").split())
+            entries.append(
+                {
+                    "id": candidate.id,
+                    "title": redact_text(candidate.title or self._derive_title(candidate.raw_input)),
+                    "source_type": candidate.source_type,
+                    "status": candidate.status,
+                    "risk_level": candidate.risk_level,
+                    "similarity_score": round(score, 3),
+                    "created_at": candidate.created_at.isoformat() if candidate.created_at else None,
+                    "summary": redact_text(summary[:360]),
+                }
+            )
+        return entries
+
+    def _demand_similarity_score(self, target_tokens: set[str], candidate: DemandItem) -> float:
+        candidate_tokens = self._tokenize_history_text(
+            f"{candidate.title or ''}\n{candidate.raw_input or ''}"
+        )
+        if not target_tokens or not candidate_tokens:
+            return 0.0
+
+        overlap = target_tokens & candidate_tokens
+        if not overlap:
+            return 0.0
+        jaccard = len(overlap) / len(target_tokens | candidate_tokens)
+        coverage = len(overlap) / len(target_tokens)
+        return min((jaccard * 0.8) + (coverage * 0.2), 1.0)
+
+    def _tokenize_history_text(self, text: str) -> set[str]:
+        normalized = text.lower()
+        ascii_tokens = re.findall(r"[a-z0-9_]{2,}", normalized)
+        chinese_chars = re.findall(r"[\u4e00-\u9fff]", normalized)
+        chinese_bigrams = [
+            f"{left}{right}"
+            for left, right in zip(chinese_chars, chinese_chars[1:])
+        ]
+        return set(ascii_tokens + chinese_chars + chinese_bigrams)
 
     def _classify_risk(self, raw_input: str) -> str:
         return self.gates.classify_risk(raw_input)
