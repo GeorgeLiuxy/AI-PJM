@@ -1403,7 +1403,7 @@ function ReadinessBanner({
             <div className="flex flex-wrap items-center gap-2 text-sm font-medium text-slate-950">
               <span>项目接入</span>
               <StatusBadge
-                value={onboardingLoading ? '加载中' : formatProjectOnboardingStatus(onboarding?.status || 'blocked')}
+                value={onboardingLoading ? '加载中' : onboarding ? formatProjectOnboardingStatus(onboarding.status) : '未选择项目'}
               />
               {onboarding ? <span className="text-xs text-slate-500">{onboarding.completion_percent}% 完成</span> : null}
               {onboardingTotal > 0 ? <span className="text-xs text-slate-500">{onboardingDone}/{onboardingTotal} 项就绪</span> : null}
@@ -1411,7 +1411,9 @@ function ReadinessBanner({
             <p className="mt-1 line-clamp-2 text-xs leading-5 text-slate-600">
               {onboardingLoading
                 ? '正在检查仓库、部署环境、凭证、执行器和评审配置。'
-                : onboardingPrimaryIssue?.summary || '当前项目已满足最小交付接入要求。'}
+                : onboarding
+                  ? onboardingPrimaryIssue?.summary || '当前项目已满足最小交付接入要求。'
+                  : '当前账号或任务没有可检查的项目上下文。'}
             </p>
             {onboardingPrimaryIssue?.next_action ? (
               <p className="mt-1 line-clamp-1 text-xs font-medium text-slate-800">
