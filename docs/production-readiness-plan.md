@@ -507,7 +507,7 @@ AI 不允许直接决定：
 
 实施内容：
 
-- 项目接入向导。
+- 项目接入向导。（`GET /api/v2/projects/{project_id}/onboarding` 首版已完成）
 - 配置健康检查。（`GET /api/v2/observability/config-health` 首版已完成）
 - 当前任务下一步动作明确化。（`DemandDetailResponse.next_actions` 首版已完成）
 - 证据时间线。
@@ -518,7 +518,7 @@ AI 不允许直接决定：
 
 验收标准：
 
-- 新项目接入不需要读代码。
+- 新项目接入不需要读代码。（项目 onboarding checklist API 首版已完成）
 - 操作者打开页面能看到下一步最应该做什么。（后端 detail 已返回结构化 next actions，工作台下一步卡片已优先展示后端建议）
 - 管理者能看到交付吞吐、失败原因和瓶颈。
 

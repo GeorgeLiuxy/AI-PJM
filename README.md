@@ -111,6 +111,7 @@ $env:SYMPHONY_BRIDGE_TOKEN="dev-bridge-token"
 - 后端接口文档：http://127.0.0.1:8010/docs
 - 健康检查：http://127.0.0.1:8010/health
 - 交付配置健康检查：http://127.0.0.1:8010/api/v2/observability/config-health
+- 项目接入向导：http://127.0.0.1:8010/api/v2/projects/{project_id}/onboarding
 
 如果使用默认端口启动，前端地址可能是 `http://127.0.0.1:5173`。实际端口以启动脚本输出为准。
 

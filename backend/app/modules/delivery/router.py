@@ -36,6 +36,7 @@ from app.modules.delivery.schemas import (
     ObservabilitySummaryResponse,
     ProjectDeploymentEnvironmentConfigResponse,
     ProjectDeploymentEnvironmentConfigUpdateRequest,
+    ProjectOnboardingResponse,
     ProjectObservabilitySummaryResponse,
     RepoContextCreateRequest,
     RepoContextResponse,
@@ -86,6 +87,20 @@ async def update_project_deployment_environments(
     return success_response(
         data=ProjectDeploymentEnvironmentConfigResponse.model_validate(config).model_dump(),
         message="Project deployment environments updated",
+    )
+
+
+@router.get("/projects/{project_id}/onboarding", response_model=dict)
+async def get_project_onboarding(
+    project_id: int,
+    db: AsyncSession = Depends(get_db),
+    principal: AuthPrincipal = Depends(get_current_principal),
+):
+    require_capability(principal, "read", project_id)
+    onboarding = await delivery_service.get_project_onboarding(db, project_id)
+    return success_response(
+        data=ProjectOnboardingResponse.model_validate(onboarding).model_dump(),
+        message="Success",
     )
 
 

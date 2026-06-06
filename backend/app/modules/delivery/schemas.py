@@ -394,6 +394,29 @@ class ConfigHealthResponse(BaseModel):
     checks: list[ConfigHealthCheckResponse] = Field(default_factory=list)
 
 
+class ProjectOnboardingStepResponse(BaseModel):
+    """One project onboarding checklist step."""
+
+    id: str
+    status: Literal["done", "warning", "blocked"]
+    label: str
+    summary: str
+    next_action: Optional[str] = None
+    evidence: dict[str, Any] = Field(default_factory=dict)
+
+
+class ProjectOnboardingResponse(BaseModel):
+    """Project onboarding readiness checklist."""
+
+    project_id: int
+    project_key: str
+    project_name: str
+    generated_at: datetime
+    status: Literal["ready", "needs_attention", "blocked"]
+    completion_percent: int
+    steps: list[ProjectOnboardingStepResponse] = Field(default_factory=list)
+
+
 class TraceTimelineEventResponse(BaseModel):
     """One timeline entry in a trace lookup."""
 

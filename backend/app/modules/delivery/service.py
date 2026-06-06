@@ -571,6 +571,53 @@ class DeliveryService:
             "checks": checks,
         }
 
+    async def get_project_onboarding(self, db: AsyncSession, project_id: int) -> dict:
+        project = await auth_repository.get_project(db, project_id)
+        if not project:
+            raise NotFoundException(f"Project {project_id} not found")
+
+        secrets = await secret_repository.list_secrets(
+            db,
+            project_ids=[project_id],
+            limit=100,
+        )
+        provider_names = sorted({secret.provider for secret in secrets if secret.status == "active"})
+        unhealthy_secret_count = len(
+            [
+                secret for secret in secrets
+                if secret_store_service.to_response(secret, verify_decrypt=False).health_status
+                in {"expired", "invalid", "disabled"}
+            ]
+        )
+        steps = [
+            self._project_repository_onboarding_step(project),
+            self._project_deployment_onboarding_step(project),
+            self._project_secret_onboarding_step(provider_names, unhealthy_secret_count),
+            self._project_workflow_provider_onboarding_step(provider_names),
+            self._project_merge_request_onboarding_step(provider_names),
+            self._project_execution_onboarding_step(),
+            self._project_config_health_onboarding_step(await self.get_config_health(db)),
+        ]
+
+        status_value = "ready"
+        if any(step["status"] == "blocked" for step in steps):
+            status_value = "blocked"
+        elif any(step["status"] == "warning" for step in steps):
+            status_value = "needs_attention"
+
+        done_count = len([step for step in steps if step["status"] == "done"])
+        completion_percent = int(round((done_count / len(steps)) * 100)) if steps else 0
+
+        return {
+            "project_id": project.id,
+            "project_key": project.key,
+            "project_name": project.name,
+            "generated_at": utc_now(),
+            "status": status_value,
+            "completion_percent": completion_percent,
+            "steps": steps,
+        }
+
     async def get_trace_detail(
         self,
         db: AsyncSession,
@@ -3573,6 +3620,268 @@ class DeliveryService:
             "summary": summary,
             "evidence": safe_evidence if isinstance(safe_evidence, dict) else {},
             "next_action": next_action,
+        }
+
+    def _project_repository_onboarding_step(self, project) -> dict[str, Any]:
+        root_value = project.repository_root or settings.workspace_root or str(self._configured_workspace_root())
+        root = Path(root_value).expanduser().resolve()
+        evidence = {
+            "repository_root": str(root),
+            "project_repository_root_configured": bool(project.repository_root),
+            "default_branch": project.default_branch,
+        }
+        if not root.exists():
+            return self._onboarding_step(
+                "repository",
+                "blocked",
+                "配置项目仓库",
+                "项目仓库目录不存在，无法收集上下文或执行检查。",
+                "在项目设置中配置有效的 repository_root。",
+                evidence,
+            )
+        if not (root / ".git").exists() and not self._command_output(["git", "rev-parse", "--show-toplevel"], cwd=root):
+            return self._onboarding_step(
+                "repository",
+                "warning",
+                "确认 Git 仓库",
+                "项目目录存在，但未确认是 Git 仓库。",
+                "把 repository_root 指向 Git 仓库根目录。",
+                evidence,
+            )
+        return self._onboarding_step(
+            "repository",
+            "done",
+            "项目仓库已就绪",
+            "项目仓库目录存在并可用于上下文收集。",
+            evidence=evidence,
+        )
+
+    def _project_deployment_onboarding_step(self, project) -> dict[str, Any]:
+        environments = self._project_deployment_environments(project.settings_json)
+        configured_envs = [
+            name for name, value in environments.items()
+            if value.get("url") or value.get("environment_name") or value.get("log_url")
+        ]
+        fallback_ready = bool(settings.deploy_environment_config_json.strip())
+        webhook_ready = bool(settings.deploy_webhook_url.strip())
+        evidence = {
+            "configured_environments": configured_envs,
+            "fallback_environment_configured": fallback_ready,
+            "deploy_webhook_configured": webhook_ready,
+        }
+        if configured_envs or fallback_ready or webhook_ready:
+            return self._onboarding_step(
+                "deployment_environment",
+                "done",
+                "测试环境配置已就绪",
+                "项目或全局配置中已有测试环境或部署入口。",
+                evidence=evidence,
+            )
+        return self._onboarding_step(
+            "deployment_environment",
+            "warning",
+            "配置测试环境",
+            "当前只能记录本地部署，尚未配置真实测试环境入口。",
+            "在访问管理页配置项目测试环境，或设置 DEPLOY_WEBHOOK_URL。",
+            evidence,
+        )
+
+    def _project_secret_onboarding_step(
+        self,
+        provider_names: list[str],
+        unhealthy_secret_count: int,
+    ) -> dict[str, Any]:
+        evidence = {
+            "active_secret_providers": provider_names,
+            "unhealthy_secret_count": unhealthy_secret_count,
+        }
+        if unhealthy_secret_count:
+            return self._onboarding_step(
+                "project_secrets",
+                "blocked",
+                "修复项目凭证",
+                "存在过期、禁用或不可用的项目凭证。",
+                "在访问管理页轮换或启用异常凭证。",
+                evidence,
+            )
+        if provider_names:
+            return self._onboarding_step(
+                "project_secrets",
+                "done",
+                "项目凭证已配置",
+                "项目已有可用的 Provider 凭证记录。",
+                evidence=evidence,
+            )
+        return self._onboarding_step(
+            "project_secrets",
+            "warning",
+            "配置项目凭证",
+            "项目尚未配置 Provider 凭证；如果使用全局环境变量可暂时运行，但不利于项目隔离。",
+            "按需配置 dify_api_key、openai_api_key、gitlab_token、github_token 或 deploy_token。",
+            evidence,
+        )
+
+    def _project_workflow_provider_onboarding_step(self, provider_names: list[str]) -> dict[str, Any]:
+        provider = settings.ai_workflow_provider.strip().lower() or "local"
+        if provider == "local":
+            return self._onboarding_step(
+                "workflow_provider",
+                "done",
+                "本地方案生成已就绪",
+                "当前使用 local Provider，不依赖外部 AI workflow。",
+                evidence={"provider": provider},
+            )
+        required_provider = "openai" if provider == "openai" else "dify"
+        has_project_secret = required_provider in provider_names
+        has_global_secret = bool(
+            settings.openai_api_key.strip()
+            if provider == "openai"
+            else settings.dify_api_key.strip()
+        )
+        evidence = {
+            "provider": provider,
+            "project_secret_configured": has_project_secret,
+            "global_secret_configured": has_global_secret,
+        }
+        if has_project_secret or has_global_secret:
+            return self._onboarding_step(
+                "workflow_provider",
+                "done",
+                "AI Provider 凭证已就绪",
+                "当前项目或全局环境已具备所选 workflow provider 的凭证来源。",
+                evidence=evidence,
+            )
+        return self._onboarding_step(
+            "workflow_provider",
+            "warning",
+            "配置 AI Provider 凭证",
+            "当前选择了外部 workflow provider，但项目未配置对应凭证。",
+            f"配置 {required_provider} 项目凭证，或临时切换 AI_WORKFLOW_PROVIDER=local。",
+            evidence,
+        )
+
+    def _project_merge_request_onboarding_step(self, provider_names: list[str]) -> dict[str, Any]:
+        gitlab_ready = bool(settings.gitlab_api_base_url.strip() and settings.gitlab_project_id.strip())
+        github_ready = bool(settings.github_api_base_url.strip() and settings.github_repository.strip())
+        token_ready = "gitlab" in provider_names or "github" in provider_names or bool(
+            settings.gitlab_token.strip() or settings.github_token.strip()
+        )
+        evidence = {
+            "gitlab_repository_configured": gitlab_ready,
+            "github_repository_configured": github_ready,
+            "token_configured": token_ready,
+        }
+        if (gitlab_ready or github_ready) and token_ready:
+            return self._onboarding_step(
+                "merge_request",
+                "done",
+                "远端 MR/PR 已就绪",
+                "远端仓库配置和凭证来源已具备。",
+                evidence=evidence,
+            )
+        if gitlab_ready or github_ready:
+            return self._onboarding_step(
+                "merge_request",
+                "warning",
+                "配置 MR/PR 凭证",
+                "远端仓库已配置，但还缺少项目级或全局 Token。",
+                "配置 gitlab_token 或 github_token 项目凭证。",
+                evidence,
+            )
+        return self._onboarding_step(
+            "merge_request",
+            "warning",
+            "配置远端 MR/PR",
+            "当前可以创建本地 MR 记录，但尚未配置 GitLab/GitHub 远端仓库。",
+            "按项目选择 GitLab 或 GitHub，并配置仓库、Token、reviewer/label 策略。",
+            evidence,
+        )
+
+    def _project_execution_onboarding_step(self) -> dict[str, Any]:
+        evidence = {
+            "execution_codex_enabled": settings.execution_codex_enabled,
+            "command_template_configured": bool(settings.execution_codex_command_template.strip()),
+            "max_concurrency": settings.execution_max_concurrency,
+        }
+        if settings.execution_codex_enabled and settings.execution_codex_command_template.strip():
+            return self._onboarding_step(
+                "execution",
+                "done",
+                "Codex 执行已配置",
+                "任务可以创建受控执行 run。",
+                evidence=evidence,
+            )
+        if settings.execution_codex_enabled:
+            return self._onboarding_step(
+                "execution",
+                "blocked",
+                "补齐 Codex 命令模板",
+                "Codex 已启用但命令模板为空，执行会失败。",
+                "设置 EXECUTION_CODEX_COMMAND_TEMPLATE。",
+                evidence,
+            )
+        return self._onboarding_step(
+            "execution",
+            "warning",
+            "启用 Codex 执行",
+            "当前只能生成任务包或执行本地检查，自动编码执行未启用。",
+            "设置 EXECUTION_CODEX_ENABLED=true 并配置命令模板。",
+            evidence,
+        )
+
+    def _project_config_health_onboarding_step(self, config_health: dict) -> dict[str, Any]:
+        status_value = config_health.get("status")
+        checks = config_health.get("checks") if isinstance(config_health.get("checks"), list) else []
+        critical_ids = [check.get("id") for check in checks if check.get("status") == "critical"]
+        warning_ids = [check.get("id") for check in checks if check.get("status") == "warning"]
+        evidence = {
+            "config_health_status": status_value,
+            "critical_checks": critical_ids,
+            "warning_checks": warning_ids,
+        }
+        if critical_ids:
+            return self._onboarding_step(
+                "config_health",
+                "blocked",
+                "修复阻塞配置",
+                "全局配置健康检查存在 critical 项。",
+                "打开 /api/v2/observability/config-health 查看并修复 critical 检查。",
+                evidence,
+            )
+        if warning_ids:
+            return self._onboarding_step(
+                "config_health",
+                "warning",
+                "处理配置提醒",
+                "全局配置健康检查存在 warning 项，不一定阻塞本地验证，但会影响生产化。",
+                "按优先级处理 config-health 返回的 warning。",
+                evidence,
+            )
+        return self._onboarding_step(
+            "config_health",
+            "done",
+            "配置健康检查通过",
+            "全局配置健康检查没有 warning 或 critical。",
+            evidence=evidence,
+        )
+
+    def _onboarding_step(
+        self,
+        step_id: str,
+        status: str,
+        label: str,
+        summary: str,
+        next_action: str | None = None,
+        evidence: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        safe_evidence = redact_value(evidence or {})
+        return {
+            "id": step_id,
+            "status": status,
+            "label": label,
+            "summary": summary,
+            "next_action": next_action,
+            "evidence": safe_evidence if isinstance(safe_evidence, dict) else {},
         }
 
     async def _record_execution_control(

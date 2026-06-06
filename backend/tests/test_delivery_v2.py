@@ -202,6 +202,35 @@ async def test_config_health_endpoint_reports_readiness_checks(client):
 
 
 @pytest.mark.asyncio
+async def test_project_onboarding_endpoint_returns_project_checklist(client, db_session, tmp_path):
+    repo_root = tmp_path / "repo"
+    (repo_root / ".git").mkdir(parents=True)
+    (repo_root / "backend").mkdir()
+    (repo_root / "frontend").mkdir()
+    (repo_root / "docs").mkdir()
+    project = await auth_repository.create_project(
+        db_session,
+        key="onboarding",
+        name="Onboarding Project",
+        repository_root=str(repo_root),
+    )
+    await db_session.commit()
+
+    response = await client.get(f"/api/v2/projects/{project.id}/onboarding")
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    step_ids = {step["id"] for step in data["steps"]}
+
+    assert data["project_id"] == project.id
+    assert data["completion_percent"] >= 0
+    assert "repository" in step_ids
+    assert "deployment_environment" in step_ids
+    assert "project_secrets" in step_ids
+    assert next(step for step in data["steps"] if step["id"] == "repository")["status"] == "done"
+
+
+@pytest.mark.asyncio
 async def test_observability_trace_endpoint_returns_trace_timeline(client):
     demand_response = await client.post(
         "/api/v2/demands",

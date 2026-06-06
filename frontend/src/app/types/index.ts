@@ -52,6 +52,25 @@ export interface ProjectDeploymentEnvironmentConfig {
   environments: Record<string, DeploymentEnvironmentConfigItem>;
 }
 
+export interface ProjectOnboardingStep {
+  id: string;
+  status: 'done' | 'warning' | 'blocked';
+  label: string;
+  summary: string;
+  next_action: string | null;
+  evidence: Record<string, unknown>;
+}
+
+export interface ProjectOnboarding {
+  project_id: number;
+  project_key: string;
+  project_name: string;
+  generated_at: string;
+  status: 'ready' | 'needs_attention' | 'blocked';
+  completion_percent: number;
+  steps: ProjectOnboardingStep[];
+}
+
 export interface DeliveryDemand {
   id: number;
   trace_id: string | null;
