@@ -47,9 +47,9 @@ import type { AppOutletContext } from '../Root';
 
 type StepKey = 'demand' | 'spec' | 'repo' | 'impact' | 'task' | 'run' | 'mr' | 'deploy' | 'verify';
 type StepState = 'idle' | 'running' | 'done' | 'failed';
-type TabKey = 'summary' | 'spec' | 'execution' | 'taskPackage' | 'evidence' | 'queue' | 'projects' | 'audit';
+type TabKey = 'summary' | 'spec' | 'execution' | 'taskPackage' | 'evidence' | 'queue' | 'incidents' | 'projects' | 'audit';
 
-const detailTabKeys: TabKey[] = ['summary', 'spec', 'execution', 'taskPackage', 'evidence', 'queue', 'projects', 'audit'];
+const detailTabKeys: TabKey[] = ['summary', 'spec', 'execution', 'taskPackage', 'evidence', 'queue', 'incidents', 'projects', 'audit'];
 
 type DeliveryResult = {
   demand?: DeliveryDemand;
@@ -115,6 +115,7 @@ const tabs: Array<{ key: TabKey; label: string; icon: typeof Activity }> = [
   { key: 'taskPackage', label: '任务包', icon: Code2 },
   { key: 'evidence', label: '证据', icon: FileCheck2 },
   { key: 'queue', label: '队列', icon: ClipboardList },
+  { key: 'incidents', label: '失败', icon: AlertTriangle },
   { key: 'projects', label: '项目', icon: GitBranch },
   { key: 'audit', label: '审计', icon: ShieldCheck },
 ];
@@ -156,6 +157,7 @@ export default function DeliveryV2Page() {
   const [requiredChecks, setRequiredChecks] = useState('npm run build');
   const [demands, setDemands] = useState<DeliveryDemand[]>([]);
   const [queueItems, setQueueItems] = useState<DeliveryExecutionQueueItem[]>([]);
+  const [incidentItems, setIncidentItems] = useState<DeliveryExecutionQueueItem[]>([]);
   const [projectSummaries, setProjectSummaries] = useState<ProjectObservabilitySummary[]>([]);
   const [auditEvents, setAuditEvents] = useState<DeliveryAuditEvent[]>([]);
   const [observability, setObservability] = useState<DeliveryObservabilitySummary | null>(null);
@@ -164,6 +166,7 @@ export default function DeliveryV2Page() {
   const [selectedDemandId, setSelectedDemandId] = useState<number | null>(null);
   const [listLoading, setListLoading] = useState(false);
   const [queueLoading, setQueueLoading] = useState(false);
+  const [incidentLoading, setIncidentLoading] = useState(false);
   const [projectSummariesLoading, setProjectSummariesLoading] = useState(false);
   const [observabilityLoading, setObservabilityLoading] = useState(false);
   const [configHealthLoading, setConfigHealthLoading] = useState(false);
@@ -322,6 +325,19 @@ export default function DeliveryV2Page() {
     }
   };
 
+  const loadIncidents = async () => {
+    setIncidentLoading(true);
+    try {
+      const incidents = (await deliveryApi.listExecutionRuns({ statuses: ['failed', 'blocked', 'cancelled'], limit: 50 })).data;
+      setIncidentItems(incidents);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '加载失败任务失败';
+      setError(localizeText(message));
+    } finally {
+      setIncidentLoading(false);
+    }
+  };
+
   const loadProjectSummaries = async () => {
     setProjectSummariesLoading(true);
     try {
@@ -425,6 +441,7 @@ export default function DeliveryV2Page() {
     const linkedTab = parseTabKey(searchParams.get('tab')) || 'summary';
     void loadDemandList(Number.isFinite(linkedDemandId) && linkedDemandId > 0 ? linkedDemandId : undefined, linkedTab);
     void loadExecutionQueue();
+    void loadIncidents();
     void loadProjectSummaries();
     void loadObservability();
     void loadConfigHealth();
@@ -544,6 +561,7 @@ export default function DeliveryV2Page() {
   const refreshCurrent = async () => {
     await loadDemandList(selectedDemandId ?? result.demand?.id, activeTab);
     await loadExecutionQueue();
+    await loadIncidents();
     await loadProjectSummaries();
     await loadObservability();
     await loadConfigHealth();
@@ -1263,6 +1281,14 @@ export default function DeliveryV2Page() {
               {activeTab === 'taskPackage' && <TaskPackageTab result={result} />}
               {activeTab === 'evidence' && <EvidenceTab result={result} />}
               {activeTab === 'queue' && <QueueTab items={queueItems} loading={queueLoading} />}
+              {activeTab === 'incidents' && (
+                <IncidentTab
+                  items={incidentItems}
+                  loading={incidentLoading}
+                  onRefresh={() => void loadIncidents()}
+                  onOpenDemand={(demandId) => void loadDemandDetail(demandId, 'execution')}
+                />
+              )}
               {activeTab === 'projects' && (
                 <ProjectHealthTab
                   items={projectSummaries}
@@ -2360,6 +2386,101 @@ function QueueTab({ items, loading }: { items: DeliveryExecutionQueueItem[]; loa
   );
 }
 
+function IncidentTab({
+  items,
+  loading,
+  onRefresh,
+  onOpenDemand,
+}: {
+  items: DeliveryExecutionQueueItem[];
+  loading: boolean;
+  onRefresh: () => void;
+  onOpenDemand: (demandId: number) => void;
+}) {
+  return (
+    <div className="overflow-hidden rounded border border-slate-200">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 px-3 py-2">
+        <div className="min-w-0">
+          <div className="text-sm font-medium text-slate-900">失败任务处理</div>
+          <div className="mt-0.5 text-xs text-slate-500">聚合失败、阻塞和已取消执行，先定位证据再处理</div>
+        </div>
+        <div className="flex items-center gap-2">
+          <StatusBadge value={loading ? 'loading' : `${items.length} 条`} />
+          <button
+            type="button"
+            onClick={onRefresh}
+            disabled={loading}
+            className="inline-flex h-8 items-center gap-1.5 rounded border border-slate-200 bg-white px-2.5 text-sm text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+            刷新
+          </button>
+        </div>
+      </div>
+      <div className="max-h-[560px] overflow-auto">
+        <table className="w-full table-fixed text-left text-sm">
+          <thead className="bg-slate-50 text-xs font-medium uppercase text-slate-500">
+            <tr>
+              <th className="w-[12%] px-3 py-2">执行</th>
+              <th className="w-[14%] px-3 py-2">状态</th>
+              <th className="w-[30%] px-3 py-2">任务</th>
+              <th className="w-[28%] px-3 py-2">处理建议</th>
+              <th className="w-[16%] px-3 py-2">操作</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {items.length > 0 ? (
+              items.map((item) => (
+                <tr key={item.id}>
+                  <td className="px-3 py-2">
+                    <div className="font-mono text-xs text-slate-700">#{item.id}</div>
+                    <div className="mt-1 text-xs text-slate-500">{formatDateTime(item.updated_at)}</div>
+                  </td>
+                  <td className="px-3 py-2">
+                    <div className="space-y-1">
+                      <StatusBadge value={item.status} />
+                      <StatusBadge value={item.risk_level || 'empty'} />
+                    </div>
+                  </td>
+                  <td className="px-3 py-2 text-slate-700">
+                    <div className="line-clamp-2 font-medium text-slate-900">
+                      {localizeText(item.coding_task_title || item.demand_title || '未命名任务')}
+                    </div>
+                    <div className="mt-1 flex flex-wrap gap-2 text-xs text-slate-500">
+                      <span>需求 #{item.demand_id}</span>
+                      <span>任务 #{item.coding_task_id}</span>
+                      <span>{localizeText(item.trigger_mode)}</span>
+                    </div>
+                  </td>
+                  <td className="px-3 py-2 text-slate-700">
+                    <div className="line-clamp-2 text-sm">{localizeText(item.result_summary || incidentHint(item))}</div>
+                  </td>
+                  <td className="px-3 py-2">
+                    <button
+                      type="button"
+                      onClick={() => onOpenDemand(item.demand_id)}
+                      className="inline-flex h-8 items-center gap-1.5 rounded border border-slate-200 bg-white px-2.5 text-sm text-slate-700 hover:bg-slate-50"
+                    >
+                      <ExternalLink className="h-4 w-4" />
+                      查看处理
+                    </button>
+                  </td>
+                </tr>
+              ))
+            ) : (
+              <tr>
+                <td className="px-3 py-8 text-sm text-slate-400" colSpan={5}>
+                  {loading ? '正在加载失败任务' : '暂无失败或阻塞任务'}
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 function ProjectHealthTab({
   items,
   loading,
@@ -3040,6 +3161,19 @@ function metricValue(metrics: Record<string, number>, key: string): number {
   return Number(metrics[key] || 0);
 }
 
+function incidentHint(item: DeliveryExecutionQueueItem): string {
+  if (item.status === 'failed') {
+    return '查看执行证据和失败输出；低风险任务可在详情页选择重试或自动修复。';
+  }
+  if (item.status === 'blocked') {
+    return '查看门禁和审批状态；补齐需求、规格或任务条件后再继续。';
+  }
+  if (item.status === 'cancelled') {
+    return '确认取消原因；如仍需交付，请从详情页重新创建执行记录。';
+  }
+  return '打开详情页查看下一步动作。';
+}
+
 function formatStatusLabel(value?: string | number | null): string {
   if (value === undefined || value === null || value === '') {
     return '无内容';
@@ -3287,6 +3421,7 @@ function localizeText(value: string): string {
     [/Required checks passed \((\d+)\/(\d+)\)\./g, '必要检查通过（$1/$2）。'],
     [/Required checks failed \((\d+)\/(\d+) passed\)\./g, '必要检查失败（$1/$2 通过）。'],
     [/Execution (queued|running|paused|cancelled|blocked|failed|succeeded|completed)/g, '执行状态：$1'],
+    [/Execution was blocked by gate checks\./g, '执行被门禁检查阻塞。'],
     [/As a product or delivery owner, I want this request to be converted into a scoped engineering change so that an AI coding executor can implement it with clear acceptance criteria\. Original input:/g, '作为产品或交付负责人，我希望该需求被转化为边界清晰的工程变更，让 AI 编码执行器可以依据明确验收标准完成实现。原始输入：'],
     [/Implement the smallest safe change that satisfies the accepted user story\./g, '在满足已确认用户故事的前提下，实施最小且安全的变更。'],
     [/The requested behavior is implemented and demonstrable\./g, '已实现并可演示所请求的行为。'],
