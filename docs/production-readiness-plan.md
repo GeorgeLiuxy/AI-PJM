@@ -486,14 +486,14 @@ AI 不允许直接决定：
 实施内容：
 
 - 结构化日志。（`LOG_FORMAT=json` JSON Lines 首版已完成，集中日志平台接入待完成）
-- trace id 贯穿需求、任务、执行、MR、部署、验收。（新记录首版、历史记录回填脚本和 `GET /api/v2/observability/traces/{trace_id}` 只读时间线查询已完成）
+- trace id 贯穿需求、任务、执行、MR、部署、验收。（新记录首版、历史记录回填脚本、`GET /api/v2/observability/traces/{trace_id}` 只读时间线查询和工作台证据页签展示已完成）
 - 指标：任务数量、成功率、失败率、平均耗时、队列积压、自动修复率。（队列、部署、凭证、worker、近期执行失败率和 Prometheus 文本出口首版已完成）
 - 告警：worker 停止、队列积压、凭证失效、部署失败、异常失败率。（worker lease、队列积压、凭证、部署失败、近期执行失败率和本地告警 worker 启停脚本首版已完成）
 - 管理后台查看系统健康。（工作台告警条、配置健康/项目接入可见化、项目健康摘要 API、Prometheus 文本指标出口和通用 webhook 转发脚本首版已完成，完整管理后台页面待增强）
 
 验收标准：
 
-- 任一失败任务可通过 trace id 找到完整日志。（平台内 trace 时间线查询已覆盖需求、Spec、门禁、上下文、影响分析、任务、执行日志、MR/PR、部署和验收；集中日志平台接入待增强）
+- 任一失败任务可通过 trace id 找到完整日志。（平台内 trace 时间线查询和工作台证据页签已覆盖需求、Spec、门禁、上下文、影响分析、任务、执行日志、MR/PR、部署和验收；集中日志平台接入待增强）
 - 队列积压和 worker 异常能告警。（summary API、工作台摘要和本地告警 worker 启停脚本首版已完成）
 - 管理员能看到各项目健康状态。（项目健康摘要 API、工作台告警和就绪状态首版、Prometheus 文本指标出口和通用 webhook 告警转发已完成，完整管理后台页面待增强）
 
@@ -510,7 +510,7 @@ AI 不允许直接决定：
 - 项目接入向导。（`GET /api/v2/projects/{project_id}/onboarding` 和工作台就绪展示首版已完成）
 - 配置健康检查。（`GET /api/v2/observability/config-health` 和工作台就绪展示首版已完成）
 - 当前任务下一步动作明确化。（`DemandDetailResponse.next_actions` 首版已完成）
-- 证据时间线。
+- 证据时间线。（`GET /api/v2/observability/traces/{trace_id}` 和工作台证据页签首版已完成）
 - 多项目看板。
 - 批量任务看板。
 - 高风险任务审批台。

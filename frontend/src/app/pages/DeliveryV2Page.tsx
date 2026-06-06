@@ -38,6 +38,7 @@ import type {
   DeliveryObservabilitySummary,
   DeliveryRepoContext,
   DeliverySpecCard,
+  DeliveryTraceDetail,
   DeliveryVerificationRecord,
   ProjectOnboarding,
 } from '../types';
@@ -2068,40 +2069,90 @@ function TaskPackageTab({ result }: { result: DeliveryResult }) {
 
 function EvidenceTab({ result }: { result: DeliveryResult }) {
   const gates = result.detail?.gate_checks || [];
+  const traceId =
+    result.demand?.trace_id ||
+    result.spec?.trace_id ||
+    result.repo?.trace_id ||
+    result.impact?.trace_id ||
+    result.task?.trace_id ||
+    result.run?.trace_id ||
+    result.mergeRequest?.trace_id ||
+    result.deployRecord?.trace_id ||
+    result.verificationRecord?.trace_id ||
+    null;
+  const [traceDetail, setTraceDetail] = useState<DeliveryTraceDetail | null>(null);
+  const [traceLoading, setTraceLoading] = useState(false);
+  const [traceError, setTraceError] = useState<string | null>(null);
+
+  const loadTraceDetail = async () => {
+    if (!traceId) {
+      setTraceDetail(null);
+      setTraceError(null);
+      return;
+    }
+
+    setTraceLoading(true);
+    try {
+      const detail = (await deliveryApi.getTraceDetail(traceId)).data;
+      setTraceDetail(detail);
+      setTraceError(null);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '加载证据时间线失败';
+      setTraceError(localizeText(message));
+    } finally {
+      setTraceLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadTraceDetail();
+    // The evidence tab loads trace details only for the active demand.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [traceId]);
 
   return (
     <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
-      <div className="overflow-hidden rounded border border-slate-200">
-        <div className="border-b border-slate-200 px-3 py-2 text-sm font-medium text-slate-900">门禁检查</div>
-        <div className="max-h-[420px] overflow-auto">
-          <table className="w-full table-fixed text-left text-sm">
-            <thead className="bg-slate-50 text-xs font-medium uppercase text-slate-500">
-              <tr>
-                <th className="w-[32%] px-3 py-2">门禁</th>
-                <th className="w-[20%] px-3 py-2">状态</th>
-                <th className="w-[48%] px-3 py-2">原因</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {gates.length > 0 ? (
-                gates.map((gate) => (
-                  <tr key={gate.id}>
-                    <td className="break-words px-3 py-2 font-mono text-xs text-slate-700">{formatGateType(gate.gate_type)}</td>
-                    <td className="px-3 py-2">
-                      <StatusBadge value={gate.status} />
-                    </td>
-                    <td className="break-words px-3 py-2 text-slate-700">{localizeText(gate.reason || '暂无原因')}</td>
-                  </tr>
-                ))
-              ) : (
+      <div className="space-y-4">
+        <TraceTimelineCard
+          traceId={traceId}
+          traceDetail={traceDetail}
+          loading={traceLoading}
+          error={traceError}
+          onRefresh={() => void loadTraceDetail()}
+        />
+
+        <div className="overflow-hidden rounded border border-slate-200">
+          <div className="border-b border-slate-200 px-3 py-2 text-sm font-medium text-slate-900">门禁检查</div>
+          <div className="max-h-[420px] overflow-auto">
+            <table className="w-full table-fixed text-left text-sm">
+              <thead className="bg-slate-50 text-xs font-medium uppercase text-slate-500">
                 <tr>
-                  <td className="px-3 py-6 text-sm text-slate-400" colSpan={3}>
-                    暂无门禁证据
-                  </td>
+                  <th className="w-[32%] px-3 py-2">门禁</th>
+                  <th className="w-[20%] px-3 py-2">状态</th>
+                  <th className="w-[48%] px-3 py-2">原因</th>
                 </tr>
-              )}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {gates.length > 0 ? (
+                  gates.map((gate) => (
+                    <tr key={gate.id}>
+                      <td className="break-words px-3 py-2 font-mono text-xs text-slate-700">{formatGateType(gate.gate_type)}</td>
+                      <td className="px-3 py-2">
+                        <StatusBadge value={gate.status} />
+                      </td>
+                      <td className="break-words px-3 py-2 text-slate-700">{localizeText(gate.reason || '暂无原因')}</td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td className="px-3 py-6 text-sm text-slate-400" colSpan={3}>
+                      暂无门禁证据
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
 
@@ -2129,6 +2180,102 @@ function EvidenceTab({ result }: { result: DeliveryResult }) {
           status={result.verificationRecord?.status}
           time={result.verificationRecord?.updated_at || result.verificationRecord?.created_at}
         />
+      </div>
+    </div>
+  );
+}
+
+function TraceTimelineCard({
+  traceId,
+  traceDetail,
+  loading,
+  error,
+  onRefresh,
+}: {
+  traceId: string | null;
+  traceDetail: DeliveryTraceDetail | null;
+  loading: boolean;
+  error: string | null;
+  onRefresh: () => void;
+}) {
+  const events = traceDetail?.timeline || [];
+  const countEntries = Object.entries(traceDetail?.counts || {})
+    .filter(([, value]) => Number(value) > 0)
+    .slice(0, 6);
+
+  return (
+    <div className="overflow-hidden rounded border border-slate-200 bg-white">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 px-3 py-2">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2 text-sm font-medium text-slate-900">
+            <span>证据时间线</span>
+            <StatusBadge value={loading ? 'loading' : events.length > 0 ? `${events.length} 项` : 'empty'} />
+          </div>
+          <div className="mt-0.5 break-all font-mono text-xs text-slate-500">{traceId || '暂无追踪 ID'}</div>
+        </div>
+        <button
+          type="button"
+          onClick={onRefresh}
+          disabled={loading || !traceId}
+          className="inline-flex h-8 items-center gap-1.5 rounded border border-slate-200 bg-white px-2.5 text-sm text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+          刷新
+        </button>
+      </div>
+
+      {traceDetail ? (
+        <div className="flex flex-wrap gap-2 border-b border-slate-100 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+          <span>需求 #{traceDetail.demand_id}</span>
+          <span>状态 {formatStatusLabel(traceDetail.current_status)}</span>
+          {traceDetail.risk_level ? <span>风险 {traceDetail.risk_level}</span> : null}
+          {countEntries.map(([key, value]) => (
+            <span key={key}>
+              {formatTraceCountLabel(key)} {value}
+            </span>
+          ))}
+        </div>
+      ) : null}
+
+      <div className="max-h-[460px] overflow-auto">
+        {!traceId ? (
+          <div className="px-3 py-8 text-sm text-slate-400">当前任务暂无追踪 ID</div>
+        ) : error ? (
+          <div className="px-3 py-8 text-sm text-rose-700">{error}</div>
+        ) : events.length === 0 ? (
+          <div className="px-3 py-8 text-sm text-slate-400">{loading ? '正在加载证据时间线' : '暂无时间线事件'}</div>
+        ) : (
+          <ol className="divide-y divide-slate-100">
+            {events.map((event, index) => (
+              <li key={`${event.stage}-${event.entity_type}-${event.entity_id}-${index}`} className="grid gap-2 px-3 py-3 sm:grid-cols-[110px_minmax(0,1fr)]">
+                <div className="text-xs text-slate-500">
+                  <div>{event.at ? formatDateTime(event.at) : '暂无时间'}</div>
+                  <div className="mt-1 font-medium text-slate-700">{formatTraceStage(event.stage)}</div>
+                </div>
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="min-w-0 break-words text-sm font-medium text-slate-900">
+                      {event.title || `${formatTraceEntityType(event.entity_type)} #${event.entity_id}`}
+                    </span>
+                    {event.status ? <StatusBadge value={event.status} /> : null}
+                    <span className="font-mono text-xs text-slate-400">#{event.entity_id}</span>
+                  </div>
+                  {event.summary ? (
+                    <p className="mt-1 line-clamp-3 text-sm leading-6 text-slate-600">{localizeText(event.summary)}</p>
+                  ) : null}
+                  {hasMeaningfulMetadata(event.metadata) ? (
+                    <details className="mt-2 rounded border border-slate-100 bg-slate-50 px-2 py-1.5 text-xs">
+                      <summary className="cursor-pointer font-medium text-slate-600">证据详情</summary>
+                      <pre className="mt-2 max-h-[180px] overflow-auto whitespace-pre-wrap break-words font-mono leading-5 text-slate-700">
+                        {formatJson(event.metadata)}
+                      </pre>
+                    </details>
+                  ) : null}
+                </div>
+              </li>
+            ))}
+          </ol>
+        )}
       </div>
     </div>
   );
@@ -2794,6 +2941,8 @@ function formatStatusLabel(value?: string | number | null): string {
     succeeded: '成功',
     passed: '通过',
     rejected: '已拒绝',
+    warning: '警告',
+    error: '错误',
     risk: '风险',
     unknown: '未知',
   };
@@ -2838,6 +2987,80 @@ function formatGateType(value?: string | null): string {
   };
 
   return gateLabels[value] || value;
+}
+
+function formatTraceStage(value: string): string {
+  const labels: Record<string, string> = {
+    demand: '需求',
+    spec: '规格',
+    gate: '门禁',
+    context: '上下文',
+    impact: '影响分析',
+    task: '任务',
+    execution: '执行',
+    execution_log: '执行日志',
+    merge_request: '合并评审',
+    deployment: '测试部署',
+    verification: '验收',
+  };
+  return labels[value] || value;
+}
+
+function formatTraceEntityType(value: string): string {
+  const labels: Record<string, string> = {
+    demand: '需求',
+    spec_card: '规格卡片',
+    gate_check: '门禁检查',
+    repo_context: '仓库上下文',
+    impact_analysis: '影响分析',
+    coding_task: '编码任务',
+    execution_run: '执行记录',
+    execution_log: '执行日志',
+    merge_request: '合并请求',
+    deploy_record: '部署记录',
+    verification_record: '验收记录',
+  };
+  return labels[value] || value;
+}
+
+function formatTraceCountLabel(value: string): string {
+  const labels: Record<string, string> = {
+    spec_cards: '规格',
+    gate_checks: '门禁',
+    repo_contexts: '上下文',
+    impact_analyses: '影响',
+    coding_tasks: '任务',
+    execution_runs: '执行',
+    execution_logs: '日志',
+    merge_requests: 'MR/PR',
+    deployments: '部署',
+    verifications: '验收',
+    timeline_events: '事件',
+  };
+  return labels[value] || value;
+}
+
+function hasMeaningfulMetadata(value: Record<string, unknown>): boolean {
+  return Object.values(value).some((item) => {
+    if (item === null || item === undefined || item === '') {
+      return false;
+    }
+    if (Array.isArray(item)) {
+      return item.length > 0;
+    }
+    if (typeof item === 'object') {
+      return Object.keys(item as Record<string, unknown>).length > 0;
+    }
+    return true;
+  });
+}
+
+function formatJson(value: unknown): string {
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
 }
 
 function formatLogLevel(value?: string | null): string {

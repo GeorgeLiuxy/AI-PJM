@@ -233,6 +233,28 @@ export interface DeliveryConfigHealth {
   checks: DeliveryConfigHealthCheck[];
 }
 
+export interface DeliveryTraceTimelineEvent {
+  at: string | null;
+  stage: string;
+  entity_type: string;
+  entity_id: number;
+  status: string | null;
+  title: string | null;
+  summary: string | null;
+  metadata: Record<string, unknown>;
+}
+
+export interface DeliveryTraceDetail {
+  trace_id: string;
+  project_id: number | null;
+  demand_id: number;
+  demand_title: string | null;
+  current_status: string;
+  risk_level: string | null;
+  counts: Record<string, number>;
+  timeline: DeliveryTraceTimelineEvent[];
+}
+
 export interface DeliveryAuditEvent {
   id: number;
   project_id: number | null;

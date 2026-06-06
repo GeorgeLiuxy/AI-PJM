@@ -21,6 +21,7 @@ import type {
   DeliveryObservabilitySummary,
   DeliveryRepoContext,
   DeliverySpecCard,
+  DeliveryTraceDetail,
   DeliveryVerificationRecord,
   ProjectDeploymentEnvironmentConfig,
   ProjectOnboarding,
@@ -223,6 +224,9 @@ export const authApi = {
 export const deliveryApi = {
   getObservabilitySummary: () => fetchAPI<DeliveryObservabilitySummary>('/api/v2/observability/summary'),
   getConfigHealth: () => fetchAPI<DeliveryConfigHealth>('/api/v2/observability/config-health'),
+  getTraceDetail: (traceId: string) => {
+    return fetchAPI<DeliveryTraceDetail>(`/api/v2/observability/traces/${encodeURIComponent(traceId)}`);
+  },
   getProjectOnboarding: (projectId: number) => {
     return fetchAPI<ProjectOnboarding>(`/api/v2/projects/${projectId}/onboarding`);
   },
