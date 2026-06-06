@@ -46,6 +46,7 @@ AI PJM 是一个 AI 辅助工程交付编排平台。它不是通用项目管理
 - 密钥健康检查首版：支持登记过期时间、展示健康状态、手动检查可解密性；OpenAI/GitLab/GitHub 支持只读远端可用性探测并写回最近健康结果，不返回明文。
 - 执行日志和执行证据脱敏首版：持久化前清洗 Token、API Key、密码、Authorization 等敏感片段。
 - 最小可观测性首版：工作台展示 worker lease 异常、队列积压、凭证不可用/即将过期、测试部署失败告警，后端提供 `/api/v2/observability/summary`、`/api/v2/observability/projects` 和 Prometheus 文本指标 `/api/v2/observability/metrics`。
+- 产品化交互首版：工作台展示配置健康、项目接入、证据时间线、项目健康、失败任务处理、高风险审批和批量任务看板。
 - 中文化交付工作台页面。
 - 前后端启动/关闭脚本。
 
