@@ -61,6 +61,20 @@ class DemandResponse(BaseModel):
         from_attributes = True
 
 
+class NextActionResponse(BaseModel):
+    """Operator-facing next action derived from workflow state."""
+
+    id: str
+    label: str
+    description: str
+    method: Optional[str] = None
+    endpoint: Optional[str] = None
+    capability: str = "read"
+    priority: Literal["primary", "secondary", "blocked", "done"] = "primary"
+    requires_human: bool = False
+    reason: Optional[str] = None
+
+
 class SpecGenerateRequest(BaseModel):
     """Generate a spec card for a demand."""
 
@@ -524,6 +538,7 @@ class CodingTaskDetailResponse(CodingTaskResponse):
 class DemandDetailResponse(DemandResponse):
     """Demand detail with generated artifacts."""
 
+    next_actions: list[NextActionResponse] = Field(default_factory=list)
     spec_cards: list[SpecCardResponse] = Field(default_factory=list)
     gate_checks: list[GateCheckResponse] = Field(default_factory=list)
     repo_contexts: list[RepoContextResponse] = Field(default_factory=list)

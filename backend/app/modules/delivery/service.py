@@ -565,6 +565,308 @@ class DeliveryService:
 
         return self._trace_detail_payload(detail)
 
+    def demand_next_actions(self, demand: DemandItem) -> list[dict]:
+        latest_spec = self._latest_entity(demand.spec_cards)
+        if not latest_spec:
+            return [
+                self._next_action(
+                    "generate_spec",
+                    "生成 Spec",
+                    "根据需求生成规格、验收标准和风险边界。",
+                    "POST",
+                    f"/api/v2/demands/{demand.id}/spec",
+                    capability="operate",
+                )
+            ]
+
+        if latest_spec.status == SpecStatus.MANUAL_REVIEW and demand.manual_approval_status != "approved":
+            return [
+                self._next_action(
+                    "approve_spec",
+                    "人工确认 Spec",
+                    "当前需求需要人工确认边界后才能继续自动执行。",
+                    "POST",
+                    f"/api/v2/demands/{demand.id}/manual-approval",
+                    capability="review",
+                    requires_human=True,
+                    reason="spec_manual_review",
+                )
+            ]
+
+        if latest_spec.status != SpecStatus.APPROVED:
+            return [
+                self._next_action(
+                    "wait_for_spec",
+                    "等待 Spec 完成",
+                    "Spec 尚未达到 approved 状态，后续动作暂不应推进。",
+                    capability="read",
+                    priority="blocked",
+                    reason=f"spec_status:{latest_spec.status}",
+                )
+            ]
+
+        latest_repo_context = self._latest_entity(demand.repo_contexts)
+        if not latest_repo_context or latest_repo_context.status != RepoContextStatus.READY:
+            return [
+                self._next_action(
+                    "collect_repo_context",
+                    "收集代码上下文",
+                    "扫描仓库、文档、历史需求和依赖信息，形成实现范围依据。",
+                    "POST",
+                    f"/api/v2/demands/{demand.id}/repo-context",
+                    capability="operate",
+                )
+            ]
+
+        latest_impact = self._latest_entity(demand.impact_analyses)
+        if not latest_impact:
+            return [
+                self._next_action(
+                    "analyze_impact",
+                    "生成影响分析",
+                    "基于需求和仓库上下文推导影响范围、风险和建议检查项。",
+                    "POST",
+                    f"/api/v2/demands/{demand.id}/impact-analysis",
+                    capability="operate",
+                )
+            ]
+        if latest_impact.status == ImpactAnalysisStatus.MANUAL_REVIEW:
+            return [
+                self._next_action(
+                    "review_impact",
+                    "人工确认影响范围",
+                    "影响分析要求人工复核，确认后再生成任务包。",
+                    capability="review",
+                    priority="blocked",
+                    requires_human=True,
+                    reason="impact_manual_review",
+                )
+            ]
+
+        latest_task = self._latest_entity(demand.coding_tasks)
+        if not latest_task:
+            return [
+                self._next_action(
+                    "create_coding_task",
+                    "生成任务包",
+                    "生成 Codex 可执行的任务提示、允许路径和必跑检查。",
+                    "POST",
+                    f"/api/v2/spec-cards/{latest_spec.id}/coding-task",
+                    capability="operate",
+                )
+            ]
+
+        latest_run = self._latest_entity(latest_task.execution_runs)
+        if not latest_run:
+            return [
+                self._next_action(
+                    "create_execution_run",
+                    "创建执行记录",
+                    "为当前任务包创建一次受控执行 run。",
+                    "POST",
+                    f"/api/v2/coding-tasks/{latest_task.id}/runs",
+                    capability="operate",
+                )
+            ]
+
+        if latest_run.status == ExecutionRunStatus.QUEUED:
+            return [
+                self._next_action(
+                    "dispatch_execution_run",
+                    "执行任务",
+                    "分发当前 queued run，由执行器完成代码修改和自测。",
+                    "POST",
+                    f"/api/v2/execution-runs/{latest_run.id}/dispatch",
+                    capability="operate",
+                )
+            ]
+        if latest_run.status == ExecutionRunStatus.PAUSED:
+            return [
+                self._next_action(
+                    "resume_execution_run",
+                    "恢复执行",
+                    "当前 run 已暂停，恢复后再进入执行队列。",
+                    "POST",
+                    f"/api/v2/execution-runs/{latest_run.id}/resume",
+                    capability="operate",
+                )
+            ]
+        if latest_run.status == ExecutionRunStatus.RUNNING:
+            return [
+                self._next_action(
+                    "wait_for_execution",
+                    "等待执行完成",
+                    "执行器仍在运行，等待结果或必要时人工暂停/取消。",
+                    capability="read",
+                    priority="secondary",
+                    reason="execution_running",
+                )
+            ]
+        if latest_run.status in {
+            ExecutionRunStatus.FAILED,
+            ExecutionRunStatus.BLOCKED,
+            ExecutionRunStatus.CANCELLED,
+        }:
+            return [
+                self._next_action(
+                    "auto_repair_task",
+                    "自动修复失败",
+                    "根据失败证据生成受控修复 run。",
+                    "POST",
+                    f"/api/v2/coding-tasks/{latest_task.id}/auto-repair",
+                    capability="operate",
+                    reason=f"execution_status:{latest_run.status}",
+                ),
+                self._next_action(
+                    "retry_task",
+                    "重新执行任务",
+                    "保留 retry chain 证据，重新创建一次执行 run。",
+                    "POST",
+                    f"/api/v2/coding-tasks/{latest_task.id}/retry",
+                    capability="operate",
+                    priority="secondary",
+                    reason=f"execution_status:{latest_run.status}",
+                ),
+            ]
+
+        if latest_run.status != ExecutionRunStatus.SUCCEEDED:
+            return [
+                self._next_action(
+                    "wait_for_execution_result",
+                    "等待执行结果",
+                    "执行 run 尚未进入可交付状态。",
+                    capability="read",
+                    priority="blocked",
+                    reason=f"execution_status:{latest_run.status}",
+                )
+            ]
+
+        latest_merge_request = self._latest_entity(latest_task.merge_requests)
+        if not latest_merge_request:
+            return [
+                self._next_action(
+                    "create_merge_request",
+                    "创建 MR/PR",
+                    "将已通过自测的变更创建或登记为 MR/PR。",
+                    "POST",
+                    f"/api/v2/coding-tasks/{latest_task.id}/merge-request",
+                    capability="operate",
+                )
+            ]
+
+        if (
+            latest_merge_request.review_status == ReviewStatus.BLOCKING
+            or latest_merge_request.status == MergeRequestStatus.REVIEW_BLOCKED
+        ):
+            return [
+                self._next_action(
+                    "repair_merge_request",
+                    "修复评审阻塞",
+                    "根据 MR/PR 阻塞意见创建修复 run，并推回原源分支。",
+                    "POST",
+                    f"/api/v2/merge-requests/{latest_merge_request.id}/auto-repair",
+                    capability="operate",
+                    reason="review_blocking",
+                )
+            ]
+
+        if latest_merge_request.review_status != ReviewStatus.PASSED:
+            if latest_merge_request.provider == "local":
+                return [
+                    self._next_action(
+                        "record_local_review",
+                        "记录本地评审",
+                        "本地 MR 需要记录评审通过或阻塞结果。",
+                        "POST",
+                        f"/api/v2/merge-requests/{latest_merge_request.id}/review",
+                        capability="review",
+                        requires_human=True,
+                    )
+                ]
+            return [
+                self._next_action(
+                    "sync_remote_review",
+                    "同步远端评审",
+                    "从 GitLab/GitHub 拉取评审和 CI/check 状态并更新门禁。",
+                    "POST",
+                    f"/api/v2/merge-requests/{latest_merge_request.id}/sync-review",
+                    capability="operate",
+                )
+            ]
+
+        latest_deploy = self._latest_entity(latest_merge_request.deploy_records)
+        if not latest_deploy:
+            return [
+                self._next_action(
+                    "create_deployment",
+                    "部署测试环境",
+                    "将已评审通过的 MR/PR 部署到测试环境并记录证据。",
+                    "POST",
+                    f"/api/v2/merge-requests/{latest_merge_request.id}/deployments",
+                    capability="operate",
+                )
+            ]
+
+        if latest_deploy.status == DeploymentStatus.PENDING:
+            return [
+                self._next_action(
+                    "sync_deployment",
+                    "同步部署状态",
+                    "拉取测试环境部署状态并回写部署门禁。",
+                    "POST",
+                    f"/api/v2/deployments/{latest_deploy.id}/sync-status",
+                    capability="operate",
+                )
+            ]
+        if latest_deploy.status == DeploymentStatus.FAILED:
+            return [
+                self._next_action(
+                    "redeploy",
+                    "重新部署",
+                    "基于失败部署记录创建新的测试环境部署。",
+                    "POST",
+                    f"/api/v2/deployments/{latest_deploy.id}/redeploy",
+                    capability="operate",
+                    reason="deployment_failed",
+                )
+            ]
+
+        latest_verification = self._latest_entity(latest_deploy.verification_records)
+        if not latest_verification:
+            return [
+                self._next_action(
+                    "record_verification",
+                    "记录验收",
+                    "记录测试环境人工或自动验收结果。",
+                    "POST",
+                    f"/api/v2/deployments/{latest_deploy.id}/verification",
+                    capability="review",
+                    requires_human=True,
+                )
+            ]
+        if latest_verification.status == VerificationStatus.FAILED:
+            return [
+                self._next_action(
+                    "redeploy_after_failed_verification",
+                    "验收失败后重新部署",
+                    "验收失败，需要修复或重新部署后再次验证。",
+                    "POST",
+                    f"/api/v2/deployments/{latest_deploy.id}/redeploy",
+                    capability="operate",
+                    reason="verification_failed",
+                )
+            ]
+
+        return [
+            self._next_action(
+                "delivery_completed",
+                "交付已完成",
+                "需求已完成测试环境验收，等待人工决定是否合并或发布。",
+                capability="read",
+                priority="done",
+            )
+        ]
+
     async def get_project_deployment_environment_config(
         self,
         db: AsyncSession,
@@ -2868,6 +3170,45 @@ class DeliveryService:
             "verification": 110,
         }
         return order.get(stage, 999)
+
+    def _latest_entity(self, items: list) -> Any | None:
+        if not items:
+            return None
+        return sorted(
+            items,
+            key=lambda item: (
+                getattr(item, "updated_at", None)
+                or getattr(item, "created_at", None)
+                or datetime.min.replace(tzinfo=timezone.utc),
+                getattr(item, "id", 0),
+            ),
+            reverse=True,
+        )[0]
+
+    def _next_action(
+        self,
+        action_id: str,
+        label: str,
+        description: str,
+        method: str | None = None,
+        endpoint: str | None = None,
+        *,
+        capability: str = "read",
+        priority: str = "primary",
+        requires_human: bool = False,
+        reason: str | None = None,
+    ) -> dict:
+        return {
+            "id": action_id,
+            "label": label,
+            "description": description,
+            "method": method,
+            "endpoint": endpoint,
+            "capability": capability,
+            "priority": priority,
+            "requires_human": requires_human,
+            "reason": reason,
+        }
 
     async def _record_execution_control(
         self,

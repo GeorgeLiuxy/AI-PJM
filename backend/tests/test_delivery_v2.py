@@ -206,6 +206,31 @@ async def test_observability_trace_endpoint_returns_trace_timeline(client):
 
 
 @pytest.mark.asyncio
+async def test_demand_detail_returns_operator_next_actions(client):
+    demand_response = await client.post(
+        "/api/v2/demands",
+        json={"raw_input": "Add next action guidance.", "title": "Next action guidance"},
+    )
+    assert demand_response.status_code == 201
+    demand_id = demand_response.json()["data"]["id"]
+
+    detail_response = await client.get(f"/api/v2/demands/{demand_id}")
+    assert detail_response.status_code == 200
+    next_actions = detail_response.json()["data"]["next_actions"]
+    assert next_actions[0]["id"] == "generate_spec"
+    assert next_actions[0]["endpoint"] == f"/api/v2/demands/{demand_id}/spec"
+
+    spec_response = await client.post(f"/api/v2/demands/{demand_id}/spec", json={})
+    assert spec_response.status_code == 201
+
+    updated_detail_response = await client.get(f"/api/v2/demands/{demand_id}")
+    assert updated_detail_response.status_code == 200
+    updated_next_actions = updated_detail_response.json()["data"]["next_actions"]
+    assert updated_next_actions[0]["id"] == "collect_repo_context"
+    assert updated_next_actions[0]["endpoint"] == f"/api/v2/demands/{demand_id}/repo-context"
+
+
+@pytest.mark.asyncio
 async def test_github_webhook_endpoint_updates_existing_pull_request(client, db_session, monkeypatch):
     monkeypatch.setattr(settings, "github_webhook_secret", "github-webhook-secret")
     project = await auth_repository.create_project(

@@ -300,7 +300,20 @@ export interface DeliveryGateCheck {
   created_at: string;
 }
 
+export interface DeliveryNextAction {
+  id: string;
+  label: string;
+  description: string;
+  method: string | null;
+  endpoint: string | null;
+  capability: string;
+  priority: 'primary' | 'secondary' | 'blocked' | 'done';
+  requires_human: boolean;
+  reason: string | null;
+}
+
 export interface DeliveryDemandDetail extends DeliveryDemand {
+  next_actions: DeliveryNextAction[];
   spec_cards: DeliverySpecCard[];
   gate_checks: DeliveryGateCheck[];
   repo_contexts: DeliveryRepoContext[];

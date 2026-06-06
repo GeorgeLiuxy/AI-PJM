@@ -216,7 +216,7 @@ async def get_demand(
     demand = await delivery_service.get_demand_detail(db, demand_id)
     require_capability(principal, "read", demand.project_id)
     return success_response(
-        data=DemandDetailResponse.model_validate(demand).model_dump(),
+        data=_demand_detail_payload(demand),
         message="Success",
     )
 
@@ -238,7 +238,7 @@ async def record_manual_approval(
         actor_user_id=principal.user_id,
     )
     return success_response(
-        data=DemandDetailResponse.model_validate(demand).model_dump(),
+        data=_demand_detail_payload(demand),
         message="Manual approval recorded",
     )
 
@@ -867,6 +867,12 @@ def _resolve_create_project_id(principal: AuthPrincipal, requested_project_id: i
     if project_id is None:
         raise BadRequestException("A project is required before creating delivery work")
     return project_id
+
+
+def _demand_detail_payload(demand) -> dict:
+    payload = DemandDetailResponse.model_validate(demand).model_dump()
+    payload["next_actions"] = delivery_service.demand_next_actions(demand)
+    return payload
 
 
 async def _require_demand_permission(
