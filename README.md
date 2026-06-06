@@ -69,6 +69,7 @@ AI PJM 是一个 AI 辅助工程交付编排平台。它不是通用项目管理
 - [V2 后续执行路线图](docs/v2-execution-roadmap.md)
 - [生产级落地计划](docs/production-readiness-plan.md)
 - [AI PJM + OpenAI Symphony 融合方案](docs/symphony-integration-plan.md)
+- [目标环境验证清单](docs/target-environment-validation.md)
 - [V2 验证指南](docs/v2-verification-guide.md)
 - [V2 中文术语表](docs/v2-localization-glossary.md)
 

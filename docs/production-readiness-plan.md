@@ -649,6 +649,6 @@ AI 不允许直接决定：
 5. 做 S3/S4：用 Symphony 执行低风险任务，并增强真实 GitLab/GitHub MR。
 6. 做 S5：增强真实测试环境部署 Provider，补目标 CI/CD 平台深度状态轮询；重新部署、项目级环境配置 API、访问管理页最小入口、环境 JSON 兜底、日志证据和常见 CI/CD 状态语义归一化首版已完成。
 7. 做 S6：补目标生产容量基准和集中指标平台接入；备份恢复、过期队列恢复、历史 trace 回填、Alembic、Docker PostgreSQL 真库演练、trace id、容量数据准备脚本、只读性能烟测、异常失败率、Prometheus 文本指标出口、通用 webhook 告警转发和最小可观测性首版已完成。
-8. 增强高风险动作二次确认和任务级责任字段。
+8. 按 [目标环境验证清单](target-environment-validation.md) 执行真实试点联调，重点覆盖 Symphony、Dify/OpenAI、MR/PR、部署、容量和集中监控。
 
-这 8 项完成后，AI PJM 才具备小团队低风险任务试点价值。企业 SSO、复杂角色、审计报表平台化不作为试点前置条件。
+目标环境联调通过后，AI PJM 才具备小团队低风险任务试点价值。企业 SSO、复杂角色、审计报表平台化不作为试点前置条件。
