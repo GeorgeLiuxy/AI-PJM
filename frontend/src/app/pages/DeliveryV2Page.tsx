@@ -56,6 +56,7 @@ type TabKey =
   | 'queue'
   | 'incidents'
   | 'approvals'
+  | 'batch'
   | 'projects'
   | 'audit';
 
@@ -68,6 +69,7 @@ const detailTabKeys: TabKey[] = [
   'queue',
   'incidents',
   'approvals',
+  'batch',
   'projects',
   'audit',
 ];
@@ -138,6 +140,7 @@ const tabs: Array<{ key: TabKey; label: string; icon: typeof Activity }> = [
   { key: 'queue', label: '队列', icon: ClipboardList },
   { key: 'incidents', label: '失败', icon: AlertTriangle },
   { key: 'approvals', label: '审批', icon: ShieldCheck },
+  { key: 'batch', label: '批量', icon: ClipboardList },
   { key: 'projects', label: '项目', icon: GitBranch },
   { key: 'audit', label: '审计', icon: ShieldCheck },
 ];
@@ -178,6 +181,7 @@ export default function DeliveryV2Page() {
   const [allowedPaths, setAllowedPaths] = useState('');
   const [requiredChecks, setRequiredChecks] = useState('npm run build');
   const [demands, setDemands] = useState<DeliveryDemand[]>([]);
+  const [batchDemands, setBatchDemands] = useState<DeliveryDemand[]>([]);
   const [approvalDemands, setApprovalDemands] = useState<DeliveryDemand[]>([]);
   const [queueItems, setQueueItems] = useState<DeliveryExecutionQueueItem[]>([]);
   const [incidentItems, setIncidentItems] = useState<DeliveryExecutionQueueItem[]>([]);
@@ -188,6 +192,7 @@ export default function DeliveryV2Page() {
   const [projectOnboarding, setProjectOnboarding] = useState<ProjectOnboarding | null>(null);
   const [selectedDemandId, setSelectedDemandId] = useState<number | null>(null);
   const [listLoading, setListLoading] = useState(false);
+  const [batchLoading, setBatchLoading] = useState(false);
   const [approvalLoading, setApprovalLoading] = useState(false);
   const [queueLoading, setQueueLoading] = useState(false);
   const [incidentLoading, setIncidentLoading] = useState(false);
@@ -336,15 +341,18 @@ export default function DeliveryV2Page() {
     }
   };
 
-  const loadApprovalDemands = async () => {
+  const loadBatchDemands = async () => {
+    setBatchLoading(true);
     setApprovalLoading(true);
     try {
       const list = (await deliveryApi.listDemands({ limit: 100 })).data;
+      setBatchDemands(list);
       setApprovalDemands(list.filter(isApprovalCandidate));
     } catch (err) {
-      const message = err instanceof Error ? err.message : '加载待审批需求失败';
+      const message = err instanceof Error ? err.message : '加载批量需求失败';
       setError(localizeText(message));
     } finally {
+      setBatchLoading(false);
       setApprovalLoading(false);
     }
   };
@@ -477,7 +485,7 @@ export default function DeliveryV2Page() {
     const linkedDemandId = Number(searchParams.get('demand_id') || '');
     const linkedTab = parseTabKey(searchParams.get('tab')) || 'summary';
     void loadDemandList(Number.isFinite(linkedDemandId) && linkedDemandId > 0 ? linkedDemandId : undefined, linkedTab);
-    void loadApprovalDemands();
+    void loadBatchDemands();
     void loadExecutionQueue();
     void loadIncidents();
     void loadProjectSummaries();
@@ -598,7 +606,7 @@ export default function DeliveryV2Page() {
 
   const refreshCurrent = async () => {
     await loadDemandList(selectedDemandId ?? result.demand?.id, activeTab);
-    await loadApprovalDemands();
+    await loadBatchDemands();
     await loadExecutionQueue();
     await loadIncidents();
     await loadProjectSummaries();
@@ -1332,7 +1340,15 @@ export default function DeliveryV2Page() {
                 <ApprovalTab
                   items={approvalDemands}
                   loading={approvalLoading}
-                  onRefresh={() => void loadApprovalDemands()}
+                  onRefresh={() => void loadBatchDemands()}
+                  onOpenDemand={(demandId) => void loadDemandDetail(demandId, 'summary')}
+                />
+              )}
+              {activeTab === 'batch' && (
+                <BatchTaskTab
+                  items={batchDemands}
+                  loading={batchLoading}
+                  onRefresh={() => void loadBatchDemands()}
                   onOpenDemand={(demandId) => void loadDemandDetail(demandId, 'summary')}
                 />
               )}
@@ -2615,6 +2631,118 @@ function ApprovalTab({
             )}
           </tbody>
         </table>
+      </div>
+    </div>
+  );
+}
+
+function CompactStat({ label, value, loading }: { label: string; value: number; loading: boolean }) {
+  return (
+    <div className="rounded border border-slate-200 bg-white px-3 py-2">
+      <div className="text-xs text-slate-500">{label}</div>
+      <div className="mt-1 text-lg font-semibold text-slate-950">{loading ? '...' : value}</div>
+    </div>
+  );
+}
+
+function BatchTaskTab({
+  items,
+  loading,
+  onRefresh,
+  onOpenDemand,
+}: {
+  items: DeliveryDemand[];
+  loading: boolean;
+  onRefresh: () => void;
+  onOpenDemand: (demandId: number) => void;
+}) {
+  const highRiskCount = items.filter((item) => item.risk_level === 'L2' || item.risk_level === 'L3').length;
+  const blockedCount = items.filter((item) => item.status === 'blocked').length;
+  const approvalCount = items.filter(isApprovalCandidate).length;
+  const activeCount = items.filter((item) => !['completed', 'cancelled', 'rejected'].includes(item.status)).length;
+
+  return (
+    <div className="space-y-3">
+      <div className="grid gap-2 md:grid-cols-4">
+        <CompactStat label="最近需求" value={items.length} loading={loading} />
+        <CompactStat label="进行中" value={activeCount} loading={loading} />
+        <CompactStat label="阻塞" value={blockedCount} loading={loading} />
+        <CompactStat label="待审批" value={approvalCount || highRiskCount} loading={loading} />
+      </div>
+
+      <div className="overflow-hidden rounded border border-slate-200">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 px-3 py-2">
+          <div className="min-w-0">
+            <div className="text-sm font-medium text-slate-900">批量任务看板</div>
+            <div className="mt-0.5 text-xs text-slate-500">最近 100 条需求，按风险、状态和更新时间快速定位</div>
+          </div>
+          <button
+            type="button"
+            onClick={onRefresh}
+            disabled={loading}
+            className="inline-flex h-8 items-center gap-1.5 rounded border border-slate-200 bg-white px-2.5 text-sm text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+            刷新
+          </button>
+        </div>
+        <div className="max-h-[560px] overflow-auto">
+          <table className="w-full table-fixed text-left text-sm">
+            <thead className="bg-slate-50 text-xs font-medium uppercase text-slate-500">
+              <tr>
+                <th className="w-[12%] px-3 py-2">需求</th>
+                <th className="w-[16%] px-3 py-2">状态</th>
+                <th className="w-[38%] px-3 py-2">内容</th>
+                <th className="w-[18%] px-3 py-2">更新时间</th>
+                <th className="w-[16%] px-3 py-2">操作</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {items.length > 0 ? (
+                items.map((item) => (
+                  <tr key={item.id}>
+                    <td className="px-3 py-2 font-mono text-xs text-slate-700">#{item.id}</td>
+                    <td className="px-3 py-2">
+                      <div className="space-y-1">
+                        <StatusBadge value={item.status} />
+                        <StatusBadge value={item.risk_level || 'risk'} />
+                      </div>
+                    </td>
+                    <td className="px-3 py-2 text-slate-700">
+                      <div className="line-clamp-2 font-medium text-slate-900">
+                        {localizeText(item.title || item.raw_input || '未命名需求')}
+                      </div>
+                      <div className="mt-1 flex flex-wrap gap-2 text-xs text-slate-500">
+                        <span>{item.source_type}</span>
+                        {item.manual_approval_status ? <span>审批 {formatStatusLabel(item.manual_approval_status)}</span> : null}
+                        {item.confidence_score !== null && item.confidence_score !== undefined ? (
+                          <span>置信度 {Math.round(item.confidence_score * 100)}%</span>
+                        ) : null}
+                      </div>
+                    </td>
+                    <td className="px-3 py-2 text-slate-700">{formatDateTime(item.updated_at)}</td>
+                    <td className="px-3 py-2">
+                      <button
+                        type="button"
+                        onClick={() => onOpenDemand(item.id)}
+                        className="inline-flex h-8 items-center gap-1.5 rounded border border-slate-200 bg-white px-2.5 text-sm text-slate-700 hover:bg-slate-50"
+                      >
+                        <ExternalLink className="h-4 w-4" />
+                        打开
+                      </button>
+                    </td>
+                  </tr>
+                ))
+              ) : (
+                <tr>
+                  <td className="px-3 py-8 text-sm text-slate-400" colSpan={5}>
+                    {loading ? '正在加载批量任务' : '暂无批量任务数据'}
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );
