@@ -174,6 +174,20 @@ def test_database_restore_requires_explicit_confirmation(tmp_path):
         )
 
 
+def test_default_workspace_root_points_to_project_root(monkeypatch):
+    monkeypatch.setattr(settings, "workspace_root", "")
+
+    provider_root = LocalWorkflowProvider()._workspace_root()
+    executor_root = WorktreeChecksExecutor()._workspace_root()
+    service_root = DeliveryService()._configured_workspace_root()
+
+    assert provider_root == executor_root
+    assert service_root == provider_root
+    assert provider_root.name == "AI PJM"
+    assert (provider_root / "backend").is_dir()
+    assert (provider_root / "frontend").is_dir()
+
+
 def test_capacity_seed_safety_requires_confirmation(monkeypatch):
     with pytest.raises(BadRequestException, match="--confirm"):
         validate_safety(confirm=False, allow_production=False)

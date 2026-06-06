@@ -508,7 +508,7 @@ AI 不允许直接决定：
 实施内容：
 
 - 项目接入向导。
-- 配置健康检查。
+- 配置健康检查。（`GET /api/v2/observability/config-health` 首版已完成）
 - 当前任务下一步动作明确化。（`DemandDetailResponse.next_actions` 首版已完成）
 - 证据时间线。
 - 多项目看板。

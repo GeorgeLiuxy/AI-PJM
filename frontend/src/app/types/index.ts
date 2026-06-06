@@ -198,6 +198,22 @@ export interface DeliveryObservabilitySummary {
   alerts: DeliveryObservabilityAlert[];
 }
 
+export interface DeliveryConfigHealthCheck {
+  id: string;
+  category: string;
+  status: 'healthy' | 'warning' | 'critical';
+  title: string;
+  summary: string;
+  evidence: Record<string, unknown>;
+  next_action: string | null;
+}
+
+export interface DeliveryConfigHealth {
+  generated_at: string;
+  status: 'healthy' | 'warning' | 'critical';
+  checks: DeliveryConfigHealthCheck[];
+}
+
 export interface DeliveryAuditEvent {
   id: number;
   project_id: number | null;

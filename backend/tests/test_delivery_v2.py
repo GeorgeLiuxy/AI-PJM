@@ -186,6 +186,22 @@ async def test_observability_metrics_endpoint(client):
 
 
 @pytest.mark.asyncio
+async def test_config_health_endpoint_reports_readiness_checks(client):
+    response = await client.get("/api/v2/observability/config-health")
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    check_ids = {check["id"] for check in data["checks"]}
+
+    assert data["status"] in {"healthy", "warning", "critical"}
+    assert "database" in check_ids
+    assert "workspace_root" in check_ids
+    assert "git" in check_ids
+    assert "codex_execution" in check_ids
+    assert next(check for check in data["checks"] if check["id"] == "database")["status"] == "healthy"
+
+
+@pytest.mark.asyncio
 async def test_observability_trace_endpoint_returns_trace_timeline(client):
     demand_response = await client.post(
         "/api/v2/demands",

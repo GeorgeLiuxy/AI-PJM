@@ -5,12 +5,14 @@ import hashlib
 import hmac
 import json
 import re
+import shutil
 import subprocess
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Awaitable, Callable, TypeVar
 
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -540,6 +542,34 @@ class DeliveryService:
                 "top_alerts": alerts[:3],
             })
         return summaries
+
+    async def get_config_health(self, db: AsyncSession) -> dict:
+        checks: list[dict[str, Any]] = []
+        checks.append(await self._database_config_check(db))
+        checks.extend(
+            [
+                self._workspace_config_check(),
+                self._git_config_check(),
+                self._codex_config_check(),
+                self._secret_store_config_check(),
+                self._workflow_provider_config_check(),
+                self._merge_request_config_check(),
+                self._deployment_config_check(),
+                self._worker_script_config_check(),
+            ]
+        )
+
+        status_value = "healthy"
+        if any(check["status"] == "critical" for check in checks):
+            status_value = "critical"
+        elif any(check["status"] == "warning" for check in checks):
+            status_value = "warning"
+
+        return {
+            "generated_at": utc_now(),
+            "status": status_value,
+            "checks": checks,
+        }
 
     async def get_trace_detail(
         self,
@@ -3208,6 +3238,341 @@ class DeliveryService:
             "priority": priority,
             "requires_human": requires_human,
             "reason": reason,
+        }
+
+    async def _database_config_check(self, db: AsyncSession) -> dict[str, Any]:
+        try:
+            await db.execute(text("SELECT 1"))
+        except Exception as exc:  # pragma: no cover - defensive path depends on database failure mode
+            return self._config_check(
+                "database",
+                "database",
+                "critical",
+                "Database connection failed",
+                "Backend cannot query the configured database.",
+                evidence={
+                    "database_url_scheme": settings.database_url.split(":", 1)[0],
+                    "error": redact_text(str(exc))[:500],
+                },
+                next_action="Verify DATABASE_URL and run database migration before operating delivery tasks.",
+            )
+
+        return self._config_check(
+            "database",
+            "database",
+            "healthy",
+            "Database connection is ready",
+            "Backend can query the configured database.",
+            evidence={"database_url_scheme": settings.database_url.split(":", 1)[0]},
+        )
+
+    def _workspace_config_check(self) -> dict[str, Any]:
+        root = self._configured_workspace_root()
+        expected_paths = ["backend", "frontend", "docs"]
+        missing = [path for path in expected_paths if not (root / path).exists()]
+        if not root.exists():
+            return self._config_check(
+                "workspace_root",
+                "workspace",
+                "critical",
+                "Workspace root does not exist",
+                "Delivery cannot collect repository context or run checks without a valid workspace.",
+                evidence={"workspace_root": str(root), "configured": bool(settings.workspace_root.strip())},
+                next_action="Set WORKSPACE_ROOT to the AI PJM project root.",
+            )
+        if missing:
+            return self._config_check(
+                "workspace_root",
+                "workspace",
+                "warning",
+                "Workspace root is incomplete",
+                "Workspace exists but expected project directories are missing.",
+                evidence={
+                    "workspace_root": str(root),
+                    "missing": missing,
+                    "configured": bool(settings.workspace_root.strip()),
+                },
+                next_action="Point WORKSPACE_ROOT at the project root that contains backend, frontend, and docs.",
+            )
+        return self._config_check(
+            "workspace_root",
+            "workspace",
+            "healthy",
+            "Workspace root is ready",
+            "Workspace contains the expected project directories.",
+            evidence={"workspace_root": str(root), "configured": bool(settings.workspace_root.strip())},
+        )
+
+    def _git_config_check(self) -> dict[str, Any]:
+        root = self._configured_workspace_root()
+        git_version = self._command_output(["git", "--version"])
+        if not git_version:
+            return self._config_check(
+                "git",
+                "workspace",
+                "critical",
+                "Git is unavailable",
+                "Git is required for worktree isolation, changed-file detection, and MR/PR push.",
+                evidence={"workspace_root": str(root), "git_path": shutil.which("git")},
+                next_action="Install Git and make sure it is available on PATH.",
+            )
+
+        git_root = self._command_output(["git", "rev-parse", "--show-toplevel"], cwd=root)
+        if not git_root:
+            return self._config_check(
+                "git",
+                "workspace",
+                "warning",
+                "Workspace is not a Git repository",
+                "Local checks can run, but worktree isolation and remote push need a Git repository.",
+                evidence={"workspace_root": str(root), "git_version": git_version},
+                next_action="Run from a Git repository or set WORKSPACE_ROOT to the repository root.",
+            )
+
+        return self._config_check(
+            "git",
+            "workspace",
+            "healthy",
+            "Git is ready",
+            "Git is available and the workspace is inside a repository.",
+            evidence={"workspace_root": str(root), "git_root": git_root, "git_version": git_version},
+        )
+
+    def _codex_config_check(self) -> dict[str, Any]:
+        if not settings.execution_codex_enabled:
+            return self._config_check(
+                "codex_execution",
+                "execution",
+                "warning",
+                "Codex execution is disabled",
+                "The platform can still create task packages, but automated code execution will not run.",
+                evidence={"execution_codex_enabled": False},
+                next_action="Set EXECUTION_CODEX_ENABLED=true and configure EXECUTION_CODEX_COMMAND_TEMPLATE when ready.",
+            )
+        if not settings.execution_codex_command_template.strip():
+            return self._config_check(
+                "codex_execution",
+                "execution",
+                "critical",
+                "Codex command template is missing",
+                "Codex execution is enabled but has no command template.",
+                evidence={"execution_codex_enabled": True},
+                next_action="Set EXECUTION_CODEX_COMMAND_TEMPLATE to the command used to invoke Codex.",
+            )
+        return self._config_check(
+            "codex_execution",
+            "execution",
+            "healthy",
+            "Codex execution is configured",
+            "Codex execution is enabled and has a command template.",
+            evidence={
+                "execution_codex_enabled": True,
+                "has_preflight": bool(settings.execution_codex_preflight_command.strip()),
+                "timeout_seconds": settings.execution_codex_timeout_seconds,
+            },
+        )
+
+    def _secret_store_config_check(self) -> dict[str, Any]:
+        has_master_key = bool(settings.secret_store_master_key.strip())
+        if has_master_key:
+            return self._config_check(
+                "secret_store",
+                "secrets",
+                "healthy",
+                "SecretStore is writable",
+                "Project-scoped credentials can be encrypted and stored.",
+                evidence={"key_id": settings.secret_store_key_id, "environment": settings.environment},
+            )
+        status_value = "critical" if settings.environment == "production" else "warning"
+        return self._config_check(
+            "secret_store",
+            "secrets",
+            status_value,
+            "SecretStore master key is missing",
+            "Project-scoped credentials cannot be written without SECRET_STORE_MASTER_KEY.",
+            evidence={"key_id": settings.secret_store_key_id, "environment": settings.environment},
+            next_action="Set SECRET_STORE_MASTER_KEY before storing provider tokens.",
+        )
+
+    def _workflow_provider_config_check(self) -> dict[str, Any]:
+        provider = settings.ai_workflow_provider.strip().lower() or "local"
+        if provider == "local":
+            return self._config_check(
+                "workflow_provider",
+                "provider",
+                "healthy",
+                "Local workflow provider is active",
+                "Spec and impact drafts use deterministic local rules.",
+                evidence={"provider": provider},
+            )
+        if provider == "openai":
+            missing = []
+            if not settings.openai_api_base_url.strip():
+                missing.append("OPENAI_API_BASE_URL")
+            if not settings.openai_model.strip():
+                missing.append("OPENAI_MODEL")
+            if not settings.openai_api_key.strip() and not settings.openai_api_key_secret_name.strip():
+                missing.append("OPENAI_API_KEY or project secret")
+            return self._provider_config_result(provider, missing)
+        if provider == "dify":
+            missing = []
+            if not settings.dify_api_base_url.strip():
+                missing.append("DIFY_API_BASE_URL")
+            if not settings.dify_spec_workflow_id.strip():
+                missing.append("DIFY_SPEC_WORKFLOW_ID")
+            if not settings.dify_impact_workflow_id.strip():
+                missing.append("DIFY_IMPACT_WORKFLOW_ID")
+            if not settings.dify_api_key.strip() and not settings.dify_api_key_secret_name.strip():
+                missing.append("DIFY_API_KEY or project secret")
+            return self._provider_config_result(provider, missing)
+        return self._config_check(
+            "workflow_provider",
+            "provider",
+            "critical",
+            "Unknown workflow provider",
+            "AI_WORKFLOW_PROVIDER must be local, dify, or openai.",
+            evidence={"provider": provider},
+            next_action="Set AI_WORKFLOW_PROVIDER to local, dify, or openai.",
+        )
+
+    def _provider_config_result(self, provider: str, missing: list[str]) -> dict[str, Any]:
+        if missing:
+            return self._config_check(
+                "workflow_provider",
+                "provider",
+                "warning",
+                f"{provider} provider needs configuration",
+                "The provider is selected but some global settings are missing. Project secrets may still supply credentials.",
+                evidence={"provider": provider, "missing": missing},
+                next_action=f"Configure {', '.join(missing)} or set project-scoped provider secrets.",
+            )
+        return self._config_check(
+            "workflow_provider",
+            "provider",
+            "healthy",
+            f"{provider} provider is configured",
+            "Selected workflow provider has the required static settings.",
+            evidence={"provider": provider},
+        )
+
+    def _merge_request_config_check(self) -> dict[str, Any]:
+        gitlab_ready = bool(settings.gitlab_api_base_url.strip() and settings.gitlab_project_id.strip())
+        github_ready = bool(settings.github_api_base_url.strip() and settings.github_repository.strip())
+        if gitlab_ready or github_ready:
+            return self._config_check(
+                "merge_request_provider",
+                "merge_request",
+                "healthy",
+                "Remote MR/PR provider is configured",
+                "At least one remote merge request provider has static repository settings.",
+                evidence={"gitlab_ready": gitlab_ready, "github_ready": github_ready},
+            )
+        return self._config_check(
+            "merge_request_provider",
+            "merge_request",
+            "warning",
+            "Remote MR/PR provider is not configured",
+            "Local MR records can be created, but remote GitLab/GitHub creation needs repository settings.",
+            evidence={"gitlab_ready": gitlab_ready, "github_ready": github_ready},
+            next_action="Configure GitLab or GitHub repository settings before creating remote MR/PR.",
+        )
+
+    def _deployment_config_check(self) -> dict[str, Any]:
+        webhook_ready = bool(settings.deploy_webhook_url.strip())
+        environment_fallback_ready = bool(settings.deploy_environment_config_json.strip())
+        if webhook_ready or environment_fallback_ready:
+            return self._config_check(
+                "deployment_provider",
+                "deployment",
+                "healthy",
+                "Deployment configuration is present",
+                "Deployment has a webhook provider or fallback environment configuration.",
+                evidence={
+                    "webhook_ready": webhook_ready,
+                    "environment_fallback_ready": environment_fallback_ready,
+                },
+            )
+        return self._config_check(
+            "deployment_provider",
+            "deployment",
+            "warning",
+            "Deployment provider is not configured",
+            "Local deployment records can be created, but real test environment deployment needs configuration.",
+            evidence={
+                "webhook_ready": webhook_ready,
+                "environment_fallback_ready": environment_fallback_ready,
+            },
+            next_action="Configure DEPLOY_WEBHOOK_URL or project deployment environments.",
+        )
+
+    def _worker_script_config_check(self) -> dict[str, Any]:
+        root = self._configured_workspace_root()
+        script_paths = [
+            "scripts/start-symphony-worker.ps1",
+            "scripts/start-deployment-sync-worker.ps1",
+            "scripts/start-observability-alert-worker.ps1",
+        ]
+        missing = [path for path in script_paths if not (root / path).is_file()]
+        if missing:
+            return self._config_check(
+                "worker_scripts",
+                "operations",
+                "warning",
+                "Worker scripts are incomplete",
+                "Some local worker entrypoints are missing.",
+                evidence={"workspace_root": str(root), "missing": missing},
+                next_action="Restore the missing scripts before relying on local background workers.",
+            )
+        return self._config_check(
+            "worker_scripts",
+            "operations",
+            "healthy",
+            "Worker scripts are available",
+            "Local worker entrypoints are present for execution, deployment sync, and observability alerts.",
+            evidence={"workspace_root": str(root), "scripts": script_paths},
+        )
+
+    def _configured_workspace_root(self) -> Path:
+        if settings.workspace_root.strip():
+            return Path(settings.workspace_root).expanduser().resolve()
+        return Path(__file__).resolve().parents[4]
+
+    def _command_output(self, args: list[str], cwd: Path | None = None, timeout: int = 3) -> str | None:
+        try:
+            completed = subprocess.run(
+                args,
+                cwd=str(cwd) if cwd else None,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+        if completed.returncode != 0:
+            return None
+        return completed.stdout.strip() or None
+
+    def _config_check(
+        self,
+        check_id: str,
+        category: str,
+        status: str,
+        title: str,
+        summary: str,
+        *,
+        evidence: dict[str, Any] | None = None,
+        next_action: str | None = None,
+    ) -> dict[str, Any]:
+        safe_evidence = redact_value(evidence or {})
+        return {
+            "id": check_id,
+            "category": category,
+            "status": status,
+            "title": title,
+            "summary": summary,
+            "evidence": safe_evidence if isinstance(safe_evidence, dict) else {},
+            "next_action": next_action,
         }
 
     async def _record_execution_control(

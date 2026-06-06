@@ -374,6 +374,26 @@ class ProjectObservabilitySummaryResponse(BaseModel):
     top_alerts: list[ObservabilityAlertResponse] = Field(default_factory=list)
 
 
+class ConfigHealthCheckResponse(BaseModel):
+    """One configuration readiness check."""
+
+    id: str
+    category: str
+    status: Literal["healthy", "warning", "critical"]
+    title: str
+    summary: str
+    evidence: dict[str, Any] = Field(default_factory=dict)
+    next_action: Optional[str] = None
+
+
+class ConfigHealthResponse(BaseModel):
+    """Configuration readiness report for local delivery operations."""
+
+    generated_at: datetime
+    status: Literal["healthy", "warning", "critical"]
+    checks: list[ConfigHealthCheckResponse] = Field(default_factory=list)
+
+
 class TraceTimelineEventResponse(BaseModel):
     """One timeline entry in a trace lookup."""
 

@@ -17,6 +17,7 @@ from app.modules.delivery.schemas import (
     CodingTaskCreateRequest,
     CodingTaskDetailResponse,
     CodingTaskResponse,
+    ConfigHealthResponse,
     DemandCreateRequest,
     DemandDetailResponse,
     DemandResponse,
@@ -140,6 +141,19 @@ async def get_observability_metrics(
     return PlainTextResponse(
         _prometheus_observability_metrics(summary),
         media_type="text/plain; version=0.0.4; charset=utf-8",
+    )
+
+
+@router.get("/observability/config-health", response_model=dict)
+async def get_config_health(
+    db: AsyncSession = Depends(get_db),
+    principal: AuthPrincipal = Depends(get_current_principal),
+):
+    require_capability(principal, "read")
+    health = await delivery_service.get_config_health(db)
+    return success_response(
+        data=ConfigHealthResponse.model_validate(health).model_dump(),
+        message="Success",
     )
 
 

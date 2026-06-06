@@ -10,6 +10,7 @@ import type {
   AuthUser,
   DeliveryAuditEvent,
   DeliveryCodingTask,
+  DeliveryConfigHealth,
   DeliveryDemand,
   DeliveryDemandDetail,
   DeliveryDeployRecord,
@@ -220,6 +221,7 @@ export const authApi = {
 
 export const deliveryApi = {
   getObservabilitySummary: () => fetchAPI<DeliveryObservabilitySummary>('/api/v2/observability/summary'),
+  getConfigHealth: () => fetchAPI<DeliveryConfigHealth>('/api/v2/observability/config-health'),
   getProjectDeploymentEnvironments: (projectId: number) => {
     return fetchAPI<ProjectDeploymentEnvironmentConfig>(`/api/v2/projects/${projectId}/deployment-environments`);
   },
