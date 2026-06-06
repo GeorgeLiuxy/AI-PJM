@@ -27,6 +27,7 @@ import { canOperate, canReview } from '../lib/permissions';
 import type {
   DeliveryAuditEvent,
   DeliveryCodingTask,
+  DeliveryConfigHealth,
   DeliveryDemand,
   DeliveryDemandDetail,
   DeliveryDeployRecord,
@@ -38,6 +39,7 @@ import type {
   DeliveryRepoContext,
   DeliverySpecCard,
   DeliveryVerificationRecord,
+  ProjectOnboarding,
 } from '../types';
 import type { AppOutletContext } from '../Root';
 
@@ -153,10 +155,14 @@ export default function DeliveryV2Page() {
   const [queueItems, setQueueItems] = useState<DeliveryExecutionQueueItem[]>([]);
   const [auditEvents, setAuditEvents] = useState<DeliveryAuditEvent[]>([]);
   const [observability, setObservability] = useState<DeliveryObservabilitySummary | null>(null);
+  const [configHealth, setConfigHealth] = useState<DeliveryConfigHealth | null>(null);
+  const [projectOnboarding, setProjectOnboarding] = useState<ProjectOnboarding | null>(null);
   const [selectedDemandId, setSelectedDemandId] = useState<number | null>(null);
   const [listLoading, setListLoading] = useState(false);
   const [queueLoading, setQueueLoading] = useState(false);
   const [observabilityLoading, setObservabilityLoading] = useState(false);
+  const [configHealthLoading, setConfigHealthLoading] = useState(false);
+  const [projectOnboardingLoading, setProjectOnboardingLoading] = useState(false);
   const [auditLoading, setAuditLoading] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
   const [steps, setSteps] = useState<Record<StepKey, StepState>>(initialSteps);
@@ -324,6 +330,37 @@ export default function DeliveryV2Page() {
     }
   };
 
+  const loadConfigHealth = async () => {
+    setConfigHealthLoading(true);
+    try {
+      const health = (await deliveryApi.getConfigHealth()).data;
+      setConfigHealth(health);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '加载配置健康检查失败';
+      setError(localizeText(message));
+    } finally {
+      setConfigHealthLoading(false);
+    }
+  };
+
+  const loadProjectOnboarding = async (projectId?: number | null) => {
+    if (!projectId) {
+      setProjectOnboarding(null);
+      return;
+    }
+
+    setProjectOnboardingLoading(true);
+    try {
+      const onboarding = (await deliveryApi.getProjectOnboarding(projectId)).data;
+      setProjectOnboarding(onboarding);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '加载项目接入检查失败';
+      setError(localizeText(message));
+    } finally {
+      setProjectOnboardingLoading(false);
+    }
+  };
+
   const auditQueryParams = (filters: AuditFilterState = auditFilters) => ({
     limit: 50,
     query: filters.query.trim() || undefined,
@@ -371,10 +408,17 @@ export default function DeliveryV2Page() {
     void loadDemandList(Number.isFinite(linkedDemandId) && linkedDemandId > 0 ? linkedDemandId : undefined, linkedTab);
     void loadExecutionQueue();
     void loadObservability();
+    void loadConfigHealth();
     void loadAuditEvents();
     // The initial load intentionally runs once; user actions refresh the list explicitly.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    void loadProjectOnboarding(activeProjectId);
+    // Project readiness should follow the active demand/project context.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeProjectId]);
 
   const reset = () => {
     setRawInput(defaultInput);
@@ -482,6 +526,8 @@ export default function DeliveryV2Page() {
     await loadDemandList(selectedDemandId ?? result.demand?.id, activeTab);
     await loadExecutionQueue();
     await loadObservability();
+    await loadConfigHealth();
+    await loadProjectOnboarding(activeProjectId);
     await loadAuditEvents();
   };
 
@@ -1055,6 +1101,16 @@ export default function DeliveryV2Page() {
             loading={observabilityLoading}
             onRefresh={() => void loadObservability()}
           />
+          <ReadinessBanner
+            configHealth={configHealth}
+            configLoading={configHealthLoading}
+            onboarding={projectOnboarding}
+            onboardingLoading={projectOnboardingLoading}
+            onRefresh={() => {
+              void loadConfigHealth();
+              void loadProjectOnboarding(activeProjectId);
+            }}
+          />
 
           <section className="mb-2 grid min-w-0 gap-2 lg:grid-cols-[minmax(0,1fr)_320px]">
             <div className="min-w-0 rounded border border-slate-200 bg-white">
@@ -1271,6 +1327,99 @@ function ObservabilityBanner({
           ))}
         </div>
       ) : null}
+    </section>
+  );
+}
+
+function ReadinessBanner({
+  configHealth,
+  configLoading,
+  onboarding,
+  onboardingLoading,
+  onRefresh,
+}: {
+  configHealth: DeliveryConfigHealth | null;
+  configLoading: boolean;
+  onboarding: ProjectOnboarding | null;
+  onboardingLoading: boolean;
+  onRefresh: () => void;
+}) {
+  const configIssues = configHealth?.checks.filter((check) => check.status !== 'healthy') || [];
+  const onboardingIssues = onboarding?.steps.filter((step) => step.status !== 'done') || [];
+  const configPassed = configHealth ? configHealth.checks.length - configIssues.length : 0;
+  const configTotal = configHealth?.checks.length || 0;
+  const configPrimaryIssue = configIssues[0];
+  const onboardingPrimaryIssue = onboardingIssues[0];
+  const onboardingTotal = onboarding?.steps.length || 0;
+  const onboardingDone = onboarding ? onboarding.steps.length - onboardingIssues.length : 0;
+
+  return (
+    <section className="mb-2 grid min-w-0 gap-2 lg:grid-cols-2">
+      <div className="min-w-0 rounded border border-slate-200 bg-white px-3 py-2">
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex min-w-0 items-start gap-2">
+            <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded bg-slate-100 text-slate-700">
+              <ShieldCheck className="h-4 w-4" />
+            </div>
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2 text-sm font-medium text-slate-950">
+                <span>系统配置</span>
+                <StatusBadge
+                  value={configLoading ? '加载中' : formatObservabilityStatus(configHealth?.status || 'healthy')}
+                />
+                {configTotal > 0 ? <span className="text-xs text-slate-500">{configPassed}/{configTotal} 项通过</span> : null}
+              </div>
+              <p className="mt-1 line-clamp-2 text-xs leading-5 text-slate-600">
+                {configLoading
+                  ? '正在检查数据库、工作区、执行器和外部提供方配置。'
+                  : configPrimaryIssue?.summary || '关键运行配置已通过检查，可以继续交付链路。'}
+              </p>
+              {configPrimaryIssue?.next_action ? (
+                <p className="mt-1 line-clamp-1 text-xs font-medium text-slate-800">
+                  下一步：{configPrimaryIssue.next_action}
+                </p>
+              ) : null}
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onRefresh}
+            disabled={configLoading || onboardingLoading}
+            className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded border border-slate-200 bg-white px-2 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${configLoading || onboardingLoading ? 'animate-spin' : ''}`} />
+            重查
+          </button>
+        </div>
+      </div>
+
+      <div className="min-w-0 rounded border border-slate-200 bg-white px-3 py-2">
+        <div className="flex min-w-0 items-start gap-2">
+          <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded bg-blue-50 text-blue-700">
+            <ClipboardList className="h-4 w-4" />
+          </div>
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2 text-sm font-medium text-slate-950">
+              <span>项目接入</span>
+              <StatusBadge
+                value={onboardingLoading ? '加载中' : formatProjectOnboardingStatus(onboarding?.status || 'blocked')}
+              />
+              {onboarding ? <span className="text-xs text-slate-500">{onboarding.completion_percent}% 完成</span> : null}
+              {onboardingTotal > 0 ? <span className="text-xs text-slate-500">{onboardingDone}/{onboardingTotal} 项就绪</span> : null}
+            </div>
+            <p className="mt-1 line-clamp-2 text-xs leading-5 text-slate-600">
+              {onboardingLoading
+                ? '正在检查仓库、部署环境、凭证、执行器和评审配置。'
+                : onboardingPrimaryIssue?.summary || '当前项目已满足最小交付接入要求。'}
+            </p>
+            {onboardingPrimaryIssue?.next_action ? (
+              <p className="mt-1 line-clamp-1 text-xs font-medium text-slate-800">
+                下一步：{onboardingPrimaryIssue.next_action}
+              </p>
+            ) : null}
+          </div>
+        </div>
+      </div>
     </section>
   );
 }
@@ -2657,6 +2806,15 @@ function formatObservabilityStatus(value: string): string {
     healthy: '正常',
     warning: '预警',
     critical: '严重',
+  };
+  return labels[value] || value;
+}
+
+function formatProjectOnboardingStatus(value: string): string {
+  const labels: Record<string, string> = {
+    ready: '接入完成',
+    needs_attention: '待完善',
+    blocked: '阻塞',
   };
   return labels[value] || value;
 }

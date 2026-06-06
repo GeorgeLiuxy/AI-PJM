@@ -481,7 +481,7 @@ AI 不允许直接决定：
 
 目标：让生产问题可发现、可定位、可恢复。
 
-当前状态：最小可观测性首版已完成。后端提供 `GET /api/v2/observability/summary`，按项目权限汇总 worker lease 过期、执行队列积压、凭证过期/禁用/即将过期、测试部署失败和近期执行失败率异常告警；`GET /api/v2/observability/projects` 已提供项目维度健康摘要，返回项目状态、告警数、关键指标和前三条告警；`GET /api/v2/observability/metrics` 已提供 Prometheus 0.0.4 文本指标出口，复用 summary 统计口径输出队列、worker、部署、凭证、近期失败率和告警计数。`scripts/observability_alert_worker.py` 可轮询 summary API，并在 warning/critical 时转发到外部 webhook，项目根目录的 `scripts/start-observability-alert-worker.ps1` 和 `scripts/stop-observability-alert-worker.ps1` 已提供本地启停入口，`scripts/start-dev.ps1 -WithObservabilityAlert` 可随开发环境联动启动。交付工作台顶部展示运行告警、核心计数和前两条告警摘要。需求、Spec、门禁、上下文、影响分析、任务、执行、日志、MR、部署和验收已具备同一 `trace_id` 首版贯穿能力；`scripts/backfill_delivery_trace_ids.py` 可 dry-run 或正式回填历史记录。后端 `LOG_FORMAT=json` 已提供 JSON Lines 结构化应用日志开关，可输出 timestamp、level、logger、message、位置和 extra 字段。集中指标平台接入仍待生产环境完成。
+当前状态：最小可观测性首版已完成。后端提供 `GET /api/v2/observability/summary`，按项目权限汇总 worker lease 过期、执行队列积压、凭证过期/禁用/即将过期、测试部署失败和近期执行失败率异常告警；`GET /api/v2/observability/projects` 已提供项目维度健康摘要，返回项目状态、告警数、关键指标和前三条告警；`GET /api/v2/observability/metrics` 已提供 Prometheus 0.0.4 文本指标出口，复用 summary 统计口径输出队列、worker、部署、凭证、近期失败率和告警计数。`scripts/observability_alert_worker.py` 可轮询 summary API，并在 warning/critical 时转发到外部 webhook，项目根目录的 `scripts/start-observability-alert-worker.ps1` 和 `scripts/stop-observability-alert-worker.ps1` 已提供本地启停入口，`scripts/start-dev.ps1 -WithObservabilityAlert` 可随开发环境联动启动。交付工作台顶部展示运行告警、核心计数、前两条告警摘要、系统配置健康和当前项目接入状态。需求、Spec、门禁、上下文、影响分析、任务、执行、日志、MR、部署和验收已具备同一 `trace_id` 首版贯穿能力；`scripts/backfill_delivery_trace_ids.py` 可 dry-run 或正式回填历史记录。后端 `LOG_FORMAT=json` 已提供 JSON Lines 结构化应用日志开关，可输出 timestamp、level、logger、message、位置和 extra 字段。集中指标平台接入仍待生产环境完成。
 
 实施内容：
 
@@ -489,13 +489,13 @@ AI 不允许直接决定：
 - trace id 贯穿需求、任务、执行、MR、部署、验收。（新记录首版、历史记录回填脚本和 `GET /api/v2/observability/traces/{trace_id}` 只读时间线查询已完成）
 - 指标：任务数量、成功率、失败率、平均耗时、队列积压、自动修复率。（队列、部署、凭证、worker、近期执行失败率和 Prometheus 文本出口首版已完成）
 - 告警：worker 停止、队列积压、凭证失效、部署失败、异常失败率。（worker lease、队列积压、凭证、部署失败、近期执行失败率和本地告警 worker 启停脚本首版已完成）
-- 管理后台查看系统健康。（工作台告警条、项目健康摘要 API、Prometheus 文本指标出口和通用 webhook 转发脚本首版已完成，完整管理后台页面待增强）
+- 管理后台查看系统健康。（工作台告警条、配置健康/项目接入可见化、项目健康摘要 API、Prometheus 文本指标出口和通用 webhook 转发脚本首版已完成，完整管理后台页面待增强）
 
 验收标准：
 
 - 任一失败任务可通过 trace id 找到完整日志。（平台内 trace 时间线查询已覆盖需求、Spec、门禁、上下文、影响分析、任务、执行日志、MR/PR、部署和验收；集中日志平台接入待增强）
 - 队列积压和 worker 异常能告警。（summary API、工作台摘要和本地告警 worker 启停脚本首版已完成）
-- 管理员能看到各项目健康状态。（项目健康摘要 API、工作台首版、Prometheus 文本指标出口和通用 webhook 告警转发已完成，完整管理后台页面待增强）
+- 管理员能看到各项目健康状态。（项目健康摘要 API、工作台告警和就绪状态首版、Prometheus 文本指标出口和通用 webhook 告警转发已完成，完整管理后台页面待增强）
 
 不做风险：
 
@@ -507,8 +507,8 @@ AI 不允许直接决定：
 
 实施内容：
 
-- 项目接入向导。（`GET /api/v2/projects/{project_id}/onboarding` 首版已完成）
-- 配置健康检查。（`GET /api/v2/observability/config-health` 首版已完成）
+- 项目接入向导。（`GET /api/v2/projects/{project_id}/onboarding` 和工作台就绪展示首版已完成）
+- 配置健康检查。（`GET /api/v2/observability/config-health` 和工作台就绪展示首版已完成）
 - 当前任务下一步动作明确化。（`DemandDetailResponse.next_actions` 首版已完成）
 - 证据时间线。
 - 多项目看板。
@@ -518,7 +518,7 @@ AI 不允许直接决定：
 
 验收标准：
 
-- 新项目接入不需要读代码。（项目 onboarding checklist API 首版已完成）
+- 新项目接入不需要读代码。（项目 onboarding checklist API 和工作台摘要首版已完成）
 - 操作者打开页面能看到下一步最应该做什么。（后端 detail 已返回结构化 next actions，工作台下一步卡片已优先展示后端建议）
 - 管理者能看到交付吞吐、失败原因和瓶颈。
 
