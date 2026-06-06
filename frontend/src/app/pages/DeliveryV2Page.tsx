@@ -41,14 +41,15 @@ import type {
   DeliveryTraceDetail,
   DeliveryVerificationRecord,
   ProjectOnboarding,
+  ProjectObservabilitySummary,
 } from '../types';
 import type { AppOutletContext } from '../Root';
 
 type StepKey = 'demand' | 'spec' | 'repo' | 'impact' | 'task' | 'run' | 'mr' | 'deploy' | 'verify';
 type StepState = 'idle' | 'running' | 'done' | 'failed';
-type TabKey = 'summary' | 'spec' | 'execution' | 'taskPackage' | 'evidence' | 'queue' | 'audit';
+type TabKey = 'summary' | 'spec' | 'execution' | 'taskPackage' | 'evidence' | 'queue' | 'projects' | 'audit';
 
-const detailTabKeys: TabKey[] = ['summary', 'spec', 'execution', 'taskPackage', 'evidence', 'queue', 'audit'];
+const detailTabKeys: TabKey[] = ['summary', 'spec', 'execution', 'taskPackage', 'evidence', 'queue', 'projects', 'audit'];
 
 type DeliveryResult = {
   demand?: DeliveryDemand;
@@ -114,6 +115,7 @@ const tabs: Array<{ key: TabKey; label: string; icon: typeof Activity }> = [
   { key: 'taskPackage', label: '任务包', icon: Code2 },
   { key: 'evidence', label: '证据', icon: FileCheck2 },
   { key: 'queue', label: '队列', icon: ClipboardList },
+  { key: 'projects', label: '项目', icon: GitBranch },
   { key: 'audit', label: '审计', icon: ShieldCheck },
 ];
 
@@ -154,6 +156,7 @@ export default function DeliveryV2Page() {
   const [requiredChecks, setRequiredChecks] = useState('npm run build');
   const [demands, setDemands] = useState<DeliveryDemand[]>([]);
   const [queueItems, setQueueItems] = useState<DeliveryExecutionQueueItem[]>([]);
+  const [projectSummaries, setProjectSummaries] = useState<ProjectObservabilitySummary[]>([]);
   const [auditEvents, setAuditEvents] = useState<DeliveryAuditEvent[]>([]);
   const [observability, setObservability] = useState<DeliveryObservabilitySummary | null>(null);
   const [configHealth, setConfigHealth] = useState<DeliveryConfigHealth | null>(null);
@@ -161,6 +164,7 @@ export default function DeliveryV2Page() {
   const [selectedDemandId, setSelectedDemandId] = useState<number | null>(null);
   const [listLoading, setListLoading] = useState(false);
   const [queueLoading, setQueueLoading] = useState(false);
+  const [projectSummariesLoading, setProjectSummariesLoading] = useState(false);
   const [observabilityLoading, setObservabilityLoading] = useState(false);
   const [configHealthLoading, setConfigHealthLoading] = useState(false);
   const [projectOnboardingLoading, setProjectOnboardingLoading] = useState(false);
@@ -318,6 +322,19 @@ export default function DeliveryV2Page() {
     }
   };
 
+  const loadProjectSummaries = async () => {
+    setProjectSummariesLoading(true);
+    try {
+      const summaries = (await deliveryApi.getProjectObservabilitySummaries({ limit: 50 })).data;
+      setProjectSummaries(summaries);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '加载项目健康摘要失败';
+      setError(localizeText(message));
+    } finally {
+      setProjectSummariesLoading(false);
+    }
+  };
+
   const loadObservability = async () => {
     setObservabilityLoading(true);
     try {
@@ -408,6 +425,7 @@ export default function DeliveryV2Page() {
     const linkedTab = parseTabKey(searchParams.get('tab')) || 'summary';
     void loadDemandList(Number.isFinite(linkedDemandId) && linkedDemandId > 0 ? linkedDemandId : undefined, linkedTab);
     void loadExecutionQueue();
+    void loadProjectSummaries();
     void loadObservability();
     void loadConfigHealth();
     void loadAuditEvents();
@@ -526,6 +544,7 @@ export default function DeliveryV2Page() {
   const refreshCurrent = async () => {
     await loadDemandList(selectedDemandId ?? result.demand?.id, activeTab);
     await loadExecutionQueue();
+    await loadProjectSummaries();
     await loadObservability();
     await loadConfigHealth();
     await loadProjectOnboarding(activeProjectId);
@@ -1244,6 +1263,13 @@ export default function DeliveryV2Page() {
               {activeTab === 'taskPackage' && <TaskPackageTab result={result} />}
               {activeTab === 'evidence' && <EvidenceTab result={result} />}
               {activeTab === 'queue' && <QueueTab items={queueItems} loading={queueLoading} />}
+              {activeTab === 'projects' && (
+                <ProjectHealthTab
+                  items={projectSummaries}
+                  loading={projectSummariesLoading}
+                  onRefresh={() => void loadProjectSummaries()}
+                />
+              )}
               {activeTab === 'audit' && (
                 <AuditTab
                   events={auditEvents}
@@ -2334,6 +2360,107 @@ function QueueTab({ items, loading }: { items: DeliveryExecutionQueueItem[]; loa
   );
 }
 
+function ProjectHealthTab({
+  items,
+  loading,
+  onRefresh,
+}: {
+  items: ProjectObservabilitySummary[];
+  loading: boolean;
+  onRefresh: () => void;
+}) {
+  return (
+    <div className="overflow-hidden rounded border border-slate-200">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 px-3 py-2">
+        <div className="min-w-0">
+          <div className="text-sm font-medium text-slate-900">项目健康</div>
+          <div className="mt-0.5 text-xs text-slate-500">按项目汇总队列、执行、部署、凭证和关键告警</div>
+        </div>
+        <div className="flex items-center gap-2">
+          <StatusBadge value={loading ? 'loading' : `${items.length} 个项目`} />
+          <button
+            type="button"
+            onClick={onRefresh}
+            disabled={loading}
+            className="inline-flex h-8 items-center gap-1.5 rounded border border-slate-200 bg-white px-2.5 text-sm text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+            刷新
+          </button>
+        </div>
+      </div>
+      <div className="max-h-[560px] overflow-auto">
+        <table className="w-full table-fixed text-left text-sm">
+          <thead className="bg-slate-50 text-xs font-medium uppercase text-slate-500">
+            <tr>
+              <th className="w-[24%] px-3 py-2">项目</th>
+              <th className="w-[12%] px-3 py-2">状态</th>
+              <th className="w-[14%] px-3 py-2">告警</th>
+              <th className="w-[22%] px-3 py-2">运行指标</th>
+              <th className="w-[28%] px-3 py-2">关键问题</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {items.length > 0 ? (
+              items.map((item) => (
+                <tr key={item.project_id}>
+                  <td className="px-3 py-2">
+                    <div className="break-words font-medium text-slate-900">{item.project_name}</div>
+                    <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-500">
+                      <span className="font-mono">{item.project_key}</span>
+                      <span>更新 {formatDateTime(item.generated_at)}</span>
+                    </div>
+                  </td>
+                  <td className="px-3 py-2">
+                    <StatusBadge value={item.status} />
+                  </td>
+                  <td className="px-3 py-2 text-slate-700">
+                    <div>{item.alert_count} 条</div>
+                    <div className="mt-1 text-xs text-slate-500">
+                      严重 {item.critical_alerts} / 预警 {item.warning_alerts}
+                    </div>
+                  </td>
+                  <td className="px-3 py-2 text-xs text-slate-700">
+                    <div className="grid grid-cols-2 gap-x-3 gap-y-1">
+                      <span>排队 {metricValue(item.metrics, 'queued_runs')}</span>
+                      <span>运行 {metricValue(item.metrics, 'running_runs')}</span>
+                      <span>失败部署 {metricValue(item.metrics, 'failed_deployments')}</span>
+                      <span>异常凭证 {metricValue(item.metrics, 'unhealthy_secrets')}</span>
+                    </div>
+                  </td>
+                  <td className="px-3 py-2 text-slate-700">
+                    {item.top_alerts.length > 0 ? (
+                      <div className="space-y-1">
+                        {item.top_alerts.slice(0, 2).map((alert) => (
+                          <div key={alert.id} className="min-w-0">
+                            <div className="flex min-w-0 items-center gap-2">
+                              <StatusBadge value={alert.severity} />
+                              <span className="truncate text-xs font-medium text-slate-800">{alert.title}</span>
+                            </div>
+                            <div className="mt-0.5 line-clamp-1 text-xs text-slate-500">{alert.summary}</div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <span className="text-sm text-slate-400">暂无关键告警</span>
+                    )}
+                  </td>
+                </tr>
+              ))
+            ) : (
+              <tr>
+                <td className="px-3 py-8 text-sm text-slate-400" colSpan={5}>
+                  {loading ? '正在加载项目健康摘要' : '暂无项目健康数据'}
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 function AuditTab({
   events,
   loading,
@@ -2526,17 +2653,22 @@ function StatusBadge({ value }: { value?: string | number | null }) {
   const label = formatStatusLabel(rawLabel);
   const tone = rawLabel.includes('manual') || rawLabel.includes('blocked') || rawLabel.includes('failed')
     ? 'bg-amber-50 text-amber-700 border-amber-200'
-    : rawLabel.includes('ready') ||
-        rawLabel.includes('approved') ||
-        rawLabel.includes('queued') ||
-        rawLabel.includes('succeeded') ||
-        rawLabel.includes('completed') ||
-        rawLabel.includes('deployed') ||
-        rawLabel.includes('passed')
-      ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-      : rawLabel.includes('running') || rawLabel.includes('loading')
-        ? 'bg-blue-50 text-blue-700 border-blue-200'
-        : 'bg-slate-50 text-slate-700 border-slate-200';
+    : rawLabel.includes('critical') || rawLabel.includes('error')
+      ? 'bg-rose-50 text-rose-700 border-rose-200'
+      : rawLabel.includes('warning')
+        ? 'bg-amber-50 text-amber-700 border-amber-200'
+        : rawLabel.includes('healthy') ||
+            rawLabel.includes('ready') ||
+            rawLabel.includes('approved') ||
+            rawLabel.includes('queued') ||
+            rawLabel.includes('succeeded') ||
+            rawLabel.includes('completed') ||
+            rawLabel.includes('deployed') ||
+            rawLabel.includes('passed')
+          ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+          : rawLabel.includes('running') || rawLabel.includes('loading')
+            ? 'bg-blue-50 text-blue-700 border-blue-200'
+            : 'bg-slate-50 text-slate-700 border-slate-200';
 
   return (
     <span className={`inline-flex max-w-[11rem] shrink-0 items-center rounded border px-2 py-0.5 text-xs font-medium ${tone}`}>
@@ -2904,6 +3036,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object';
 }
 
+function metricValue(metrics: Record<string, number>, key: string): number {
+  return Number(metrics[key] || 0);
+}
+
 function formatStatusLabel(value?: string | number | null): string {
   if (value === undefined || value === null || value === '') {
     return '无内容';
@@ -2943,7 +3079,9 @@ function formatStatusLabel(value?: string | number | null): string {
     succeeded: '成功',
     passed: '通过',
     rejected: '已拒绝',
-    warning: '警告',
+    healthy: '正常',
+    warning: '预警',
+    critical: '严重',
     error: '错误',
     risk: '风险',
     unknown: '未知',

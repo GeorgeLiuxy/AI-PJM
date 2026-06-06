@@ -511,7 +511,7 @@ AI 不允许直接决定：
 - 配置健康检查。（`GET /api/v2/observability/config-health` 和工作台就绪展示首版已完成）
 - 当前任务下一步动作明确化。（`DemandDetailResponse.next_actions` 首版已完成）
 - 证据时间线。（`GET /api/v2/observability/traces/{trace_id}` 和工作台证据页签首版已完成）
-- 多项目看板。
+- 多项目看板。（`GET /api/v2/observability/projects` 和工作台“项目”页签首版已完成）
 - 批量任务看板。
 - 高风险任务审批台。
 - 失败任务处理台。
@@ -520,7 +520,7 @@ AI 不允许直接决定：
 
 - 新项目接入不需要读代码。（项目 onboarding checklist API 和工作台摘要首版已完成）
 - 操作者打开页面能看到下一步最应该做什么。（后端 detail 已返回结构化 next actions，工作台下一步卡片已优先展示后端建议）
-- 管理者能看到交付吞吐、失败原因和瓶颈。
+- 管理者能看到交付吞吐、失败原因和瓶颈。（项目健康摘要 API、Prometheus 指标和工作台“项目”页签首版已完成，生产集中看板待目标环境接入）
 
 不做风险：
 

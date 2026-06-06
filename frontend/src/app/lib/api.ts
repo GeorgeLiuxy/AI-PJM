@@ -25,6 +25,7 @@ import type {
   DeliveryVerificationRecord,
   ProjectDeploymentEnvironmentConfig,
   ProjectOnboarding,
+  ProjectObservabilitySummary,
   SecretRecord,
 } from '../types';
 
@@ -223,6 +224,9 @@ export const authApi = {
 
 export const deliveryApi = {
   getObservabilitySummary: () => fetchAPI<DeliveryObservabilitySummary>('/api/v2/observability/summary'),
+  getProjectObservabilitySummaries: (params: { limit?: number; offset?: number } = {}) => {
+    return fetchAPI<ProjectObservabilitySummary[]>(`/api/v2/observability/projects${buildQuery(params)}`);
+  },
   getConfigHealth: () => fetchAPI<DeliveryConfigHealth>('/api/v2/observability/config-health'),
   getTraceDetail: (traceId: string) => {
     return fetchAPI<DeliveryTraceDetail>(`/api/v2/observability/traces/${encodeURIComponent(traceId)}`);

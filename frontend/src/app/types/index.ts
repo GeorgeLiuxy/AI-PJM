@@ -217,6 +217,19 @@ export interface DeliveryObservabilitySummary {
   alerts: DeliveryObservabilityAlert[];
 }
 
+export interface ProjectObservabilitySummary {
+  project_id: number;
+  project_key: string;
+  project_name: string;
+  status: 'healthy' | 'warning' | 'critical';
+  generated_at: string;
+  alert_count: number;
+  critical_alerts: number;
+  warning_alerts: number;
+  metrics: Record<string, number>;
+  top_alerts: DeliveryObservabilityAlert[];
+}
+
 export interface DeliveryConfigHealthCheck {
   id: string;
   category: string;
