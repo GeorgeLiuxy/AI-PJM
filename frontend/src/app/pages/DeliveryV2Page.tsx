@@ -47,9 +47,30 @@ import type { AppOutletContext } from '../Root';
 
 type StepKey = 'demand' | 'spec' | 'repo' | 'impact' | 'task' | 'run' | 'mr' | 'deploy' | 'verify';
 type StepState = 'idle' | 'running' | 'done' | 'failed';
-type TabKey = 'summary' | 'spec' | 'execution' | 'taskPackage' | 'evidence' | 'queue' | 'incidents' | 'projects' | 'audit';
+type TabKey =
+  | 'summary'
+  | 'spec'
+  | 'execution'
+  | 'taskPackage'
+  | 'evidence'
+  | 'queue'
+  | 'incidents'
+  | 'approvals'
+  | 'projects'
+  | 'audit';
 
-const detailTabKeys: TabKey[] = ['summary', 'spec', 'execution', 'taskPackage', 'evidence', 'queue', 'incidents', 'projects', 'audit'];
+const detailTabKeys: TabKey[] = [
+  'summary',
+  'spec',
+  'execution',
+  'taskPackage',
+  'evidence',
+  'queue',
+  'incidents',
+  'approvals',
+  'projects',
+  'audit',
+];
 
 type DeliveryResult = {
   demand?: DeliveryDemand;
@@ -116,6 +137,7 @@ const tabs: Array<{ key: TabKey; label: string; icon: typeof Activity }> = [
   { key: 'evidence', label: '证据', icon: FileCheck2 },
   { key: 'queue', label: '队列', icon: ClipboardList },
   { key: 'incidents', label: '失败', icon: AlertTriangle },
+  { key: 'approvals', label: '审批', icon: ShieldCheck },
   { key: 'projects', label: '项目', icon: GitBranch },
   { key: 'audit', label: '审计', icon: ShieldCheck },
 ];
@@ -156,6 +178,7 @@ export default function DeliveryV2Page() {
   const [allowedPaths, setAllowedPaths] = useState('');
   const [requiredChecks, setRequiredChecks] = useState('npm run build');
   const [demands, setDemands] = useState<DeliveryDemand[]>([]);
+  const [approvalDemands, setApprovalDemands] = useState<DeliveryDemand[]>([]);
   const [queueItems, setQueueItems] = useState<DeliveryExecutionQueueItem[]>([]);
   const [incidentItems, setIncidentItems] = useState<DeliveryExecutionQueueItem[]>([]);
   const [projectSummaries, setProjectSummaries] = useState<ProjectObservabilitySummary[]>([]);
@@ -165,6 +188,7 @@ export default function DeliveryV2Page() {
   const [projectOnboarding, setProjectOnboarding] = useState<ProjectOnboarding | null>(null);
   const [selectedDemandId, setSelectedDemandId] = useState<number | null>(null);
   const [listLoading, setListLoading] = useState(false);
+  const [approvalLoading, setApprovalLoading] = useState(false);
   const [queueLoading, setQueueLoading] = useState(false);
   const [incidentLoading, setIncidentLoading] = useState(false);
   const [projectSummariesLoading, setProjectSummariesLoading] = useState(false);
@@ -312,6 +336,19 @@ export default function DeliveryV2Page() {
     }
   };
 
+  const loadApprovalDemands = async () => {
+    setApprovalLoading(true);
+    try {
+      const list = (await deliveryApi.listDemands({ limit: 100 })).data;
+      setApprovalDemands(list.filter(isApprovalCandidate));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '加载待审批需求失败';
+      setError(localizeText(message));
+    } finally {
+      setApprovalLoading(false);
+    }
+  };
+
   const loadExecutionQueue = async () => {
     setQueueLoading(true);
     try {
@@ -440,6 +477,7 @@ export default function DeliveryV2Page() {
     const linkedDemandId = Number(searchParams.get('demand_id') || '');
     const linkedTab = parseTabKey(searchParams.get('tab')) || 'summary';
     void loadDemandList(Number.isFinite(linkedDemandId) && linkedDemandId > 0 ? linkedDemandId : undefined, linkedTab);
+    void loadApprovalDemands();
     void loadExecutionQueue();
     void loadIncidents();
     void loadProjectSummaries();
@@ -560,6 +598,7 @@ export default function DeliveryV2Page() {
 
   const refreshCurrent = async () => {
     await loadDemandList(selectedDemandId ?? result.demand?.id, activeTab);
+    await loadApprovalDemands();
     await loadExecutionQueue();
     await loadIncidents();
     await loadProjectSummaries();
@@ -1287,6 +1326,14 @@ export default function DeliveryV2Page() {
                   loading={incidentLoading}
                   onRefresh={() => void loadIncidents()}
                   onOpenDemand={(demandId) => void loadDemandDetail(demandId, 'execution')}
+                />
+              )}
+              {activeTab === 'approvals' && (
+                <ApprovalTab
+                  items={approvalDemands}
+                  loading={approvalLoading}
+                  onRefresh={() => void loadApprovalDemands()}
+                  onOpenDemand={(demandId) => void loadDemandDetail(demandId, 'summary')}
                 />
               )}
               {activeTab === 'projects' && (
@@ -2481,6 +2528,98 @@ function IncidentTab({
   );
 }
 
+function ApprovalTab({
+  items,
+  loading,
+  onRefresh,
+  onOpenDemand,
+}: {
+  items: DeliveryDemand[];
+  loading: boolean;
+  onRefresh: () => void;
+  onOpenDemand: (demandId: number) => void;
+}) {
+  return (
+    <div className="overflow-hidden rounded border border-slate-200">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 px-3 py-2">
+        <div className="min-w-0">
+          <div className="text-sm font-medium text-slate-900">高风险审批</div>
+          <div className="mt-0.5 text-xs text-slate-500">聚合 L2/L3 且尚未明确批准或拒绝的需求</div>
+        </div>
+        <div className="flex items-center gap-2">
+          <StatusBadge value={loading ? 'loading' : `${items.length} 条`} />
+          <button
+            type="button"
+            onClick={onRefresh}
+            disabled={loading}
+            className="inline-flex h-8 items-center gap-1.5 rounded border border-slate-200 bg-white px-2.5 text-sm text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+            刷新
+          </button>
+        </div>
+      </div>
+      <div className="max-h-[560px] overflow-auto">
+        <table className="w-full table-fixed text-left text-sm">
+          <thead className="bg-slate-50 text-xs font-medium uppercase text-slate-500">
+            <tr>
+              <th className="w-[12%] px-3 py-2">需求</th>
+              <th className="w-[14%] px-3 py-2">风险</th>
+              <th className="w-[34%] px-3 py-2">内容</th>
+              <th className="w-[24%] px-3 py-2">审批状态</th>
+              <th className="w-[16%] px-3 py-2">操作</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {items.length > 0 ? (
+              items.map((item) => (
+                <tr key={item.id}>
+                  <td className="px-3 py-2">
+                    <div className="font-mono text-xs text-slate-700">#{item.id}</div>
+                    <div className="mt-1 text-xs text-slate-500">{formatDateTime(item.updated_at)}</div>
+                  </td>
+                  <td className="px-3 py-2">
+                    <div className="space-y-1">
+                      <StatusBadge value={item.risk_level || 'risk'} />
+                      <StatusBadge value={item.status} />
+                    </div>
+                  </td>
+                  <td className="px-3 py-2 text-slate-700">
+                    <div className="line-clamp-2 font-medium text-slate-900">
+                      {localizeText(item.title || item.raw_input || '未命名需求')}
+                    </div>
+                    <div className="mt-1 line-clamp-1 text-xs text-slate-500">{localizeText(item.raw_input)}</div>
+                  </td>
+                  <td className="px-3 py-2 text-slate-700">
+                    <div className="line-clamp-2 text-sm">{approvalHint(item)}</div>
+                    <div className="mt-1 text-xs text-slate-500">提交人 {item.requester_ref || '未知'}</div>
+                  </td>
+                  <td className="px-3 py-2">
+                    <button
+                      type="button"
+                      onClick={() => onOpenDemand(item.id)}
+                      className="inline-flex h-8 items-center gap-1.5 rounded border border-slate-200 bg-white px-2.5 text-sm text-slate-700 hover:bg-slate-50"
+                    >
+                      <ExternalLink className="h-4 w-4" />
+                      查看审批
+                    </button>
+                  </td>
+                </tr>
+              ))
+            ) : (
+              <tr>
+                <td className="px-3 py-8 text-sm text-slate-400" colSpan={5}>
+                  {loading ? '正在加载待审批需求' : '暂无待审批高风险需求'}
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 function ProjectHealthTab({
   items,
   loading,
@@ -3172,6 +3311,24 @@ function incidentHint(item: DeliveryExecutionQueueItem): string {
     return '确认取消原因；如仍需交付，请从详情页重新创建执行记录。';
   }
   return '打开详情页查看下一步动作。';
+}
+
+function isApprovalCandidate(item: DeliveryDemand): boolean {
+  const highRisk = item.risk_level === 'L2' || item.risk_level === 'L3';
+  if (!highRisk) {
+    return false;
+  }
+  return item.manual_approval_status !== 'approved' && item.manual_approval_status !== 'rejected';
+}
+
+function approvalHint(item: DeliveryDemand): string {
+  if (item.manual_approval_status) {
+    return `当前审批状态：${formatStatusLabel(item.manual_approval_status)}。进入详情页查看风险、范围和证据。`;
+  }
+  if (item.status === 'blocked') {
+    return '需求已阻塞，进入详情页确认是否补充信息或拒绝推进。';
+  }
+  return '需要人工确认风险、范围和验收标准后才能继续自动执行。';
 }
 
 function formatStatusLabel(value?: string | number | null): string {

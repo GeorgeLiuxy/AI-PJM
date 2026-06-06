@@ -513,7 +513,7 @@ AI 不允许直接决定：
 - 证据时间线。（`GET /api/v2/observability/traces/{trace_id}` 和工作台证据页签首版已完成）
 - 多项目看板。（`GET /api/v2/observability/projects` 和工作台“项目”页签首版已完成）
 - 批量任务看板。
-- 高风险任务审批台。
+- 高风险任务审批台。（工作台“审批”页签已聚合 L2/L3 且未审批/未拒绝的需求，并提供查看审批入口）
 - 失败任务处理台。（工作台“失败”页签已按 failed/blocked/cancelled 聚合并提供查看处理入口）
 
 验收标准：
