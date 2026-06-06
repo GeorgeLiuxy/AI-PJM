@@ -1465,16 +1465,21 @@ function RunSummary({
   secondaryActions: WorkbenchAction[];
   manualApprovalRequired: boolean;
 }) {
+  const suggestedAction = result.detail?.next_actions?.[0] ?? null;
   const nextTitle = manualApprovalRequired
     ? '需要人工审批'
-    : primaryAction
+    : suggestedAction
+      ? suggestedAction.label
+      : primaryAction
       ? primaryAction.label
       : result.demand
         ? '暂无待执行动作'
         : '录入需求后执行';
   const nextDescription = manualApprovalRequired
     ? '该任务需要评审人员确认后才能继续执行。'
-    : primaryAction
+    : suggestedAction
+      ? suggestedAction.description
+      : primaryAction
       ? primaryAction.description
       : result.demand
         ? '当前任务没有可用自动动作，请查看证据或切换任务。'
@@ -1498,6 +1503,9 @@ function RunSummary({
           </div>
           {primaryAction ? (
             <ActionButton action={primaryAction} loading={running} prominent />
+          ) : null}
+          {suggestedAction?.reason ? (
+            <div className="mt-2 truncate text-[11px] text-slate-500">{suggestedAction.reason}</div>
           ) : null}
         </div>
         {secondaryActions.length > 0 ? (
