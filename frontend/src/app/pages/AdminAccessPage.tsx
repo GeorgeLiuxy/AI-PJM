@@ -79,6 +79,9 @@ export default function AdminAccessPage() {
   const projectNameById = useMemo(() => {
     return new Map(projects.map((project) => [project.id, project.name]));
   }, [projects]);
+  const selectedMaintenanceUser = useMemo(() => {
+    return users.find((managedUser) => String(managedUser.id) === maintenanceForm.user_id) || null;
+  }, [maintenanceForm.user_id, users]);
   const hasAdminAccess = canAdmin(user);
 
   const loadProjectDeploymentEnvironment = async (projectId: string, environmentName = 'test') => {
@@ -390,7 +393,11 @@ export default function AdminAccessPage() {
     const actionLabel = status === 'disabled' ? '停用' : '启用';
     if (
       status === 'disabled'
-      && !window.confirm(`确认停用密钥「${secret.name}」？相关 Provider 将无法继续使用该凭证。`)
+      && !confirmDangerousAction({
+        title: '停用密钥',
+        target: secret.name,
+        description: '相关 Provider 将无法继续使用该凭证。',
+      })
     ) {
       return;
     }
@@ -437,6 +444,17 @@ export default function AdminAccessPage() {
     if (!maintenanceForm.user_id) {
       return;
     }
+    if (
+      maintenanceForm.status === 'disabled'
+      && selectedMaintenanceUser?.status !== 'disabled'
+      && !confirmDangerousAction({
+        title: '停用用户',
+        target: selectedMaintenanceUser?.username || maintenanceForm.display_name,
+        description: '该用户将无法继续登录和执行平台操作。',
+      })
+    ) {
+      return;
+    }
     setSavingAccessAction('update-user');
     setError(null);
     setNotice(null);
@@ -459,6 +477,15 @@ export default function AdminAccessPage() {
 
   const resetManagedUserPassword = async () => {
     if (!maintenanceForm.user_id || maintenanceForm.password.length < 8) {
+      return;
+    }
+    if (
+      !confirmDangerousAction({
+        title: '重置密码',
+        target: selectedMaintenanceUser?.username || maintenanceForm.display_name,
+        description: '原密码会立即失效，请确认已和用户完成交接。',
+      })
+    ) {
       return;
     }
     setSavingAccessAction('reset-password');
@@ -503,6 +530,16 @@ export default function AdminAccessPage() {
 
   const removeManagedUserMembership = async () => {
     if (!maintenanceForm.user_id || !maintenanceForm.project_id) {
+      return;
+    }
+    const projectName = projectNameById.get(Number(maintenanceForm.project_id)) || `项目 ${maintenanceForm.project_id}`;
+    if (
+      !confirmDangerousAction({
+        title: '移除项目角色',
+        target: selectedMaintenanceUser?.username || maintenanceForm.display_name,
+        description: `用户将失去「${projectName}」下的项目权限。`,
+      })
+    ) {
       return;
     }
     setSavingAccessAction('remove-membership');
@@ -1463,6 +1500,23 @@ function formatProviderLabel(value: string) {
 
 function identityLabel(value: string) {
   return value;
+}
+
+function confirmDangerousAction({
+  title,
+  target,
+  description,
+}: {
+  title: string;
+  target: string;
+  description: string;
+}) {
+  const normalizedTarget = target.trim();
+  if (!normalizedTarget) {
+    return false;
+  }
+  const answer = window.prompt(`${title}\n${description}\n\n请输入「${normalizedTarget}」确认继续。`);
+  return answer?.trim() === normalizedTarget;
 }
 
 function formatStatus(value: string) {
