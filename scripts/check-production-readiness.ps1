@@ -4,6 +4,7 @@ param(
     [switch]$SkipProviderSmoke,
     [switch]$SkipAudit,
     [switch]$SkipBuild,
+    [int]$AuditRetries = 3,
     [switch]$ContinueOnError
 )
 
@@ -78,7 +79,18 @@ if (-not $SkipBackend) {
 if (-not $SkipFrontend) {
     if (-not $SkipAudit) {
         Invoke-Check -Name "frontend npm audit" -WorkingDirectory $FrontendDir -Command {
-            npm audit --audit-level=high
+            $attempts = [math]::Max(1, $AuditRetries)
+            for ($attempt = 1; $attempt -le $attempts; $attempt++) {
+                npm audit --audit-level=high
+                if ($LASTEXITCODE -eq 0) {
+                    return
+                }
+                if ($attempt -lt $attempts) {
+                    Write-Host "npm audit failed on attempt $attempt/$attempts; retrying..."
+                    Start-Sleep -Seconds 3
+                }
+            }
+            throw "npm audit failed after $attempts attempt(s)."
         }
     }
 

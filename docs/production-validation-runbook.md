@@ -26,6 +26,7 @@
 .\scripts\check-production-readiness.ps1 -SkipFrontend
 .\scripts\check-production-readiness.ps1 -SkipBackend
 .\scripts\check-production-readiness.ps1 -ContinueOnError
+.\scripts\check-production-readiness.ps1 -AuditRetries 5
 ```
 
 验收标准：脚本所有选中检查通过，且工作区没有未提交的有效代码。
@@ -69,8 +70,7 @@
 本地规则 Provider 只能证明平台链路可用，不能证明生产 AI 质量。接入真实 Dify/OpenAI 后执行：
 
 ```powershell
-cd backend
-python scripts/provider_quality_smoke.py --provider all --spec-only --min-score 0.75 --output-file ..\.runtime\provider-quality.json
+.\scripts\check-provider-quality.ps1 -Provider all
 ```
 
 验收标准：
@@ -78,6 +78,12 @@ python scripts/provider_quality_smoke.py --provider all --spec-only --min-score 
 - local、Dify、OpenAI 的结果都有结构化输出或脱敏失败原因。
 - 真实 Provider 输出包含需求摘要、目标、范围、风险、验收标准和任务拆分。
 - 不允许 Provider 直接推进数据库状态或绕过门禁。
+
+本地无真实凭证时可先执行：
+
+```powershell
+.\scripts\check-provider-quality.ps1 -Provider local
+```
 
 ### P2：容量和运维验证
 
