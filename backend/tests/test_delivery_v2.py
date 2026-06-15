@@ -182,7 +182,12 @@ async def test_observability_metrics_endpoint(client):
     assert "# TYPE ai_pjm_observability_status_code gauge" in body
     assert 'ai_pjm_observability_status_code{status="healthy"} 0' in body
     assert 'ai_pjm_execution_runs{state="queued"} 0' in body
+    assert "# TYPE ai_pjm_failed_deployments gauge" in body
+    assert "# TYPE ai_pjm_secret_health gauge" in body
+    assert 'ai_pjm_secret_health{state="invalid"} 0' in body
     assert "ai_pjm_recent_execution_failure_rate_percent 0" in body
+    assert "ai_pjm_sensitive_evidence_runs 0" in body
+    assert 'ai_pjm_alerts{severity="critical"} 0' in body
 
 
 @pytest.mark.asyncio
