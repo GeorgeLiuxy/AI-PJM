@@ -34,6 +34,8 @@
 
 验收标准：脚本所有选中检查通过，且工作区没有未提交的有效代码。
 
+远端仓库已提供 GitHub Actions 工作流 `.github/workflows/production-validation.yml`。每次 push 或 pull request 会自动执行后端关键测试、PostgreSQL 迁移烟测、Provider local smoke、前端依赖审计、前端回归测试和生产构建。正式合并前应以该工作流通过作为最低门禁。
+
 ### P0：真实环境闭环验证
 
 本地测试通过后，在目标测试环境执行以下验证：
