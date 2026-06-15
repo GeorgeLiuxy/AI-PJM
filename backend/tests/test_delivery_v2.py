@@ -14,7 +14,7 @@ import pytest
 from app.core.config import settings
 from app.modules.audit.repository import audit_repository
 from app.modules.auth.repository import auth_repository
-from app.modules.delivery.enums import CodingTaskStatus, ExecutionRunStatus, GateType, MergeRequestStatus, ReviewStatus, SpecStatus
+from app.modules.delivery.enums import CodingTaskStatus, DeploymentStatus, ExecutionRunStatus, GateType, MergeRequestStatus, ReviewStatus, SpecStatus
 from app.modules.delivery.repository import delivery_repository
 
 
@@ -1016,6 +1016,56 @@ async def test_delivery_v2_creates_deployment_after_review_passes(client, genera
     assert detail_response.status_code == 200
     gates = detail_response.json()["data"]["gate_checks"]
     assert any(gate["gate_type"] == "test_deployed" and gate["status"] == "passed" for gate in gates)
+
+
+@pytest.mark.asyncio
+async def test_delivery_v2_redeploys_failed_deployment_endpoint(client, db_session, generated_worktrees):
+    task_data, _run_data, mr_data = await create_review_passed_merge_request(client, generated_worktrees)
+    deploy_response = await client.post(
+        f"/api/v2/merge-requests/{mr_data['id']}/deployments",
+        json={"provider": "local", "environment": "test"},
+    )
+    assert deploy_response.status_code == 201
+    failed_deploy = deploy_response.json()["data"]
+
+    deploy_record = await delivery_repository.get_deploy_record(db_session, failed_deploy["id"])
+    await delivery_repository.update_deploy_record(
+        db_session,
+        deploy_record,
+        status=DeploymentStatus.FAILED,
+        url="local://deployments/failed",
+        evidence_json={"reason": "simulated deployment failure"},
+    )
+    await db_session.commit()
+
+    redeploy_response = await client.post(f"/api/v2/deployments/{failed_deploy['id']}/redeploy")
+
+    assert redeploy_response.status_code == 201
+    redeployed = redeploy_response.json()["data"]
+    assert redeployed["id"] != failed_deploy["id"]
+    assert redeployed["merge_request_id"] == mr_data["id"]
+    assert redeployed["coding_task_id"] == task_data["id"]
+    assert redeployed["provider"] == "local"
+    assert redeployed["environment"] == "test"
+    assert redeployed["status"] == "deployed"
+    assert redeployed["url"] == f"local://deployments/{redeployed['id']}"
+    assert redeployed["evidence_json"]["redeploy_from_deploy_record_id"] == failed_deploy["id"]
+    assert redeployed["evidence_json"]["redeployed_by_ref"] == "local_operator"
+
+    detail_response = await client.get(f"/api/v2/demands/{task_data['demand_id']}")
+    assert detail_response.status_code == 200
+    detail_data = detail_response.json()["data"]
+    deploy_records = detail_data["coding_tasks"][0]["merge_requests"][0]["deploy_records"]
+    assert {record["id"] for record in deploy_records} == {failed_deploy["id"], redeployed["id"]}
+    assert any(gate["gate_type"] == "test_deployed" and gate["status"] == "passed" for gate in detail_data["gate_checks"])
+
+    audit_events = await audit_repository.list_events(
+        db_session,
+        action="delivery.test_deployment_redeployed",
+    )
+    assert audit_events
+    assert audit_events[0].metadata_json["source_deploy_record_id"] == failed_deploy["id"]
+    assert audit_events[0].metadata_json["new_deploy_record_id"] == redeployed["id"]
 
 
 @pytest.mark.asyncio
