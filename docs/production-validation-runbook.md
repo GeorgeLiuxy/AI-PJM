@@ -9,7 +9,7 @@
 每次合并或发布前必须执行：
 
 ```powershell
-.\scripts\check-production-readiness.ps1
+.\scripts\check-production-suite.ps1
 ```
 
 该脚本覆盖：
@@ -23,6 +23,9 @@
 可选参数：
 
 ```powershell
+.\scripts\check-production-suite.ps1 -IncludePostgres
+.\scripts\check-production-suite.ps1 -Provider all
+.\scripts\check-production-suite.ps1 -AuditRetries 5
 .\scripts\check-production-readiness.ps1 -SkipFrontend
 .\scripts\check-production-readiness.ps1 -SkipBackend
 .\scripts\check-production-readiness.ps1 -ContinueOnError
