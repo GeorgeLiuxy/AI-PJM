@@ -35,14 +35,14 @@
 
 执行步骤：
 
-1. 运行 `scripts/provider_quality_smoke.py`，分别覆盖 local、Dify、OpenAI。
+1. 运行 `scripts/provider_quality_smoke.py --provider all --output-file .runtime/provider-quality-report.json`，一次覆盖 local、Dify、OpenAI；必要时也可分别运行单个 provider。
 2. 每个 Provider 至少验证 10 条真实历史需求或脱敏样例需求。
 3. 记录 Spec/Impact 的 schema 版本、prompt 版本、workflow/model 和质量分。
 4. 人工抽检低分样例，确认扣分项能解释问题。
 
 通过标准：
 
-- Provider 失败会降级或进入人工处理，不直接修改数据库终态。
+- Provider 失败会在质量报告中记录脱敏错误，并在平台流程中降级或进入人工处理，不直接修改数据库终态。
 - 输出缺少必填字段、风险等级异常或置信度过低时，不自动推进执行。
 - 明文 Token、Key、Authorization 不进入日志、证据或前端。
 

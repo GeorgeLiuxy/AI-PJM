@@ -231,30 +231,31 @@ AI 不允许直接决定：
 
 目标：让 Git、AI、部署系统凭证可安全使用。
 
-当前状态：已完成本地首版。已有 `SecretStore` 服务端接口、项目级密钥表、Fernet 加密存储、密钥掩码响应、创建/轮换/禁用审计事件、访问管理页配置入口、轮换修复入口、停用/启用入口和基础权限测试。Dify Provider 会优先按项目读取 `dify_api_key`，OpenAI Provider 会优先按项目读取 `openai_api_key`，GitLab MR provider 会读取 `gitlab_token`，GitHub PR provider 会读取 `github_token`，webhook 部署 provider 会读取 `deploy_token`；项目未配置时分别回退到全局 `DIFY_API_KEY`、`OPENAI_API_KEY`、`GITLAB_TOKEN`、`GITHUB_TOKEN`、`DEPLOY_TOKEN`。主密钥通过 `SECRET_STORE_MASTER_KEY` 注入，未配置时禁止写入密钥。执行日志、执行证据和自测门禁证据已在持久化前进行敏感信息脱敏。密钥列表和健康检查接口已支持过期时间、健康状态、可解密性检查、OpenAI/GitLab/GitHub 只读远端探测、最近失败原因写回和最近使用时间展示。
+当前状态：已完成本地首版。已有 `SecretStore` 服务端接口、项目级密钥表、Fernet 加密存储、密钥掩码响应、创建/轮换/禁用审计事件、访问管理页配置入口、轮换修复入口、停用/启用入口和基础权限测试。Dify Provider 会优先按项目读取 `dify_api_key`，OpenAI Provider 会优先按项目读取 `openai_api_key`，GitLab MR provider 会读取 `gitlab_token`，GitHub PR provider 会读取 `github_token`，webhook 部署 provider 会读取 `deploy_token`；项目未配置时分别回退到全局 `DIFY_API_KEY`、`OPENAI_API_KEY`、`GITLAB_TOKEN`、`GITHUB_TOKEN`、`DEPLOY_TOKEN`。主密钥通过 `SECRET_STORE_MASTER_KEY` 注入，未配置时禁止写入密钥。执行日志、执行证据和自测门禁证据已在持久化前进行敏感信息脱敏，已覆盖常见 OpenAI、GitHub、GitLab、Slack、Google、Stripe、Dify 风格 Token、Bearer、URL 参数、URL 内嵌密码、JWT、AWS Access Key、平台内部 token 和 PEM 私钥块。密钥列表和健康检查接口已支持过期时间、健康状态、可解密性检查、OpenAI/GitLab/GitHub 只读远端探测、最近失败原因写回、最近使用时间展示、健康状态分布和脱敏失败原因聚合。可观测性 summary 已扫描最近执行日志和证据，发现疑似未脱敏凭证时输出 `sensitive-evidence-leak` 告警；Prometheus 指标已输出凭证 invalid/expired/disabled/unknown/expiring 分布和敏感证据扫描结果。
 
 实施内容：
 
 - 增加 `SecretStore` 接口。（首版已完成）
 - 本地开发支持 `.env`，生产必须接 Vault、云密钥服务或数据库加密存储。（本地加密存储首版已完成）
 - 密钥只在服务端使用，不进入前端。（首版已完成）
-- 日志和证据链做脱敏。（API 响应、运行日志和执行证据首版已完成）
+- 日志和证据链做脱敏。（API 响应、运行日志、执行证据和常见 Provider 凭证格式首版已完成）
 - Token 配置支持项目级隔离。（Dify/OpenAI/GitLab/GitHub/webhook 部署消费首版已完成）
 - 增加凭证健康检查和过期提示。（首版已完成）
 
 验收标准：
 
 - 前端和 API 响应不会返回明文密钥。（首版已验证）
-- 日志中不会出现 Token。（首版已增加回归用例）
+- 日志中不会出现 Token。（已增加 Provider token、URL 凭证和 PEM 私钥块回归用例）
 - GitLab/Dify/OpenAI/部署凭证可按项目配置并由 provider 服务端消费。
 - 凭证失效时页面显示明确错误和修复入口。（健康状态展示、访问管理页轮换入口和停用/启用入口首版已完成）
+- 日志和证据疑似残留明文凭证时能进入可观测性告警。（最近执行扫描首版已完成）
 
 剩余工作：
 
 - 接入 Vault/KMS 或生产级密钥后端，支持主密钥轮换。
 - 增加更多 Provider 的安全远端可用性探测；OpenAI/GitLab/GitHub 只读远端探测已完成，Dify 显式安全 URL 探测已完成。
-- 扩展密钥健康检查，增加更多 Provider 凭证格式、最近失败原因聚合和过期告警联动。
-- 扩展日志/证据敏感信息扫描规则，增加更多 Provider 凭证格式和持续扫描告警。
+- 扩展密钥健康检查：增加更多 Provider 远端探测和生产告警处理闭环；最近失败原因聚合、健康状态分布和过期告警联动首版已完成。
+- 增强日志/证据敏感信息扫描：增加历史全量扫描、集中日志平台规则、告警去重和处理闭环。
 - 增加密钥删除策略、审批门禁和集中轮换策略。
 
 不做风险：
@@ -453,7 +454,7 @@ AI 不允许直接决定：
 
 目标：让外部 AI 编排提高方案质量，而不是接管平台状态。
 
-当前状态：Dify/OpenAI Provider 首版已完成，默认不启用。Dify 使用配置的 workflow 生成 Spec/Impact 结构化草稿；OpenAI 使用 Responses API 的 JSON Schema 结构化输出生成 Spec/Impact 草稿。两者都只返回草稿，不直接改数据库状态、不执行代码、不绕过门禁。已具备必填字段、列表字段、风险等级和置信度校验；超时、平台级重试和本地规则降级首版已完成。降级会记录失败 provider、尝试次数和脱敏错误，并在 Spec open questions、门禁 evidence 或 Impact metadata 中可追溯。OpenAI/GitLab 凭证已有只读可用性探测，Dify 支持显式安全 URL 探测；Spec/Impact 会记录 workflow/model、schema name、schema version、prompt version 和本地确定性质量评分。`scripts/provider_quality_smoke.py` 已提供只读质量烟测入口，可在目标环境调用 local/Dify/OpenAI 生成草稿并输出质量分。远端生产联调仍待在真实 Dify/OpenAI 环境执行。
+当前状态：Dify/OpenAI Provider 首版已完成，默认不启用。Dify 使用配置的 workflow 生成 Spec/Impact 结构化草稿；OpenAI 使用 Responses API 的 JSON Schema 结构化输出生成 Spec/Impact 草稿。两者都只返回草稿，不直接改数据库状态、不执行代码、不绕过门禁。已具备必填字段、列表字段、风险等级和置信度校验；超时、平台级重试和本地规则降级首版已完成。降级会记录失败 provider、尝试次数和脱敏错误，并在 Spec open questions、门禁 evidence 或 Impact metadata 中可追溯。OpenAI/GitLab 凭证已有只读可用性探测，Dify 支持显式安全 URL 探测；Spec/Impact 会记录 workflow/model、schema name、schema version、prompt version 和本地确定性质量评分。`scripts/provider_quality_smoke.py` 已提供只读质量烟测入口，可在目标环境调用 local/Dify/OpenAI 生成草稿并输出质量分，支持 `--provider all` 聚合报告、`--output-file` 留存 JSON 证据，以及 provider 异常的脱敏错误条目。远端生产联调仍待在真实 Dify/OpenAI 环境执行。
 
 实施内容：
 
@@ -463,7 +464,7 @@ AI 不允许直接决定：
 - 增加 Provider 输出校验。（首版已完成）
 - 增加超时、重试、降级策略。（首版已完成）
 - 记录 workflow/model/prompt 版本。（workflow/model、schema name、schema version、prompt version 首版已完成）
-- 评估 Provider 输出质量。（本地确定性质量评分和只读质量烟测脚本已完成，远端生产联调待在目标环境执行）
+- 评估 Provider 输出质量。（本地确定性质量评分、只读质量烟测脚本、批量 provider 报告和 JSON 留痕已完成，远端生产联调待在目标环境执行）
 
 验收标准：
 
@@ -481,14 +482,14 @@ AI 不允许直接决定：
 
 目标：让生产问题可发现、可定位、可恢复。
 
-当前状态：最小可观测性首版已完成。后端提供 `GET /api/v2/observability/summary`，按项目权限汇总 worker lease 过期、执行队列积压、凭证过期/禁用/即将过期、测试部署失败和近期执行失败率异常告警；`GET /api/v2/observability/projects` 已提供项目维度健康摘要，返回项目状态、告警数、关键指标和前三条告警；`GET /api/v2/observability/metrics` 已提供 Prometheus 0.0.4 文本指标出口，复用 summary 统计口径输出队列、worker、部署、凭证、近期失败率和告警计数。`scripts/observability_alert_worker.py` 可轮询 summary API，并在 warning/critical 时转发到外部 webhook，项目根目录的 `scripts/start-observability-alert-worker.ps1` 和 `scripts/stop-observability-alert-worker.ps1` 已提供本地启停入口，`scripts/start-dev.ps1 -WithObservabilityAlert` 可随开发环境联动启动。交付工作台顶部展示运行告警、核心计数、前两条告警摘要、系统配置健康和当前项目接入状态。需求、Spec、门禁、上下文、影响分析、任务、执行、日志、MR、部署和验收已具备同一 `trace_id` 首版贯穿能力；`scripts/backfill_delivery_trace_ids.py` 可 dry-run 或正式回填历史记录。后端 `LOG_FORMAT=json` 已提供 JSON Lines 结构化应用日志开关，可输出 timestamp、level、logger、message、位置和 extra 字段。集中指标平台接入仍待生产环境完成。
+当前状态：最小可观测性首版已完成。后端提供 `GET /api/v2/observability/summary`，按项目权限汇总 worker lease 过期、执行队列积压、凭证过期/禁用/未知/即将过期、测试部署失败、近期执行失败率异常和最近执行证据疑似明文凭证告警；`GET /api/v2/observability/projects` 已提供项目维度健康摘要，返回项目状态、告警数、关键指标和前三条告警；`GET /api/v2/observability/metrics` 已提供 Prometheus 0.0.4 文本指标出口，复用 summary 统计口径输出队列、worker、部署、凭证状态分布、近期失败率、敏感证据扫描和告警计数。`scripts/observability_alert_worker.py` 可轮询 summary API，并在 warning/critical 时转发到外部 webhook，项目根目录的 `scripts/start-observability-alert-worker.ps1` 和 `scripts/stop-observability-alert-worker.ps1` 已提供本地启停入口，`scripts/start-dev.ps1 -WithObservabilityAlert` 可随开发环境联动启动。交付工作台顶部展示运行告警、核心计数、前两条告警摘要、系统配置健康和当前项目接入状态。需求、Spec、门禁、上下文、影响分析、任务、执行、日志、MR、部署和验收已具备同一 `trace_id` 首版贯穿能力；`scripts/backfill_delivery_trace_ids.py` 可 dry-run 或正式回填历史记录。后端 `LOG_FORMAT=json` 已提供 JSON Lines 结构化应用日志开关，可输出 timestamp、level、logger、message、位置和 extra 字段。集中指标平台接入仍待生产环境完成。
 
 实施内容：
 
 - 结构化日志。（`LOG_FORMAT=json` JSON Lines 首版已完成，集中日志平台接入待完成）
 - trace id 贯穿需求、任务、执行、MR、部署、验收。（新记录首版、历史记录回填脚本、`GET /api/v2/observability/traces/{trace_id}` 只读时间线查询和工作台证据页签展示已完成）
-- 指标：任务数量、成功率、失败率、平均耗时、队列积压、自动修复率。（队列、部署、凭证、worker、近期执行失败率和 Prometheus 文本出口首版已完成）
-- 告警：worker 停止、队列积压、凭证失效、部署失败、异常失败率。（worker lease、队列积压、凭证、部署失败、近期执行失败率和本地告警 worker 启停脚本首版已完成）
+- 指标：任务数量、成功率、失败率、平均耗时、队列积压、自动修复率。（队列、部署、凭证状态分布、worker、近期执行失败率、敏感证据扫描和 Prometheus 文本出口首版已完成）
+- 告警：worker 停止、队列积压、凭证失效、凭证健康未知、部署失败、异常失败率、疑似敏感证据泄漏。（worker lease、队列积压、凭证、部署失败、近期执行失败率、敏感证据扫描和本地告警 worker 启停脚本首版已完成）
 - 管理后台查看系统健康。（工作台告警条、配置健康/项目接入可见化、项目健康摘要 API、Prometheus 文本指标出口和通用 webhook 转发脚本首版已完成，完整管理后台页面待增强）
 
 验收标准：

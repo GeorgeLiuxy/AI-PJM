@@ -7,6 +7,7 @@ import json
 import re
 import shutil
 import subprocess
+from collections import Counter
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -61,7 +62,7 @@ from app.modules.delivery.providers.dify import DifyWorkflowProvider
 from app.modules.delivery.providers.local import LocalWorkflowProvider
 from app.modules.delivery.providers.openai import OpenAIWorkflowProvider
 from app.modules.delivery.providers.quality import evaluate_impact_draft, evaluate_spec_draft
-from app.modules.delivery.redaction import redact_text, redact_value
+from app.modules.delivery.redaction import has_unredacted_sensitive_data, redact_text, redact_value
 from app.modules.delivery.repository import delivery_repository
 from app.modules.secrets.repository import secret_repository
 from app.modules.secrets.service import secret_store_service
@@ -369,6 +370,16 @@ class DeliveryService:
             if recent_execution_count
             else 0
         )
+        sensitive_scan_limit = min(max(sample_limit * 5, 20), 100)
+        sensitive_scan_runs = await delivery_repository.list_execution_runs(
+            db,
+            limit=sensitive_scan_limit,
+            project_ids=project_ids,
+        )
+        sensitive_evidence_runs = [
+            run for run in sensitive_scan_runs
+            if self._run_has_unredacted_sensitive_evidence(run)
+        ]
 
         secrets = await secret_repository.list_secrets(
             db,
@@ -376,11 +387,19 @@ class DeliveryService:
             limit=1000,
         )
         unhealthy_secrets = []
+        unknown_secrets = []
         expiring_secrets = []
+        secret_health_statuses: dict[int, str] = {}
+        secret_health_reasons: dict[int, str] = {}
         for secret in secrets:
             health = secret_store_service.to_response(secret, verify_decrypt=False)
+            secret_health_statuses[secret.id] = health.health_status
+            if health.health_reason:
+                secret_health_reasons[secret.id] = health.health_reason
             if health.health_status in {"expired", "invalid", "disabled"}:
                 unhealthy_secrets.append(secret)
+            elif health.health_status == "unknown":
+                unknown_secrets.append(secret)
             elif health.health_status == "expiring_soon":
                 expiring_secrets.append(secret)
 
@@ -424,10 +443,27 @@ class DeliveryService:
                 "category": "secret",
                 "severity": "critical",
                 "title": "凭证不可用",
-                "summary": f"{len(unhealthy_secrets)} 个项目凭证已过期、禁用或不可用。",
+                "summary": (
+                    f"{len(unhealthy_secrets)} 个项目凭证已过期、禁用或不可用。"
+                    f"{self._secret_health_breakdown(unhealthy_secrets, secret_health_statuses, secret_health_reasons)}"
+                ),
                 "count": len(unhealthy_secrets),
                 "entity_type": "secret",
                 "entity_ids": [secret.id for secret in unhealthy_secrets[:sample_limit]],
+            })
+        elif unknown_secrets:
+            alerts.append({
+                "id": "secret-health-unknown",
+                "category": "secret",
+                "severity": "warning",
+                "title": "凭证健康状态未知",
+                "summary": (
+                    f"{len(unknown_secrets)} 个项目凭证远端可用性暂无法确认。"
+                    f"{self._secret_health_breakdown(unknown_secrets, secret_health_statuses, secret_health_reasons)}"
+                ),
+                "count": len(unknown_secrets),
+                "entity_type": "secret",
+                "entity_ids": [secret.id for secret in unknown_secrets[:sample_limit]],
             })
         elif expiring_secrets:
             alerts.append({
@@ -479,6 +515,21 @@ class DeliveryService:
                 "entity_ids": [run.id for run in failed_run_samples],
             })
 
+        if sensitive_evidence_runs:
+            alerts.append({
+                "id": "sensitive-evidence-leak",
+                "category": "secret",
+                "severity": "critical",
+                "title": "证据疑似包含明文凭证",
+                "summary": (
+                    f"最近扫描的 {len(sensitive_scan_runs)} 个执行中有 "
+                    f"{len(sensitive_evidence_runs)} 个疑似包含未脱敏凭证，请检查执行日志和证据。"
+                ),
+                "count": len(sensitive_evidence_runs),
+                "entity_type": "execution_run",
+                "entity_ids": [run.id for run in sensitive_evidence_runs[:sample_limit]],
+            })
+
         status_value = "healthy"
         if any(alert["severity"] == "critical" for alert in alerts):
             status_value = "critical"
@@ -494,10 +545,15 @@ class DeliveryService:
                 "expired_worker_runs": len(expired_worker_runs),
                 "failed_deployments": failed_deploy_count,
                 "unhealthy_secrets": len(unhealthy_secrets),
+                "invalid_secrets": sum(1 for status in secret_health_statuses.values() if status == "invalid"),
+                "expired_secrets": sum(1 for status in secret_health_statuses.values() if status == "expired"),
+                "disabled_secrets": sum(1 for status in secret_health_statuses.values() if status == "disabled"),
+                "unknown_secrets": len(unknown_secrets),
                 "expiring_secrets": len(expiring_secrets),
                 "recent_execution_runs": recent_execution_count,
                 "recent_failed_execution_runs": recent_failed_execution_count,
                 "recent_execution_failure_rate_percent": recent_failure_rate_percent,
+                "sensitive_evidence_runs": len(sensitive_evidence_runs),
             },
             "alerts": alerts,
         }
@@ -5211,6 +5267,33 @@ class DeliveryService:
             return False
         expires_at = self._parse_datetime(bridge.get("lease_expires_at"))
         return expires_at is not None and expires_at <= now
+
+    def _run_has_unredacted_sensitive_evidence(self, run: ExecutionRun) -> bool:
+        if has_unredacted_sensitive_data(run.result_summary):
+            return True
+        if has_unredacted_sensitive_data(run.evidence_json):
+            return True
+        for log in run.logs or []:
+            if has_unredacted_sensitive_data(log.message):
+                return True
+            if has_unredacted_sensitive_data(log.event_json):
+                return True
+        return False
+
+    def _secret_health_breakdown(
+        self,
+        secrets: list,
+        statuses: dict[int, str],
+        reasons: dict[int, str],
+    ) -> str:
+        if not secrets:
+            return ""
+        counts = Counter(statuses.get(secret.id, "unknown") for secret in secrets)
+        status_summary = "，".join(f"{status} {count}" for status, count in sorted(counts.items()))
+        reason = next((reasons.get(secret.id) for secret in secrets if reasons.get(secret.id)), None)
+        if reason:
+            return f" 状态分布：{status_summary}。示例原因：{redact_text(reason)[:160]}"
+        return f" 状态分布：{status_summary}。"
 
     def _parse_datetime(self, value) -> datetime | None:
         if not isinstance(value, str) or not value.strip():

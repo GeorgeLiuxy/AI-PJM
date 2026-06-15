@@ -867,6 +867,7 @@ cd backend
 python scripts/provider_quality_smoke.py --provider local
 python scripts/provider_quality_smoke.py --provider openai --min-score 0.65
 python scripts/provider_quality_smoke.py --provider dify --min-score 0.65
+python scripts/provider_quality_smoke.py --provider all --min-score 0.65 --output-file .runtime/provider-quality-report.json
 ```
 
 Expected behavior:
@@ -875,6 +876,7 @@ Expected behavior:
 The script does not write delivery state.
 It generates Spec and Impact drafts through the selected provider.
 It prints deterministic quality scores, findings, redacted provider metadata, and exits non-zero when the score is below threshold.
+`--provider all` aggregates local, Dify, and OpenAI into one report; provider exceptions are returned as redacted error entries instead of raw tracebacks.
 Dify/OpenAI runs require the same environment variables described above.
 ```
 

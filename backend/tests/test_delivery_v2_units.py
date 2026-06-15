@@ -47,15 +47,16 @@ from app.modules.delivery.providers.dify import DifyWorkflowProvider
 from app.modules.delivery.providers.factory import get_workflow_provider
 from app.modules.delivery.providers.local import LocalWorkflowProvider
 from app.modules.delivery.providers.openai import OpenAIWorkflowProvider
-from app.modules.delivery.redaction import REDACTED, redact_text, redact_value
+from app.modules.delivery.redaction import REDACTED, has_unredacted_sensitive_data, redact_text, redact_value
 from app.modules.delivery.repository import delivery_repository
 from app.modules.delivery.service import DeliveryService, delivery_service
 from app.modules.delivery.trace_backfill import backfill_delivery_trace_ids
-from app.modules.secrets.provider_health import check_remote_provider_health
+from app.modules.secrets.provider_health import ProviderHealthProbeResult, check_remote_provider_health
 from app.modules.secrets.service import secret_store_service
 from scripts import deployment_sync_worker
 from scripts.database_backup import backup_database, normalize_database_url_for_cli, sqlite_path_from_url
 from scripts.database_restore import RESTORE_CONFIRMATION, restore_database
+from scripts.provider_quality_smoke import run_quality_report
 from scripts.recover_symphony_runs import recover_expired_runs
 from scripts.seed_delivery_capacity import seed_capacity_data, validate_safety, workload_status
 from scripts.symphony_worker import Worker, quote_arg, run_loop, tail
@@ -172,6 +173,50 @@ def test_database_restore_requires_explicit_confirmation(tmp_path):
             backup_file=backup_file,
             confirm="wrong",
         )
+
+
+@pytest.mark.asyncio
+async def test_provider_quality_report_aggregates_providers_and_redacts_errors(monkeypatch):
+    provider_api_key = "sk-" + "test-provider-report-secret"
+    provider_failure_token = "provider-failure-token-openai"
+
+    class PassingProvider:
+        async def generate_spec(self, demand):
+            return SpecDraft(
+                title="Provider quality report",
+                user_story="As an operator, I can validate provider output quality.",
+                scope="Validate provider outputs with a deterministic smoke report.",
+                acceptance_criteria=["Spec quality is scored.", "Provider metadata is redacted."],
+                constraints=["Do not mutate delivery state."],
+                risks=["Provider output can be malformed."],
+                provider_metadata={"api_key": provider_api_key},
+            )
+
+    def fake_get_workflow_provider(provider_name: str):
+        if provider_name == "local":
+            return PassingProvider()
+        raise AIServiceException(f"Provider failed with token=provider-failure-token-{provider_name}")
+
+    monkeypatch.setattr(
+        "scripts.provider_quality_smoke.get_workflow_provider",
+        fake_get_workflow_provider,
+    )
+
+    report = await run_quality_report(
+        provider_names=["local", "openai"],
+        raw_input="Validate provider quality report aggregation.",
+        min_score=0.65,
+        run_impact=False,
+    )
+
+    assert report["passed"] is False
+    assert report["summary"] == {"passed": 1, "failed": 1, "total": 2}
+    assert report["results"][0]["provider"] == "local"
+    assert report["results"][0]["passed"] is True
+    assert report["results"][0]["spec"]["draft"]["provider_metadata"]["api_key"] == REDACTED
+    error_message = report["results"][1]["error"]["message"]
+    assert provider_failure_token not in error_message
+    assert "token=[REDACTED]" in error_message
 
 
 def test_default_workspace_root_points_to_project_root(monkeypatch):
@@ -729,31 +774,53 @@ def test_symphony_executor_is_deferred_queue_adapter():
 
 
 def test_delivery_redacts_sensitive_text_patterns():
+    github_token = "ghs_" + "abcdefghijklmnopqrstuvwxyz123456"
+    gitlab_token = "glrt-" + "abcdefghijklmnopqrstuvwxyz"
+    slack_app_token = "xapp-" + "1-A1234567890-abcdefghijklmnopqrst"
+    google_api_key = "AIza" + "SyDabcdefghijklmnopqrstuvwxyz123456"
+    stripe_api_key = "sk_" + "live_" + "abcdefghijklmnopqrstuvwxyz"
+    openai_api_key = "sk-" + "test-abcdefghijklmnopqrstuvwxyz"
+    dify_app_key = "app-" + "abcdefghijklmnopqrstuvwxyz123456"
     raw = (
-        "Authorization: Bearer sk-test-abcdefghijklmnopqrstuvwxyz\n"
+        f"Authorization: Bearer {openai_api_key}\n"
         "DIFY_API_KEY=project-dify-key-123456\n"
         "codex exec --token local-token-123456 --password bad-password\n"
         "https://dify.local/run?access_token=access-token-123456&x=1\n"
-        "glpat-abcdefghijklmnopqrstuvwxyz"
+        "https://deploy:deploy-password-123456@ci.example/jobs/1\n"
+        f"{github_token}\n"
+        f"{gitlab_token}\n"
+        f"{slack_app_token}\n"
+        f"{google_api_key}\n"
+        f"{stripe_api_key}\n"
+        f"{dify_app_key}\n"
+        "-----BEGIN PRIVATE KEY-----\nsecret-private-key-material\n-----END PRIVATE KEY-----"
     )
 
     redacted = redact_text(raw)
 
-    assert "sk-test-abcdefghijklmnopqrstuvwxyz" not in redacted
+    assert openai_api_key not in redacted
     assert "project-dify-key-123456" not in redacted
     assert "local-token-123456" not in redacted
     assert "bad-password" not in redacted
     assert "access-token-123456" not in redacted
-    assert "glpat-abcdefghijklmnopqrstuvwxyz" not in redacted
+    assert "deploy-password-123456" not in redacted
+    assert github_token not in redacted
+    assert gitlab_token not in redacted
+    assert slack_app_token not in redacted
+    assert google_api_key not in redacted
+    assert stripe_api_key not in redacted
+    assert dify_app_key not in redacted
+    assert "secret-private-key-material" not in redacted
     assert REDACTED in redacted
 
 
 def test_delivery_redacts_sensitive_json_values_recursively():
+    openai_project_key = "sk-" + "proj-abcdefghijklmnopqrstuvwxyz"
     payload = {
         "api_key": "project-dify-key",
         "api_key_secret_name": "dify_api_key",
         "nested": {
-            "command": "codex exec --api-key sk-proj-abcdefghijklmnopqrstuvwxyz",
+            "command": f"codex exec --api-key {openai_project_key}",
             "stdout_tail": "token=local-token-123456",
         },
         "items": ["Authorization: Bearer bearer-token-1234567890"],
@@ -763,9 +830,26 @@ def test_delivery_redacts_sensitive_json_values_recursively():
 
     assert redacted["api_key"] == REDACTED
     assert redacted["api_key_secret_name"] == "dify_api_key"
-    assert "sk-proj-abcdefghijklmnopqrstuvwxyz" not in redacted["nested"]["command"]
+    assert openai_project_key not in redacted["nested"]["command"]
     assert "local-token-123456" not in redacted["nested"]["stdout_tail"]
     assert "bearer-token-1234567890" not in redacted["items"][0]
+
+
+def test_delivery_detects_unredacted_sensitive_data_without_flagging_redacted_values():
+    openai_api_key = "sk-" + "test-abcdefghijklmnopqrstuvwxyz"
+    unsafe_payload = {
+        "api_key": "project-dify-key",
+        "api_key_secret_name": "dify_api_key",
+        "stdout_tail": f"Authorization: Bearer {openai_api_key}",
+    }
+    safe_payload = {
+        "api_key": REDACTED,
+        "api_key_secret_name": "dify_api_key",
+        "stdout_tail": "Authorization: Bearer [REDACTED]",
+    }
+
+    assert has_unredacted_sensitive_data(unsafe_payload) is True
+    assert has_unredacted_sensitive_data(safe_payload) is False
 
 
 def test_symphony_worker_runs_required_checks_and_completes(tmp_path):
@@ -1022,8 +1106,9 @@ def test_symphony_worker_tail_decodes_bytes():
 
 def test_local_check_result_evidence_is_redacted():
     executor = LocalChecksExecutor()
+    openai_project_key = "sk-" + "proj-abcdefghijklmnopqrstuvwxyz"
     result = CheckResult(
-        command="python -m pytest --api-key sk-proj-abcdefghijklmnopqrstuvwxyz",
+        command=f"python -m pytest --api-key {openai_project_key}",
         cwd="C:/repo",
         status="failed",
         exit_code=1,
@@ -1035,7 +1120,7 @@ def test_local_check_result_evidence_is_redacted():
 
     evidence = executor._check_to_dict(result)
 
-    assert "sk-proj-abcdefghijklmnopqrstuvwxyz" not in evidence["command"]
+    assert openai_project_key not in evidence["command"]
     assert "bearer-token-1234567890" not in evidence["stdout_tail"]
     assert "bad-password" not in evidence["stderr_tail"]
     assert "local-token-123456" not in evidence["error"]
@@ -1438,7 +1523,8 @@ async def test_delivery_service_falls_back_to_local_spec_after_external_provider
         name = "openai"
 
         async def generate_spec(self, demand):
-            raise AIServiceException("Authorization: Bearer sk-test-abcdefghijklmnopqrstuvwxyz")
+            openai_api_key = "sk-" + "test-abcdefghijklmnopqrstuvwxyz"
+            raise AIServiceException(f"Authorization: Bearer {openai_api_key}")
 
         async def collect_repo_context(self, demand):
             raise AssertionError("not used")
@@ -1470,7 +1556,7 @@ async def test_delivery_service_falls_back_to_local_spec_after_external_provider
     assert recovery["failed_provider"] == "openai"
     assert recovery["fallback_provider"] == "local"
     assert len(recovery["errors"]) == 2
-    assert "sk-test-abcdefghijklmnopqrstuvwxyz" not in str(recovery)
+    assert ("sk-" + "test-abcdefghijklmnopqrstuvwxyz") not in str(recovery)
     assert REDACTED in str(recovery)
 
 
@@ -3817,6 +3903,10 @@ async def test_delivery_service_observability_summary_reports_core_alerts(db_ses
     assert summary["metrics"]["expired_worker_runs"] == 1
     assert summary["metrics"]["failed_deployments"] == 1
     assert summary["metrics"]["unhealthy_secrets"] == 1
+    assert summary["metrics"]["expired_secrets"] == 1
+    assert summary["metrics"]["invalid_secrets"] == 0
+    assert summary["metrics"]["disabled_secrets"] == 0
+    assert summary["metrics"]["unknown_secrets"] == 0
     alert_ids = {alert["id"] for alert in summary["alerts"]}
     assert alert_ids == {
         "worker-lease-expired",
@@ -3829,6 +3919,56 @@ async def test_delivery_service_observability_summary_reports_core_alerts(db_ses
     assert alert_entities["worker-lease-expired"] == [expired_run.id]
     assert alert_entities["deployment-failed"] == [failed_deploy.id]
     assert alert_entities["secret-unhealthy"] == [secret.id]
+    secret_alert = next(alert for alert in summary["alerts"] if alert["id"] == "secret-unhealthy")
+    assert "expired 1" in secret_alert["summary"]
+
+
+@pytest.mark.asyncio
+async def test_delivery_service_observability_summary_aggregates_secret_failure_reasons(db_session, monkeypatch):
+    monkeypatch.setattr(settings, "secret_store_master_key", "test-secret-master-key")
+    openai_api_key = "sk-" + "test-leaky-provider-token-123456"
+
+    async def fake_remote_provider_health(provider: str, secret_value: str) -> ProviderHealthProbeResult:
+        return ProviderHealthProbeResult(
+            status="invalid",
+            reason="Remote rejected credential token=leaky-provider-token-123456",
+            remote_probe=True,
+            endpoint=f"{provider}.health",
+        )
+
+    monkeypatch.setattr(
+        "app.modules.secrets.service.check_remote_provider_health",
+        fake_remote_provider_health,
+    )
+    project = await auth_repository.create_project(
+        db_session,
+        key="secret-failure-reason",
+        name="Secret Failure Reason",
+    )
+    secret = await secret_store_service.create_secret(
+        db_session,
+        project_id=project.id,
+        name="openai_api_key",
+        provider="openai",
+        value=openai_api_key,
+        expires_at=utc_now() + timedelta(days=30),
+    )
+
+    checked = await secret_store_service.check_secret_health(
+        db_session,
+        secret.id,
+        verify_remote=True,
+    )
+    summary = await DeliveryService().get_observability_summary(db_session, project_ids=[project.id])
+
+    assert checked.health_status == "invalid"
+    assert checked.metadata_json["last_provider_health"]["reason"] == "Remote rejected credential token=[REDACTED]"
+    assert summary["metrics"]["unhealthy_secrets"] == 1
+    assert summary["metrics"]["invalid_secrets"] == 1
+    alert = next(item for item in summary["alerts"] if item["id"] == "secret-unhealthy")
+    assert "invalid 1" in alert["summary"]
+    assert "leaky-provider-token-123456" not in alert["summary"]
+    assert REDACTED in alert["summary"]
 
 
 @pytest.mark.asyncio
@@ -3905,6 +4045,90 @@ async def test_delivery_service_observability_summary_reports_execution_failure_
     assert alert["category"] == "execution"
     assert alert["count"] == 2
     assert alert["entity_ids"] == [run.id for run in reversed(failed_runs)]
+
+
+@pytest.mark.asyncio
+async def test_delivery_service_observability_summary_reports_sensitive_evidence_leak(db_session, monkeypatch):
+    monkeypatch.setattr(settings, "observability_alert_sample_limit", 3)
+    github_token = "ghs_" + "abcdefghijklmnopqrstuvwxyz123456"
+
+    project = await auth_repository.create_project(
+        db_session,
+        key="sensitive-evidence",
+        name="Sensitive Evidence",
+    )
+    demand = await delivery_repository.create_demand(
+        db_session,
+        raw_input="Detect leaked execution evidence.",
+        source_type="new_requirement",
+        title="Sensitive evidence",
+        project_id=project.id,
+    )
+    spec = await delivery_repository.create_spec_card(
+        db_session,
+        demand_id=demand.id,
+        status=SpecStatus.APPROVED,
+        title="Sensitive evidence",
+        user_story="As an operator, I can see sensitive evidence leak alerts.",
+        scope="Observability",
+        acceptance_criteria=["Sensitive evidence alert is emitted."],
+        constraints=[],
+        risks=[],
+        open_questions=[],
+    )
+    task = await delivery_repository.create_coding_task(
+        db_session,
+        demand_id=demand.id,
+        spec_card_id=spec.id,
+        status=CodingTaskStatus.READY,
+        title="Sensitive evidence task",
+        task_prompt="Implement sensitive evidence alert.",
+        allowed_paths=["backend/app"],
+        forbidden_actions=[],
+        required_checks=[],
+        expected_evidence=[],
+    )
+    safe_run = await delivery_repository.create_execution_run(
+        db_session,
+        coding_task_id=task.id,
+        status=ExecutionRunStatus.SUCCEEDED,
+        executor_type="symphony",
+        trigger_mode="manual",
+        evidence_json={"dispatch": {"api_key": REDACTED}},
+    )
+    await delivery_repository.create_execution_log(
+        db_session,
+        execution_run_id=safe_run.id,
+        level=ExecutionLogLevel.INFO,
+        message="Authorization: Bearer [REDACTED]",
+        event_json={"token": REDACTED},
+    )
+    leaked_run = await delivery_repository.create_execution_run(
+        db_session,
+        coding_task_id=task.id,
+        status=ExecutionRunStatus.SUCCEEDED,
+        executor_type="symphony",
+        trigger_mode="manual",
+        evidence_json={"dispatch": {"stdout_tail": "token=leaky-token-123456"}},
+    )
+    await delivery_repository.create_execution_log(
+        db_session,
+        execution_run_id=leaked_run.id,
+        level=ExecutionLogLevel.ERROR,
+        message=f"GitHub token {github_token}",
+        event_json={"private_key": "-----BEGIN PRIVATE KEY-----\nsecret\n-----END PRIVATE KEY-----"},
+    )
+    await db_session.commit()
+
+    summary = await DeliveryService().get_observability_summary(db_session, project_ids=[project.id])
+
+    assert summary["status"] == "critical"
+    assert summary["metrics"]["sensitive_evidence_runs"] == 1
+    alert = next(item for item in summary["alerts"] if item["id"] == "sensitive-evidence-leak")
+    assert alert["category"] == "secret"
+    assert alert["severity"] == "critical"
+    assert alert["count"] == 1
+    assert alert["entity_ids"] == [leaked_run.id]
 
 
 @pytest.mark.asyncio

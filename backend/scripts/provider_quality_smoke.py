@@ -29,15 +29,21 @@ DEFAULT_DEMAND = (
 
 def main() -> int:
     args = parse_args()
+    providers = _provider_names(args.provider)
     result = asyncio.run(
-        run_quality_smoke(
-            provider_name=args.provider,
+        run_quality_report(
+            provider_names=providers,
             raw_input=args.demand,
             min_score=args.min_score,
             run_impact=not args.spec_only,
         )
     )
-    print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True, default=str))
+    output = json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True, default=str)
+    if args.output_file:
+        output_path = Path(args.output_file)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(output + "\n", encoding="utf-8")
+    print(output)
     return 0 if result["passed"] else 1
 
 
@@ -46,8 +52,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--provider",
         default=settings.ai_workflow_provider,
-        choices=["local", "dify", "openai"],
-        help="Provider to test. Dify/OpenAI require their normal environment configuration.",
+        choices=["local", "dify", "openai", "all"],
+        help="Provider to test. Use 'all' to run local, Dify, and OpenAI in one report.",
     )
     parser.add_argument(
         "--demand",
@@ -65,7 +71,62 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Only call generate_spec. Useful while an impact workflow is not configured yet.",
     )
+    parser.add_argument(
+        "--output-file",
+        help="Optional JSON file path for the smoke report.",
+    )
     return parser.parse_args()
+
+
+async def run_quality_report(
+    *,
+    provider_names: list[str],
+    raw_input: str,
+    min_score: float,
+    run_impact: bool,
+) -> dict:
+    results = []
+    for provider_name in provider_names:
+        try:
+            results.append(
+                await run_quality_smoke(
+                    provider_name=provider_name,
+                    raw_input=raw_input,
+                    min_score=min_score,
+                    run_impact=run_impact,
+                )
+            )
+        except Exception as exc:  # noqa: BLE001 - smoke reports should preserve all provider failures.
+            results.append(
+                {
+                    "generated_at": datetime.now(timezone.utc).isoformat(),
+                    "provider": provider_name,
+                    "passed": False,
+                    "spec": None,
+                    "impact": None,
+                    "error": redact_value(
+                        {
+                            "type": exc.__class__.__name__,
+                            "message": str(exc)[:1000],
+                        }
+                    ),
+                }
+            )
+
+    if len(results) == 1:
+        return results[0]
+    passed_count = sum(1 for item in results if item.get("passed") is True)
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "providers": provider_names,
+        "passed": passed_count == len(results),
+        "summary": {
+            "passed": passed_count,
+            "failed": len(results) - passed_count,
+            "total": len(results),
+        },
+        "results": results,
+    }
 
 
 async def run_quality_smoke(
@@ -138,6 +199,12 @@ async def run_quality_smoke(
         result["passed"] = bool(spec_quality["passed"] and impact_quality["passed"])
 
     return result
+
+
+def _provider_names(provider: str) -> list[str]:
+    if provider == "all":
+        return ["local", "dify", "openai"]
+    return [provider]
 
 
 if __name__ == "__main__":
