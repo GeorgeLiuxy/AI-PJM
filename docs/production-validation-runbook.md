@@ -56,6 +56,14 @@
 
 验收标准：新环境可迁移、可启动、可配置凭证、可创建真实 MR/PR、可触发测试环境部署、可恢复备份。
 
+本地可用 Docker 先做一次生产等价迁移烟测：
+
+```powershell
+.\scripts\check-postgres-migrations.ps1
+```
+
+该脚本会启动临时 PostgreSQL 16 容器，执行 `backend/scripts/migrate.py upgrade head` 和 `current`，然后自动清理容器。
+
 ### P1：外部 Provider 质量验证
 
 本地规则 Provider 只能证明平台链路可用，不能证明生产 AI 质量。接入真实 Dify/OpenAI 后执行：
