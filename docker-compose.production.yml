@@ -1,0 +1,207 @@
+name: ai-pjm
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-ai_pjm}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ai_pjm_change_me}
+      POSTGRES_DB: ${POSTGRES_DB:-ai_pjm}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ai_pjm} -d ${POSTGRES_DB:-ai_pjm}"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  migrate:
+    image: ai-pjm-backend:${AI_PJM_IMAGE_TAG:-local}
+    build:
+      context: ./backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-ai_pjm}:${POSTGRES_PASSWORD:-ai_pjm_change_me}@postgres:5432/${POSTGRES_DB:-ai_pjm}
+      DATABASE_VALIDATE_MIGRATIONS: "false"
+    command: ["python", "scripts/migrate.py", "upgrade", "head"]
+    restart: "no"
+
+  backend:
+    image: ai-pjm-backend:${AI_PJM_IMAGE_TAG:-local}
+    build:
+      context: ./backend
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      ENVIRONMENT: production
+      DEBUG: "false"
+      HOST: 0.0.0.0
+      PORT: 8010
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-ai_pjm}:${POSTGRES_PASSWORD:-ai_pjm_change_me}@postgres:5432/${POSTGRES_DB:-ai_pjm}
+      DATABASE_VALIDATE_MIGRATIONS: "true"
+      AUTH_ENABLED: ${AUTH_ENABLED:-true}
+      AUTH_BOOTSTRAP_ADMIN_USERNAME: ${AUTH_BOOTSTRAP_ADMIN_USERNAME:-admin}
+      AUTH_BOOTSTRAP_ADMIN_PASSWORD: ${AUTH_BOOTSTRAP_ADMIN_PASSWORD:-change-me-before-production}
+      AUTH_BOOTSTRAP_ADMIN_DISPLAY_NAME: ${AUTH_BOOTSTRAP_ADMIN_DISPLAY_NAME:-Administrator}
+      AUTH_BOOTSTRAP_PROJECT_KEY: ${AUTH_BOOTSTRAP_PROJECT_KEY:-default}
+      AUTH_BOOTSTRAP_PROJECT_NAME: ${AUTH_BOOTSTRAP_PROJECT_NAME:-Default Project}
+      SECRET_STORE_MASTER_KEY: ${SECRET_STORE_MASTER_KEY:-replace-with-a-long-random-secret}
+      SECRET_STORE_KEY_ID: ${SECRET_STORE_KEY_ID:-production}
+      DELIVERY_APP_BASE_URL: ${DELIVERY_APP_BASE_URL:-http://localhost:8080}
+      CORS_ORIGINS: '${CORS_ORIGINS:-["http://localhost:8080"]}'
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      LOG_FORMAT: ${LOG_FORMAT:-json}
+      LOG_FILE: ${LOG_FILE:-logs/app.log}
+      WORKSPACE_ROOT: ${WORKSPACE_ROOT:-/workspace}
+      EXECUTION_WORKTREE_ROOT: ${EXECUTION_WORKTREE_ROOT:-/workspace/.runtime/worktrees}
+      EXECUTION_CODEX_ENABLED: ${EXECUTION_CODEX_ENABLED:-false}
+      EXECUTION_CODEX_COMMAND_TEMPLATE: ${EXECUTION_CODEX_COMMAND_TEMPLATE:-}
+      EXECUTION_CODEX_PREFLIGHT_COMMAND: ${EXECUTION_CODEX_PREFLIGHT_COMMAND:-}
+      EXECUTION_CODEX_TIMEOUT_SECONDS: ${EXECUTION_CODEX_TIMEOUT_SECONDS:-1800}
+      EXECUTION_AUTO_REPAIR_MAX_ATTEMPTS: ${EXECUTION_AUTO_REPAIR_MAX_ATTEMPTS:-1}
+      EXECUTION_MAX_CONCURRENCY: ${EXECUTION_MAX_CONCURRENCY:-1}
+      MERGE_REQUEST_DEFAULT_TARGET_BRANCH: ${MERGE_REQUEST_DEFAULT_TARGET_BRANCH:-main}
+      MERGE_REQUEST_AUTO_PUSH_ENABLED: ${MERGE_REQUEST_AUTO_PUSH_ENABLED:-true}
+      MERGE_REQUEST_GIT_REMOTE: ${MERGE_REQUEST_GIT_REMOTE:-origin}
+      GITLAB_API_BASE_URL: ${GITLAB_API_BASE_URL:-}
+      GITLAB_PROJECT_ID: ${GITLAB_PROJECT_ID:-}
+      GITLAB_TOKEN: ${GITLAB_TOKEN:-}
+      GITLAB_TOKEN_SECRET_NAME: ${GITLAB_TOKEN_SECRET_NAME:-gitlab_token}
+      GITLAB_DEFAULT_LABELS: ${GITLAB_DEFAULT_LABELS:-}
+      GITLAB_REVIEWER_IDS: ${GITLAB_REVIEWER_IDS:-}
+      GITLAB_ASSIGNEE_IDS: ${GITLAB_ASSIGNEE_IDS:-}
+      GITLAB_WEBHOOK_SECRET_TOKEN: ${GITLAB_WEBHOOK_SECRET_TOKEN:-}
+      GITHUB_API_BASE_URL: ${GITHUB_API_BASE_URL:-https://api.github.com}
+      GITHUB_REPOSITORY: ${GITHUB_REPOSITORY:-}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      GITHUB_TOKEN_SECRET_NAME: ${GITHUB_TOKEN_SECRET_NAME:-github_token}
+      GITHUB_DEFAULT_LABELS: ${GITHUB_DEFAULT_LABELS:-}
+      GITHUB_REVIEWERS: ${GITHUB_REVIEWERS:-}
+      GITHUB_ASSIGNEES: ${GITHUB_ASSIGNEES:-}
+      GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET:-}
+      DEPLOY_WEBHOOK_URL: ${DEPLOY_WEBHOOK_URL:-}
+      DEPLOY_TOKEN: ${DEPLOY_TOKEN:-}
+      DEPLOY_TOKEN_SECRET_NAME: ${DEPLOY_TOKEN_SECRET_NAME:-deploy_token}
+      DEPLOY_ENVIRONMENT_CONFIG_JSON: '${DEPLOY_ENVIRONMENT_CONFIG_JSON:-}'
+      SYMPHONY_BRIDGE_TOKEN: ${SYMPHONY_BRIDGE_TOKEN:-}
+      SYMPHONY_BRIDGE_DEFAULT_LEASE_SECONDS: ${SYMPHONY_BRIDGE_DEFAULT_LEASE_SECONDS:-300}
+      AI_WORKFLOW_PROVIDER: ${AI_WORKFLOW_PROVIDER:-local}
+      AI_WORKFLOW_PROVIDER_FALLBACK_ENABLED: ${AI_WORKFLOW_PROVIDER_FALLBACK_ENABLED:-true}
+      OPENAI_API_BASE_URL: ${OPENAI_API_BASE_URL:-https://api.openai.com/v1}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_API_KEY_SECRET_NAME: ${OPENAI_API_KEY_SECRET_NAME:-openai_api_key}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+      DIFY_API_BASE_URL: ${DIFY_API_BASE_URL:-}
+      DIFY_API_KEY: ${DIFY_API_KEY:-}
+      DIFY_API_KEY_SECRET_NAME: ${DIFY_API_KEY_SECRET_NAME:-dify_api_key}
+      DIFY_SPEC_WORKFLOW_ID: ${DIFY_SPEC_WORKFLOW_ID:-}
+      DIFY_IMPACT_WORKFLOW_ID: ${DIFY_IMPACT_WORKFLOW_ID:-}
+      DIFY_HEALTH_CHECK_URL: ${DIFY_HEALTH_CHECK_URL:-}
+    ports:
+      - "${BACKEND_PORT:-8010}:8010"
+    volumes:
+      - backend-runtime:/app/.runtime
+      - backend-logs:/app/logs
+      - ${AI_PJM_WORKSPACE_MOUNT:-.}:/workspace
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8010/health', timeout=5).read()\"",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+
+  frontend:
+    image: ai-pjm-frontend:${AI_PJM_IMAGE_TAG:-local}
+    build:
+      context: ./frontend
+      args:
+        VITE_API_BASE_URL: same-origin
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "${FRONTEND_PORT:-8080}:80"
+    restart: unless-stopped
+
+  deployment-sync-worker:
+    profiles: ["workers"]
+    image: ai-pjm-backend:${AI_PJM_IMAGE_TAG:-local}
+    depends_on:
+      backend:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-ai_pjm}:${POSTGRES_PASSWORD:-ai_pjm_change_me}@postgres:5432/${POSTGRES_DB:-ai_pjm}
+      DATABASE_VALIDATE_MIGRATIONS: "true"
+      DEPLOYMENT_SYNC_LIMIT: ${DEPLOYMENT_SYNC_LIMIT:-20}
+      DEPLOYMENT_SYNC_POLL_SECONDS: ${DEPLOYMENT_SYNC_POLL_SECONDS:-120}
+    command:
+      [
+        "python",
+        "scripts/deployment_sync_worker.py",
+        "--loop",
+        "--status-file",
+        "/app/.runtime/deployment-sync-worker/status.json",
+      ]
+    volumes:
+      - backend-runtime:/app/.runtime
+    restart: unless-stopped
+
+  observability-alert-worker:
+    profiles: ["workers"]
+    image: ai-pjm-backend:${AI_PJM_IMAGE_TAG:-local}
+    depends_on:
+      backend:
+        condition: service_healthy
+    environment:
+      AI_PJM_API_BASE_URL: http://backend:8010/api/v2
+      AI_PJM_API_TOKEN: ${AI_PJM_API_TOKEN:-}
+      OBSERVABILITY_ALERT_WEBHOOK_URL: ${OBSERVABILITY_ALERT_WEBHOOK_URL:-}
+      OBSERVABILITY_ALERT_POLL_SECONDS: ${OBSERVABILITY_ALERT_POLL_SECONDS:-120}
+    command:
+      [
+        "python",
+        "scripts/observability_alert_worker.py",
+        "--loop",
+        "--status-file",
+        "/app/.runtime/observability-alert-worker/status.json",
+      ]
+    volumes:
+      - backend-runtime:/app/.runtime
+    restart: unless-stopped
+
+  symphony-worker:
+    profiles: ["workers"]
+    image: ai-pjm-backend:${AI_PJM_IMAGE_TAG:-local}
+    depends_on:
+      backend:
+        condition: service_healthy
+    environment:
+      AI_PJM_API_BASE_URL: http://backend:8010/api/v2
+      SYMPHONY_BRIDGE_TOKEN: ${SYMPHONY_BRIDGE_TOKEN:-}
+      SYMPHONY_WORKER_ID: ${SYMPHONY_WORKER_ID:-compose-worker-1}
+      SYMPHONY_WORKSPACE: /workspace
+      SYMPHONY_WORKER_RUNTIME_DIR: /app/.runtime/symphony-worker
+      SYMPHONY_WORKER_STATUS_FILE: /app/.runtime/symphony-worker/status.json
+      SYMPHONY_RUNNER_COMMAND: ${SYMPHONY_RUNNER_COMMAND:-}
+      SYMPHONY_WORKER_COMMAND_TIMEOUT_SECONDS: ${SYMPHONY_WORKER_COMMAND_TIMEOUT_SECONDS:-1800}
+      SYMPHONY_WORKER_LEASE_SECONDS: ${SYMPHONY_WORKER_LEASE_SECONDS:-2100}
+      SYMPHONY_WORKER_POLL_SECONDS: ${SYMPHONY_WORKER_POLL_SECONDS:-5}
+    command: ["python", "scripts/symphony_worker.py", "--loop"]
+    volumes:
+      - backend-runtime:/app/.runtime
+      - ${AI_PJM_WORKSPACE_MOUNT:-.}:/workspace
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
+  backend-runtime:
+  backend-logs:

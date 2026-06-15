@@ -1,0 +1,13 @@
+.env
+.env.*
+!.env.example
+.pytest_cache/
+.runtime/
+.venv/
+__pycache__/
+data/
+logs/
+*.db
+*.log
+*_pid*.txt
+test_results.txt

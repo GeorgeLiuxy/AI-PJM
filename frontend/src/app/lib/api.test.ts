@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { getAuthToken, setAuthToken, authApi, deliveryApi } from './api'
+import { getAuthToken, setAuthToken, authApi, deliveryApi, normalizeApiBaseUrl } from './api'
 
 // Mock fetch
 global.fetch = vi.fn()
@@ -79,6 +79,12 @@ describe('api.ts - Internal Function Behavior', () => {
     const url = fetchCall[0] as string
     expect(url).toContain('limit=10')
     expect(url).toContain('offset=5')
+  })
+
+  it('should support same-origin API base for reverse-proxied production deployments', () => {
+    expect(normalizeApiBaseUrl('same-origin')).toBe('')
+    expect(normalizeApiBaseUrl('https://api.example.com/')).toBe('https://api.example.com')
+    expect(normalizeApiBaseUrl('')).toBe('http://localhost:8010')
   })
 })
 

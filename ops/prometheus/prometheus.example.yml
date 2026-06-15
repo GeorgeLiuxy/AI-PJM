@@ -1,0 +1,17 @@
+global:
+  scrape_interval: 30s
+  evaluation_interval: 30s
+
+rule_files:
+  - ai-pjm-alerts.yml
+
+scrape_configs:
+  - job_name: ai-pjm
+    metrics_path: /api/v2/observability/metrics
+    static_configs:
+      - targets:
+          - ai-pjm-backend:8010
+    # If AUTH_ENABLED=true, prefer a short-lived or scoped monitoring token.
+    # authorization:
+    #   type: Bearer
+    #   credentials_file: /etc/prometheus/secrets/ai-pjm-api-token

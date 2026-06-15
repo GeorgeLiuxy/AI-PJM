@@ -88,9 +88,19 @@
 
 执行步骤：
 
-1. 使用 `scripts/seed_delivery_capacity.py` 生成接近真实规模的数据。
-2. 使用 `scripts/performance_smoke.py` 测量核心读接口 p95 和错误率。
-3. 在真实数据库连接池、真实网络和真实 worker 并发下重复测试。
+1. 使用根目录脚本生成接近真实规模的数据并测量核心读接口 p95 和错误率。
+2. 在真实数据库连接池、真实网络和真实 worker 并发下重复测试。
+3. 保存 `.runtime/capacity` 下的 seed/performance JSON 作为上线证据。
+
+```powershell
+.\scripts\check-capacity-smoke.ps1 -Count 10000 -IncludeDeliveryRecords -BaseUrl http://127.0.0.1:8010 -Requests 120 -Concurrency 12 -MaxP95Ms 1000 -MaxErrorRatePercent 1
+```
+
+如果目标环境已经由其他方式准备好数据，只跑只读性能烟测：
+
+```powershell
+.\scripts\check-capacity-smoke.ps1 -SkipSeed -BaseUrl https://ai-pjm-test.example.com -Requests 120 -Concurrency 12
+```
 
 建议记录：
 
@@ -108,6 +118,15 @@
 2. 接入 JSON Lines 应用日志到集中日志平台。
 3. 配置 queue、worker lease、凭证、部署失败和近期失败率告警。
 4. 触发一条测试告警，确认通知渠道收到并能定位到项目或 trace。
+
+Prometheus 接入样例：
+
+```text
+ops/prometheus/prometheus.example.yml
+ops/prometheus/ai-pjm-alerts.yml
+```
+
+如果 `AUTH_ENABLED=true`，为 Prometheus 配置只读监控 token，并按 `prometheus.example.yml` 中的 `authorization` 注释接入。
 
 通过标准：
 

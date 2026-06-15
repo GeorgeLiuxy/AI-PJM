@@ -81,7 +81,7 @@ AI PJM 的生产级目标：
 - GitLab MR 创建、GitHub PR 创建、源分支自动推送、远端评审同步、阻塞意见自动修复、reviewer/assignee/label 配置和 GitLab/GitHub webhook 更新原 MR/PR 记录已有首版。
 - webhook 测试部署 client 已有首版，失败部署重新部署入口、环境级 URL 配置、部署日志证据归档、后台同步启停脚本、常见 CI/CD 状态语义归一化和通用状态节点证据已完成；仍缺目标 CI/CD 平台专用深度状态轮询。
 - Symphony Bridge、最小 worker、worker 循环异常不中断、lease 恢复、过期队列恢复脚本、失败重试幂等首版和暂停/恢复/取消控制已有首版；真实 Symphony daemon 和生产 worker 运维仍待实现。
-- Alembic 迁移链路首版已完成，并已通过 Docker PostgreSQL 真库升级到 head 演练；SQLite/PostgreSQL 最小备份恢复脚本已完成，后端只读性能烟测入口已完成。
+- Alembic 迁移链路首版已完成，并已通过 Docker PostgreSQL 真库升级到 head 演练；Docker Compose 生产等价最小栈已补齐 PostgreSQL、迁移、后端、前端和可选 worker profile；SQLite/PostgreSQL 最小备份恢复脚本已完成，后端只读性能烟测入口已完成。
 - 没有完整审计和集中运行指标平台；Prometheus 文本指标出口、集中告警通用 webhook 转发脚本和本地告警 worker 启停脚本已有首版。
 - Dify/OpenAI 本地质量评分和只读质量烟测脚本已完成；真实 Dify/OpenAI 环境生产联调仍待在目标环境执行。
 
@@ -266,7 +266,7 @@ AI 不允许直接决定：
 
 目标：替换 SQLite，保证可升级、可备份、可恢复。
 
-当前状态：迁移链路首版已完成。开发环境继续使用 SQLite、`create_all` 和少量幂等补列兼容已有本地库；生产路径提供 `backend/scripts/migrate.py` 执行 Alembic `upgrade head/current`，当前迁移可从空库升级到 head，并由 `tests/test_migrations.py` 覆盖 SQLite 干净库验证。非 SQLite 启动会在 `DATABASE_VALIDATE_MIGRATIONS=true` 时校验数据库是否到达 Alembic head。2026-06-04 已用 Docker PostgreSQL 16 真库验证 `upgrade head` 到 `012`，并确认交付主链路表已具备 `trace_id` 字段。`scripts/database_backup.py` 和 `scripts/database_restore.py` 已提供 SQLite/PostgreSQL 最小备份恢复入口。`scripts/seed_delivery_capacity.py` 可安全生成容量基准所需的合成交付数据，`scripts/performance_smoke.py` 已提供后端只读性能烟测入口，可验证核心读接口 p95 和错误率；1 万条任务规模的正式容量基准仍需在目标生产环境执行并固化阈值。
+当前状态：迁移链路首版已完成。开发环境继续使用 SQLite、`create_all` 和少量幂等补列兼容已有本地库；生产路径提供 `backend/scripts/migrate.py` 执行 Alembic `upgrade head/current`，当前迁移可从空库升级到 head，并由 `tests/test_migrations.py` 覆盖 SQLite 干净库验证。非 SQLite 启动会在 `DATABASE_VALIDATE_MIGRATIONS=true` 时校验数据库是否到达 Alembic head。2026-06-04 已用 Docker PostgreSQL 16 真库验证 `upgrade head` 到 `012`，并确认交付主链路表已具备 `trace_id` 字段。根目录已提供 `docker-compose.production.yml` 和 `docker-compose.production.env.example`，可启动 PostgreSQL、迁移任务、后端、前端反向代理，并通过 `workers` profile 按需启动部署同步、告警和 Symphony worker。`scripts/database_backup.py` 和 `scripts/database_restore.py` 已提供 SQLite/PostgreSQL 最小备份恢复入口。`scripts/seed_delivery_capacity.py` 可安全生成容量基准所需的合成交付数据，`scripts/performance_smoke.py` 已提供后端只读性能烟测入口，根目录 `scripts/check-capacity-smoke.ps1` 已把 seed、性能烟测和 `.runtime/capacity` 证据留存串成统一入口；1 万条任务规模的正式容量基准仍需在目标生产环境执行并固化阈值。
 
 实施内容：
 
@@ -279,10 +279,10 @@ AI 不允许直接决定：
 
 验收标准：
 
-- 新环境可一键执行 migration 初始化。（SQLite 干净库验证和 Docker PostgreSQL 真库验证已覆盖）
+- 新环境可一键执行 migration 初始化。（SQLite 干净库验证、Docker PostgreSQL 真库验证和 Compose 迁移服务配置已覆盖）
 - 旧版本升级不会丢数据。
-- 测试覆盖 SQLite 和 PostgreSQL 至少一种生产等价路径。（SQLite 迁移链路和 Docker PostgreSQL 真库升级演练已覆盖）
-- 关键列表接口在 1 万条任务下仍可接受。（容量数据准备脚本和只读性能烟测入口已完成，正式容量基准待在目标生产环境执行）
+- 测试覆盖 SQLite 和 PostgreSQL 至少一种生产等价路径。（SQLite 迁移链路、Docker PostgreSQL 真库升级演练和 Compose 配置解析已覆盖）
+- 关键列表接口在 1 万条任务下仍可接受。（容量数据准备脚本、只读性能烟测和统一容量验证脚本已完成，正式容量基准待在目标生产环境执行）
 
 不做风险：
 
@@ -482,7 +482,7 @@ AI 不允许直接决定：
 
 目标：让生产问题可发现、可定位、可恢复。
 
-当前状态：最小可观测性首版已完成。后端提供 `GET /api/v2/observability/summary`，按项目权限汇总 worker lease 过期、执行队列积压、凭证过期/禁用/未知/即将过期、测试部署失败、近期执行失败率异常和最近执行证据疑似明文凭证告警；`GET /api/v2/observability/projects` 已提供项目维度健康摘要，返回项目状态、告警数、关键指标和前三条告警；`GET /api/v2/observability/metrics` 已提供 Prometheus 0.0.4 文本指标出口，复用 summary 统计口径输出队列、worker、部署、凭证状态分布、近期失败率、敏感证据扫描和告警计数。`scripts/observability_alert_worker.py` 可轮询 summary API，并在 warning/critical 时转发到外部 webhook，项目根目录的 `scripts/start-observability-alert-worker.ps1` 和 `scripts/stop-observability-alert-worker.ps1` 已提供本地启停入口，`scripts/start-dev.ps1 -WithObservabilityAlert` 可随开发环境联动启动。交付工作台顶部展示运行告警、核心计数、前两条告警摘要、系统配置健康和当前项目接入状态。需求、Spec、门禁、上下文、影响分析、任务、执行、日志、MR、部署和验收已具备同一 `trace_id` 首版贯穿能力；`scripts/backfill_delivery_trace_ids.py` 可 dry-run 或正式回填历史记录。后端 `LOG_FORMAT=json` 已提供 JSON Lines 结构化应用日志开关，可输出 timestamp、level、logger、message、位置和 extra 字段。集中指标平台接入仍待生产环境完成。
+当前状态：最小可观测性首版已完成。后端提供 `GET /api/v2/observability/summary`，按项目权限汇总 worker lease 过期、执行队列积压、凭证过期/禁用/未知/即将过期、测试部署失败、近期执行失败率异常和最近执行证据疑似明文凭证告警；`GET /api/v2/observability/projects` 已提供项目维度健康摘要，返回项目状态、告警数、关键指标和前三条告警；`GET /api/v2/observability/metrics` 已提供 Prometheus 0.0.4 文本指标出口，复用 summary 统计口径输出队列、worker、部署、凭证状态分布、近期失败率、敏感证据扫描和告警计数。`ops/prometheus/prometheus.example.yml` 和 `ops/prometheus/ai-pjm-alerts.yml` 已提供最小 scrape 与告警规则样例。`scripts/observability_alert_worker.py` 可轮询 summary API，并在 warning/critical 时转发到外部 webhook，项目根目录的 `scripts/start-observability-alert-worker.ps1` 和 `scripts/stop-observability-alert-worker.ps1` 已提供本地启停入口，`scripts/start-dev.ps1 -WithObservabilityAlert` 可随开发环境联动启动。交付工作台顶部展示运行告警、核心计数、前两条告警摘要、系统配置健康和当前项目接入状态。需求、Spec、门禁、上下文、影响分析、任务、执行、日志、MR、部署和验收已具备同一 `trace_id` 首版贯穿能力；`scripts/backfill_delivery_trace_ids.py` 可 dry-run 或正式回填历史记录。后端 `LOG_FORMAT=json` 已提供 JSON Lines 结构化应用日志开关，可输出 timestamp、level、logger、message、位置和 extra 字段。集中指标平台接入仍待生产环境完成。
 
 实施内容：
 
@@ -596,7 +596,7 @@ AI 不允许直接决定：
 - 必要检查失败不能推进。
 - 每个完成任务有完整证据链。
 - 关键操作有审计记录。
-- 有基本监控和告警。（工作台最小告警首版已完成，集中监控待完成）
+- 有基本监控和告警。（工作台最小告警、Prometheus 指标出口和 Prometheus 告警规则样例已完成，目标平台接入待验证）
 
 ## 8. 生产验收清单
 
@@ -649,7 +649,7 @@ AI 不允许直接决定：
 4. 完善 SecretStore Provider 消费：Dify/OpenAI/GitLab/GitHub/webhook 部署已完成首版项目级读取；OpenAI/GitLab/GitHub 凭证远端探测和失败原因写回首版已完成，Dify 显式安全 URL 探测首版已完成。
 5. 做 S3/S4：用 Symphony 执行低风险任务，并增强真实 GitLab/GitHub MR。
 6. 做 S5：增强真实测试环境部署 Provider，补目标 CI/CD 平台深度状态轮询；重新部署、项目级环境配置 API、访问管理页最小入口、环境 JSON 兜底、日志证据和常见 CI/CD 状态语义归一化首版已完成。
-7. 做 S6：补目标生产容量基准和集中指标平台接入；备份恢复、过期队列恢复、历史 trace 回填、Alembic、Docker PostgreSQL 真库演练、trace id、容量数据准备脚本、只读性能烟测、异常失败率、Prometheus 文本指标出口、通用 webhook 告警转发和最小可观测性首版已完成。
+7. 做 S6：补目标生产容量基准和集中指标平台接入；备份恢复、过期队列恢复、历史 trace 回填、Alembic、Docker PostgreSQL 真库演练、trace id、容量数据准备脚本、只读性能烟测、统一容量验证脚本、异常失败率、Prometheus 文本指标出口、Prometheus 告警规则样例、通用 webhook 告警转发和最小可观测性首版已完成。
 8. 按 [目标环境验证清单](target-environment-validation.md) 执行真实试点联调，重点覆盖 Symphony、Dify/OpenAI、MR/PR、部署、容量和集中监控。
 
 目标环境联调通过后，AI PJM 才具备小团队低风险任务试点价值。企业 SSO、复杂角色、审计报表平台化不作为试点前置条件。

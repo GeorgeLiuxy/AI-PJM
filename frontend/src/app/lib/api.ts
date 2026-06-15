@@ -29,7 +29,18 @@ import type {
   SecretRecord,
 } from '../types';
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8010';
+export function normalizeApiBaseUrl(value?: string | null): string {
+  const configured = (value || '').trim();
+  if (configured === 'same-origin') {
+    return '';
+  }
+  if (!configured) {
+    return 'http://localhost:8010';
+  }
+  return configured.replace(/\/+$/, '');
+}
+
+const API_BASE_URL = normalizeApiBaseUrl(import.meta.env.VITE_API_BASE_URL);
 const AUTH_TOKEN_KEY = 'ai_pjm_auth_token';
 
 export function getAuthToken() {

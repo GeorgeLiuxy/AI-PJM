@@ -1,0 +1,74 @@
+groups:
+  - name: ai-pjm.rules
+    rules:
+      - alert: AiPjmObservabilityCritical
+        expr: ai_pjm_observability_status_code{status="critical"} == 2
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: AI PJM observability status is critical
+          description: The platform summary reports a critical state. Check queue, worker, credential, deployment, and evidence alerts.
+
+      - alert: AiPjmExecutionQueueBacklog
+        expr: ai_pjm_execution_runs{state="queued"} > 5
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: AI PJM execution queue is backlogged
+          description: Queued execution runs have exceeded the pilot threshold for more than 10 minutes.
+
+      - alert: AiPjmWorkerLeaseExpired
+        expr: ai_pjm_worker_expired_runs > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: AI PJM worker lease expired
+          description: One or more execution runs appear abandoned by workers and need recovery or investigation.
+
+      - alert: AiPjmRecentExecutionFailureRateHigh
+        expr: (ai_pjm_recent_execution_failure_rate_percent > 40) and on() (ai_pjm_recent_execution_runs{result="all"} >= 10)
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: AI PJM execution failure rate is high
+          description: Recent execution failure rate is above the pilot threshold.
+
+      - alert: AiPjmDeploymentFailed
+        expr: ai_pjm_failed_deployments > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: AI PJM test deployment failed
+          description: A test deployment failed and should not proceed to verification until recovered.
+
+      - alert: AiPjmSecretInvalidOrExpired
+        expr: ai_pjm_secret_health{state=~"invalid|expired|disabled"} > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: AI PJM credential is not usable
+          description: At least one project credential is invalid, expired, or disabled.
+
+      - alert: AiPjmSecretExpiringSoon
+        expr: ai_pjm_secret_health{state="expiring_soon"} > 0
+        for: 30m
+        labels:
+          severity: info
+        annotations:
+          summary: AI PJM credential is expiring soon
+          description: Rotate the credential before it blocks provider, MR, or deployment actions.
+
+      - alert: AiPjmSensitiveEvidenceDetected
+        expr: ai_pjm_sensitive_evidence_runs > 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: AI PJM evidence may contain sensitive data
+          description: Sensitive token-like data was detected in recent execution evidence. Investigate and rotate affected credentials if confirmed.

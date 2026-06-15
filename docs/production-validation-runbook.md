@@ -30,11 +30,42 @@
 .\scripts\check-production-readiness.ps1 -SkipBackend
 .\scripts\check-production-readiness.ps1 -ContinueOnError
 .\scripts\check-production-readiness.ps1 -AuditRetries 5
+.\scripts\check-production-compose.ps1
+.\scripts\check-production-suite.ps1 -BuildComposeImages
 ```
 
 验收标准：脚本所有选中检查通过，且工作区没有未提交的有效代码。
 
 远端仓库已提供 GitHub Actions 工作流 `.github/workflows/production-validation.yml`。每次 push 或 pull request 会自动执行后端关键测试、PostgreSQL 迁移烟测、Provider local smoke、前端依赖审计、前端回归测试和生产构建。正式合并前应以该工作流通过作为最低门禁。
+
+本地或目标测试机可用 Docker Compose 启动一套生产等价最小栈：
+
+```powershell
+Copy-Item docker-compose.production.env.example .env.production.local
+# 编辑 .env.production.local，替换数据库密码、管理员密码、SECRET_STORE_MASTER_KEY 和外部系统凭证。
+docker compose --env-file .env.production.local -f docker-compose.production.yml up -d --build postgres migrate backend frontend
+```
+
+验证入口：
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:8080/health
+Invoke-WebRequest http://127.0.0.1:8080/ | Select-Object -ExpandProperty StatusCode
+```
+
+需要后台自动同步和告警时，在已配置 `SYMPHONY_BRIDGE_TOKEN`、`AI_PJM_API_TOKEN`、部署 webhook 和告警 webhook 后再打开 worker profile：
+
+```powershell
+docker compose --env-file .env.production.local -f docker-compose.production.yml --profile workers up -d
+```
+
+停机命令：
+
+```powershell
+docker compose --env-file .env.production.local -f docker-compose.production.yml down
+```
+
+验收标准：Compose 配置可解析，PostgreSQL 健康，迁移任务成功退出，后端 `/health` 健康，前端可访问，worker profile 只在凭证齐全时启用。
 
 ### P0：真实环境闭环验证
 
@@ -70,6 +101,20 @@
 
 该脚本会启动临时 PostgreSQL 16 容器，执行 `backend/scripts/migrate.py upgrade head` 和 `current`，然后自动清理容器。
 
+生产等价服务栈使用根目录的 `docker-compose.production.yml`。该 Compose 文件把迁移、后端、前端和 PostgreSQL 拆开，默认只启动主链路；`deployment-sync-worker`、`observability-alert-worker` 和 `symphony-worker` 放在 `workers` profile，避免未配置外部凭证时误启动失败。
+
+Compose 配置进入固定门禁：
+
+```powershell
+.\scripts\check-production-compose.ps1
+```
+
+如果当前网络可拉取 Docker Hub 基础镜像，可增加镜像构建验证：
+
+```powershell
+.\scripts\check-production-compose.ps1 -BuildImages
+```
+
 ### P1：外部 Provider 质量验证
 
 本地规则 Provider 只能证明平台链路可用，不能证明生产 AI 质量。接入真实 Dify/OpenAI 后执行：
@@ -99,6 +144,21 @@
 - 将 Prometheus 文本指标接入现有监控系统。
 - 将告警 worker 接入团队真实通知渠道。
 - 固化备份调度、恢复演练和日志保留策略。
+
+Prometheus 最小接入样例位于：
+
+```text
+ops/prometheus/prometheus.example.yml
+ops/prometheus/ai-pjm-alerts.yml
+```
+
+容量基准统一入口：
+
+```powershell
+.\scripts\check-capacity-smoke.ps1 -Count 10000 -IncludeDeliveryRecords -BaseUrl http://127.0.0.1:8010 -Requests 120 -Concurrency 12 -MaxP95Ms 1000 -MaxErrorRatePercent 1
+```
+
+该脚本会把 seed 和 performance 输出写入 `.runtime/capacity`，便于上线评审留痕。若目标环境已存在压测数据，可加 `-SkipSeed` 只执行只读性能烟测。
 
 验收标准：核心读接口 p95、错误率、队列积压、worker 异常、凭证失效和部署失败都有明确阈值、告警和处理人。
 

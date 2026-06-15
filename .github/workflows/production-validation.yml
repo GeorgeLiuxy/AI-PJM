@@ -83,6 +83,19 @@ jobs:
       - name: Show current migration revision
         run: python scripts/migrate.py current --database-url "postgresql+asyncpg://ai_pjm:ai_pjm_test@127.0.0.1:5432/ai_pjm_test"
 
+  compose:
+    name: Production compose config
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Validate default production compose config
+        run: docker compose --env-file docker-compose.production.env.example -f docker-compose.production.yml config --quiet
+
+      - name: Validate worker profile production compose config
+        run: docker compose --env-file docker-compose.production.env.example -f docker-compose.production.yml --profile workers config --quiet
+
   frontend:
     name: Frontend audit, tests, and build
     runs-on: ubuntu-latest

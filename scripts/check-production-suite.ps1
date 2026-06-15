@@ -4,7 +4,8 @@ param(
     [string]$Provider = "local",
     [double]$ProviderMinScore = 0.75,
     [int]$AuditRetries = 3,
-    [switch]$SkipAudit
+    [switch]$SkipAudit,
+    [switch]$BuildComposeImages
 )
 
 $ErrorActionPreference = "Stop"
@@ -37,6 +38,14 @@ Invoke-Step -Name "Production readiness baseline" -Command {
 if ($IncludePostgres) {
     Invoke-Step -Name "PostgreSQL migration smoke" -Command {
         & (Join-Path $Root "scripts\check-postgres-migrations.ps1")
+    }
+}
+
+Invoke-Step -Name "Production compose config" -Command {
+    if ($BuildComposeImages) {
+        & (Join-Path $Root "scripts\check-production-compose.ps1") -BuildImages
+    } else {
+        & (Join-Path $Root "scripts\check-production-compose.ps1")
     }
 }
 

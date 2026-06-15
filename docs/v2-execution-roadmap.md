@@ -294,6 +294,6 @@ V2 主链路已经完成本地 MVP 闭环，下一步应转入生产化基础建
 4. 完善 SecretStore Provider 消费：Dify/OpenAI/GitLab/GitHub/webhook 部署已完成首版项目级读取，Dify/OpenAI 已有平台级重试和本地降级，OpenAI/GitLab/GitHub 凭证已有只读远端探测、失败原因写回和访问管理页轮换修复入口，Dify 支持显式安全 URL 探测。
 5. 做 S3/S4：用 Symphony 执行低风险任务，创建真实 GitLab/GitHub MR，并补远端评审同步；GitLab 创建、同步、webhook 更新原 MR、自动修复推回源分支已完成首版，GitHub PR 创建、同步、webhook 更新原 PR 和自动修复推回源分支已完成首版。
 6. 做 S5：增强真实测试环境部署 Provider，补目标 CI/CD 平台深度状态轮询；重新部署入口、项目级环境配置 API、访问管理页最小入口、环境 JSON 兜底、日志证据、后台同步启停脚本、常见 CI/CD 状态语义归一化和通用状态节点证据首版已完成。
-7. 再补生产级 Dify/OpenAI 真实环境联调、目标生产容量基准和集中指标平台接入；备份恢复、过期队列恢复、历史 trace 回填、trace 时间线查询、Alembic 迁移链路、Docker PostgreSQL 真库演练、trace id、只读性能烟测、容量数据准备脚本、异常失败率、Prometheus 文本指标出口、通用 webhook 告警转发、最小可观测性、OpenAI Provider 和产品化交互首版已完成。
+7. 再补生产级 Dify/OpenAI 真实环境联调、目标生产容量基准和集中指标平台接入；备份恢复、过期队列恢复、历史 trace 回填、trace 时间线查询、Alembic 迁移链路、Docker PostgreSQL 真库演练、Docker Compose 生产等价最小栈、trace id、只读性能烟测、容量数据准备脚本、统一容量验证脚本、异常失败率、Prometheus 文本指标出口、通用 webhook 告警转发、最小可观测性、OpenAI Provider 和产品化交互首版已完成。
 
 原因：生产使用时最大的风险不是缺少复杂组织治理，而是主链路仍需人工搬运、真实 MR/部署没有打通、执行和证据不够可靠。先补这些直接影响交付效率的能力，平台才能真实减少人工介入。
