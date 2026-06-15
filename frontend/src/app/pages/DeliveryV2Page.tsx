@@ -3036,7 +3036,7 @@ function TabButton({
   );
 }
 
-function StatusBadge({ value }: { value?: string | number | null }) {
+export function StatusBadge({ value }: { value?: string | number | null }) {
   const rawLabel = value === undefined || value === null || value === '' ? 'empty' : String(value);
   const label = formatStatusLabel(rawLabel);
   const tone = rawLabel.includes('manual') || rawLabel.includes('blocked') || rawLabel.includes('failed')
@@ -3459,7 +3459,7 @@ function approvalHint(item: DeliveryDemand): string {
   return '需要人工确认风险、范围和验收标准后才能继续自动执行。';
 }
 
-function formatStatusLabel(value?: string | number | null): string {
+export function formatStatusLabel(value?: string | number | null): string {
   if (value === undefined || value === null || value === '') {
     return '无内容';
   }
@@ -3527,7 +3527,7 @@ function formatProjectOnboardingStatus(value: string): string {
   return labels[value] || value;
 }
 
-function formatGateType(value?: string | null): string {
+export function formatGateType(value?: string | null): string {
   if (!value) {
     return '未知门禁';
   }
@@ -3548,7 +3548,7 @@ function formatGateType(value?: string | null): string {
   return gateLabels[value] || value;
 }
 
-function formatTraceStage(value: string): string {
+export function formatTraceStage(value: string): string {
   const labels: Record<string, string> = {
     demand: '需求',
     spec: '规格',
@@ -3599,7 +3599,7 @@ function formatTraceCountLabel(value: string): string {
   return labels[value] || value;
 }
 
-function hasMeaningfulMetadata(value: Record<string, unknown>): boolean {
+export function hasMeaningfulMetadata(value: Record<string, unknown>): boolean {
   return Object.values(value).some((item) => {
     if (item === null || item === undefined || item === '') {
       return false;
@@ -3673,7 +3673,7 @@ function formatAuditEntity(entityType: string, entityId?: number | null): string
   return entityId ? `${label} #${entityId}` : label;
 }
 
-function localizeText(value: string): string {
+export function localizeText(value: string): string {
   let output = value;
   const exactTranslations: Record<string, string> = {
     'Add a compact execution status badge to the delivery dashboard.': '为交付工作台添加紧凑的执行状态标识。',
@@ -3846,14 +3846,14 @@ function localizeText(value: string): string {
   return output;
 }
 
-function formatConfidence(value?: number | null): string | null {
+export function formatConfidence(value?: number | null): string | null {
   if (value === undefined || value === null) {
     return null;
   }
   return `${Math.round(value * 100)}%`;
 }
 
-function formatDateTime(value: string): string {
+export function formatDateTime(value: string): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) {
     return value;
