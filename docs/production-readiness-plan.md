@@ -79,8 +79,8 @@ AI PJM 的生产级目标：
 - 权限仍是本地首版，但当前阶段只需要最小角色模型；企业 SSO、复杂组织角色和审计报表平台化不作为近期主线。
 - 密钥和 Token 已有本地加密存储、健康检查和过期提示首版，Dify、OpenAI、GitLab MR、GitHub PR 和 webhook 部署已接入项目级消费；OpenAI/GitLab/GitHub 凭证已有只读远端探测和失败原因写回，Dify 支持通过显式 `DIFY_HEALTH_CHECK_URL` 配置安全只读探测。尚未接 Vault/KMS 和集中轮换策略。
 - GitLab MR 创建、GitHub PR 创建、源分支自动推送、远端评审同步、阻塞意见自动修复、reviewer/assignee/label 配置和 GitLab/GitHub webhook 更新原 MR/PR 记录已有首版。
-- webhook 测试部署 client 已有首版，失败部署重新部署入口、环境级 URL 配置、部署日志证据归档、后台同步启停脚本、常见 CI/CD 状态语义归一化和通用状态节点证据已完成；仍缺目标 CI/CD 平台专用深度状态轮询。
-- Symphony Bridge、最小 worker、worker 循环异常不中断、lease 恢复、过期队列恢复脚本、失败重试幂等首版和暂停/恢复/取消控制已有首版；真实 Symphony daemon 和生产 worker 运维仍待实现。
+- webhook 测试部署 client 已有首版，失败部署重新部署入口、环境级 URL 配置、部署日志证据归档、后台同步启停脚本、常见 CI/CD 状态语义归一化、通用状态节点证据、运行标识、失败原因、日志链接和 links/_links 解析已完成；仍缺目标 CI/CD 平台专用 payload/日志解析。
+- Symphony Bridge、生产 Compose worker profile、`SYMPHONY_RUNNER_COMMAND` 兼容 adapter、worker 循环异常不中断、lease 恢复、过期队列恢复脚本、失败重试幂等首版和暂停/恢复/取消控制已有首版；真实上游 Symphony daemon 联调和生产容量阈值仍待目标环境验证。
 - Alembic 迁移链路首版已完成，并已通过 Docker PostgreSQL 真库升级到 head 演练；Docker Compose 生产等价最小栈已补齐 PostgreSQL、迁移、后端、前端和可选 worker profile；SQLite/PostgreSQL 最小备份恢复脚本已完成，后端只读性能烟测入口已完成。
 - 没有完整审计和集中运行指标平台；Prometheus 文本指标出口、集中告警通用 webhook 转发脚本和本地告警 worker 启停脚本已有首版。
 - Dify/OpenAI 本地质量评分和只读质量烟测脚本已完成；真实 Dify/OpenAI 环境生产联调仍待在目标环境执行。
@@ -292,14 +292,14 @@ AI 不允许直接决定：
 
 目标：复用 OpenAI Symphony 的 Codex 编排模式，让长任务脱离页面请求，支持稳定批量执行。
 
-当前状态：已完成首版 internal bridge API、最小命令行 worker、`SymphonyBridgeExecutor`、lease 过期失败恢复、暂停/恢复/取消控制、同一任务活跃 run 幂等保护、手动重试 `retry_context.retry_chain` 证据，以及本地常驻 worker 启停脚本和 status 文件。`executor_type=symphony` 的执行记录可以保持 queued，等待 worker claim；worker complete 后由 AI PJM 校验 required checks、allowed paths 和必要变更证据，再决定最终门禁。运行中 worker 如果超过 lease 未 heartbeat，会被标记 failed 并保留恢复证据，避免永久卡在 running；`scripts/recover_symphony_runs.py` 可手动或定时恢复过期 running run，并输出状态文件。操作者可以暂停 queued run、恢复 paused run、取消 queued/paused/running run；取消后的 worker late complete 会被拒绝。真实 Symphony daemon 替换仍待完成。
+当前状态：已完成首版 internal bridge API、最小命令行 worker、`SymphonyBridgeExecutor`、lease 过期失败恢复、暂停/恢复/取消控制、同一任务活跃 run 幂等保护、手动重试 `retry_context.retry_chain` 证据，以及本地常驻 worker 启停脚本和 status 文件。生产 Compose 已提供 `symphony-worker` profile，并通过 `SYMPHONY_RUNNER_COMMAND` 支持把底层执行替换为真实 Symphony/Codex 命令。`executor_type=symphony` 的执行记录可以保持 queued，等待 worker claim；worker complete 后由 AI PJM 校验 required checks、allowed paths 和必要变更证据，再决定最终门禁。运行中 worker 如果超过 lease 未 heartbeat，会被标记 failed 并保留恢复证据，避免永久卡在 running；`scripts/recover_symphony_runs.py` 可手动或定时恢复过期 running run，并输出状态文件。操作者可以暂停 queued run、恢复 paused run、取消 queued/paused/running run；取消后的 worker late complete 会被拒绝。真实上游 Symphony daemon 接入只需要按该 bridge contract 消费任务和回写结果，剩余工作是目标环境联调与容量阈值固化。
 
 实施内容：
 
 - 按 [symphony-integration-plan.md](symphony-integration-plan.md) 完成 S0-S3。（S0-S2 已完成，S3 已有最小 worker、lease 过期失败恢复和本地常驻启停脚本）
 - 增加 AI PJM internal execution bridge API：claim、heartbeat、event、complete。（已完成首版）
 - 增加 `SymphonyBridgeExecutor`，支持 `executor_type = symphony`。（已完成首版）
-- 引入 Symphony daemon 或兼容 adapter。
+- 引入 Symphony daemon 或兼容 adapter。（兼容 adapter 和生产 Compose worker profile 已完成；真实上游 daemon 待目标环境联调）
 - 执行任务入队，不在 HTTP 请求里长时间运行。（symphony executor 首版已完成）
 - 支持排队、运行、成功、失败、取消、暂停、恢复、超时。（取消/暂停/恢复和 lease 过期失败恢复首版已完成）
 - 支持最大并发、项目级并发、任务级超时。
@@ -383,14 +383,14 @@ AI 不允许直接决定：
 
 目标：让 MR 后的结果进入可验证环境。
 
-当前状态：`DeployClient` 边界和 `webhook` 部署 provider 首版已实现，可用项目级 `deploy_token` 或全局 `DEPLOY_TOKEN` 调用外部 webhook，并把部署 URL、状态、commit 和凭据来源写入 `DeployRecord` 证据。webhook 返回 `status_url` 时，可通过 `POST /api/v2/deployments/{id}/sync-status` 手动同步部署状态，也可通过 `POST /api/v2/deployments/sync-pending` 批量同步 pending 部署；`scripts/deployment_sync_worker.py --loop` 可后台定时调用服务层同步 pending 部署，项目根目录的 `scripts/start-deployment-sync-worker.ps1` 和 `scripts/stop-deployment-sync-worker.ps1` 已提供本地启停入口，`scripts/start-dev.ps1 -WithDeploymentSync` 可随开发环境联动启动。同步会写回 `test_deployed` 门禁、审计事件和脱敏证据。失败状态会写入失败门禁，不会推进验收；失败部署可通过 `POST /api/v2/deployments/{id}/redeploy` 创建新部署记录并保留来源证据。`GET/PUT /api/v2/projects/{project_id}/deployment-environments` 已支持项目级测试环境 URL、日志 URL 和说明配置，访问管理页已提供最小项目测试环境配置入口；创建部署时优先使用项目配置，缺省再回退到 `DEPLOY_ENVIRONMENT_CONFIG_JSON`。provider 返回的 `log_url/logs` 会脱敏归档到部署证据。webhook provider 已能识别常见 CI/CD 状态字段、嵌套 pipeline/job/stage/step/check/task 状态和状态词，并把原始状态、归一化状态、状态路径、失败/等待节点摘要写入证据。目标 CI/CD 平台专用深度轮询和更完整日志归档策略仍待在真实环境增强。
+当前状态：`DeployClient` 边界和 `webhook` 部署 provider 首版已实现，可用项目级 `deploy_token` 或全局 `DEPLOY_TOKEN` 调用外部 webhook，并把部署 URL、状态、commit 和凭据来源写入 `DeployRecord` 证据。webhook 返回 `status_url` 时，可通过 `POST /api/v2/deployments/{id}/sync-status` 手动同步部署状态，也可通过 `POST /api/v2/deployments/sync-pending` 批量同步 pending 部署；`scripts/deployment_sync_worker.py --loop` 可后台定时调用服务层同步 pending 部署，项目根目录的 `scripts/start-deployment-sync-worker.ps1` 和 `scripts/stop-deployment-sync-worker.ps1` 已提供本地启停入口，`scripts/start-dev.ps1 -WithDeploymentSync` 可随开发环境联动启动。同步会写回 `test_deployed` 门禁、审计事件和脱敏证据。失败状态会写入失败门禁，不会推进验收；失败部署可通过 `POST /api/v2/deployments/{id}/redeploy` 创建新部署记录并保留来源证据。`GET/PUT /api/v2/projects/{project_id}/deployment-environments` 已支持项目级测试环境 URL、日志 URL 和说明配置，访问管理页已提供最小项目测试环境配置入口；创建部署时优先使用项目配置，缺省再回退到 `DEPLOY_ENVIRONMENT_CONFIG_JSON`。provider 返回的 `log_url/logs` 会脱敏归档到部署证据。webhook provider 已能识别常见 CI/CD 状态字段、ArgoCD sync/health、嵌套 pipeline/job/stage/step/check/task 状态和状态词，并把原始状态、归一化状态、状态路径、失败/等待节点、运行标识、失败原因、日志链接和 links/_links 解析结果写入证据。目标 CI/CD 平台专用 payload/日志解析和更完整日志归档策略仍待在真实环境增强。
 
 实施内容：
 
 - 增加 `DeployClient` 接口。（已完成首版）
 - 对接现有 CI/CD、测试环境平台或脚本入口。（webhook 首版已完成）
 - 支持按项目配置部署环境。（项目级配置 API、访问管理页最小入口和全局环境 JSON 兜底已完成）
-- 记录部署 URL、版本、commit、日志、状态。（部署 URL、状态、commit、日志 URL、日志尾部和通用 CI/CD 状态节点证据首版已完成）
+- 记录部署 URL、版本、commit、日志、状态。（部署 URL、状态、commit、日志 URL、日志尾部、运行标识、失败原因和通用 CI/CD 状态节点证据首版已完成）
 - webhook `status_url` 同步部署状态。（单条同步、pending 批量同步入口、后台轮询脚本和项目根目录启停脚本首版已完成）
 - 部署失败保留日志并阻断验收。
 - 支持重新部署。（失败部署重新部署首版已完成）

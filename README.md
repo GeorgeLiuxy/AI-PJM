@@ -1,6 +1,6 @@
 # AI PJM
 
-> 当前状态校正：生产化进度以 `docs/v2-execution-roadmap.md` 和 `docs/production-readiness-plan.md` 为准。当前 GitLab MR、GitHub PR、GitLab/GitHub webhook、部署 pending 后台同步、最小告警 worker、Prometheus 文本指标出口、PostgreSQL/Alembic 迁移链路、Docker Compose 生产等价最小栈和 Dify/OpenAI Provider 首版都已具备本地可验证实现；仍需在真实环境完成 Symphony daemon 替换、目标 CI/CD 深度轮询、Dify/OpenAI 生产联调、容量基准和集中监控接入。
+> 当前状态校正：生产化进度以 `docs/v2-execution-roadmap.md` 和 `docs/production-readiness-plan.md` 为准。当前 GitLab MR、GitHub PR、GitLab/GitHub webhook、部署 pending 后台同步、最小告警 worker、Prometheus 文本指标出口、PostgreSQL/Alembic 迁移链路、Docker Compose 生产等价最小栈、Symphony 生产 worker 兼容 adapter、通用 CI/CD 深度状态轮询和 Dify/OpenAI Provider 首版都已具备本地可验证实现；仍需在真实环境完成上游 Symphony daemon 联调、目标 CI/CD 平台专用 payload/日志解析、Dify/OpenAI 生产联调、容量基准和集中监控接入。
 
 AI PJM 是一个 AI 辅助工程交付编排平台。它不是通用项目管理工具，不是企业治理平台，也不是替代 Codex 的编码器；它负责把业务输入转成可审计、可验证、可协作的工程交付链路。
 
@@ -56,10 +56,10 @@ AI PJM 是一个 AI 辅助工程交付编排平台。它不是通用项目管理
 - OpenAI Provider 首版已实现；Dify/OpenAI Provider 已有平台级重试和本地规则降级首版，OpenAI/GitLab/GitHub 凭证已有只读远端探测首版，Dify 支持显式安全 URL 探测；仍需生产联调、质量评估和监控。
 - Codex CLI 首版已可用，但仍需继续做自动修复闭环、性能优化和生产化运维配置。本机 WindowsApps 下的 `codex.exe` 仍会返回 `Access is denied`，当前使用全局 npm 版 `@openai/codex`。
 - 当前 MR/PR、测试环境部署和验收已有本地记录闭环；GitLab MR、GitHub PR 和 webhook 部署已有首版 provider，创建 MR/PR 前可自动推送执行分支，并可同步远端评审评论、CI/check 状态。GitLab/GitHub webhook 可更新原 MR/PR 记录；评审阻塞可触发自动修复 run，修复成功后会把修复分支推回原远端源分支；webhook 部署返回 `status_url` 时可手动或通过后台 worker 同步部署状态，失败部署可从工作台重新部署。
-- Symphony Bridge 已完成首版 internal API、最小 worker、lease 恢复和暂停/恢复/取消控制；真实 Symphony daemon 替换和更强队列恢复仍待实现。
+- Symphony Bridge 已完成首版 internal API、生产 Compose worker profile、`SYMPHONY_RUNNER_COMMAND` 兼容 adapter、lease 恢复和暂停/恢复/取消控制；真实上游 Symphony daemon 联调和更强队列恢复仍待目标环境验证。
 - 认证授权和项目权限保留最小角色模型；企业 SSO、复杂业务角色和审计报表平台化不作为近期主线。
 - 密钥管理已有本地加密存储、健康检查和执行证据脱敏首版，Dify/OpenAI/GitLab/GitHub/部署 provider 已可按项目消费凭证。
-- PostgreSQL 真库演练、备份恢复流程、后台 Worker 启停脚本、trace、集中告警、异常失败率指标、Prometheus 文本指标出口和告警规则样例已有首版；生产容量基准、真实 Symphony daemon、目标 CI/CD 深度轮询和集中监控接入仍待目标环境完成。
+- PostgreSQL 真库演练、备份恢复流程、后台 Worker 启停脚本、trace、集中告警、异常失败率指标、Prometheus 文本指标出口、通用 CI/CD 深度轮询和告警规则样例已有首版；生产容量基准、真实上游 Symphony daemon、目标 CI/CD 专用 payload/日志解析和集中监控接入仍待目标环境完成。
 - 默认子 Agent 评审、多仓库编排、自动生产发布暂不做。
 
 后续功能执行顺序以 [v2-execution-roadmap.md](docs/v2-execution-roadmap.md) 为准；生产级落地以 [production-readiness-plan.md](docs/production-readiness-plan.md) 为准。

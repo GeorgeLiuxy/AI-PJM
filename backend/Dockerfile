@@ -1,10 +1,14 @@
-FROM python:3.11-slim
+FROM python:3.11
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1
+    PIP_NO_CACHE_DIR=1 \
+    DEBIAN_FRONTEND=noninteractive
 
 WORKDIR /app
+
+RUN git config --system --add safe.directory /workspace \
+    && git config --system --add safe.directory '/workspace/*'
 
 RUN adduser --disabled-password --gecos "" appuser
 

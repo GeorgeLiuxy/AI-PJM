@@ -9,6 +9,7 @@
 - 配置项目级 `openai_api_key`、`dify_api_key`、`gitlab_token` 或 `github_token`、`deploy_token`。
 - 配置真实代码仓库路径、默认分支、MR/PR 目标仓库和测试环境地址。
 - 启动后端、前端、Symphony worker、部署同步 worker、可观测告警 worker。
+- 若暂未接入上游 Symphony daemon，先把 `SYMPHONY_RUNNER_COMMAND` 配置为目标环境可用的 Codex/Symphony 命令模板；该命令会收到 `{workspace}`、`{task_package_file}` 和 `{task_prompt_file}`。
 
 ## 2. Symphony 执行联调
 
@@ -22,6 +23,7 @@
 4. 确认 HTTP dispatch 不长时间阻塞，run 保持 queued。
 5. 确认 worker claim、heartbeat、complete 都写入证据。
 6. 确认成功 run 包含 changed files、commit、required checks 和 allowed paths 校验结果。
+7. 如果使用真实上游 Symphony daemon，确认 daemon 通过 AI PJM bridge contract 读取任务、回写事件和完成状态，而不是绕过 AI PJM 门禁。
 
 失败验收：
 
@@ -75,6 +77,7 @@
 3. 确认 webhook 返回 deployment URL、status URL、commit 或流水线标识。
 4. 执行单条状态同步和 pending 批量同步。
 5. 制造失败部署，确认可重新部署并保留来源证据。
+6. 确认目标 CI/CD 返回的 pipeline/job/stage/step/check 状态、失败原因、日志链接和运行标识会进入部署证据；若目标平台字段不在通用解析范围内，在 webhook adapter 中先转成通用字段。
 
 通过标准：
 

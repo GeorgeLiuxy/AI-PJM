@@ -2595,6 +2595,7 @@ def test_webhook_deploy_client_normalizes_common_ci_cd_status_shapes():
     assert client._status({"pipeline": {"jobs": [{"name": "build", "status": "success"}, {"name": "deploy", "status": "running"}]}}) == DeploymentStatus.PENDING
     assert client._status({"stages": [{"name": "build", "status": "success"}, {"name": "deploy", "state": "failed"}]}) == DeploymentStatus.FAILED
     assert client._status({"workflow_run": {"conclusion": "success"}}) == DeploymentStatus.DEPLOYED
+    assert client._status({"status": {"sync": {"status": "Synced"}, "health": {"status": "Degraded"}}}) == DeploymentStatus.FAILED
 
 
 @pytest.mark.asyncio
@@ -2661,6 +2662,92 @@ async def test_webhook_deploy_client_extracts_nested_ci_cd_status_evidence(monke
             "normalized_status": "failed",
             "path": "pipeline.jobs[1].status",
             "url": "https://ci.example/jobs/2",
+        }
+    ]
+    assert "project-deploy-token" not in str(remote_status.evidence)
+
+
+@pytest.mark.asyncio
+async def test_webhook_deploy_client_extracts_deep_ci_cd_failure_evidence(monkeypatch):
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "provider": "jenkins",
+                "status": {"state": "failed"},
+                "pipeline_id": 77,
+                "branch": "main",
+                "_links": {
+                    "self": {"href": "https://ci.example/builds/77"},
+                    "log": {"href": "https://ci.example/builds/77/console"},
+                },
+                "jobs": [
+                    {
+                        "display_name": "deploy-prod",
+                        "result": "FAILURE",
+                        "failure_message": "rollout timed out waiting for deployment",
+                        "duration": 121,
+                        "started_at": "2026-06-16T10:00:00Z",
+                        "_links": {"web": {"href": "https://ci.example/jobs/deploy-prod/1"}},
+                    }
+                ],
+            }
+
+    class FakeAsyncClient:
+        def __init__(self, timeout):
+            self.timeout = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return None
+
+        async def get(self, url, headers):
+            return FakeResponse()
+
+    monkeypatch.setattr("app.modules.delivery.deployments.webhook.httpx.AsyncClient", FakeAsyncClient)
+    credential = ProviderCredential(
+        provider="webhook",
+        value="project-deploy-token",
+        source="secret_store",
+        project_id=123,
+        secret_name="deploy_token",
+    )
+    deploy_record = DeployRecord(
+        id=23,
+        merge_request_id=19,
+        coding_task_id=11,
+        provider="webhook",
+        status=DeploymentStatus.PENDING,
+        environment="test",
+        evidence_json={"provider_evidence": {"status_url": "https://deploy.example/status/deploy-123"}},
+    )
+
+    remote_status = await WebhookDeployClient(credential=credential).fetch_deployment_status(
+        deploy_record=deploy_record,
+    )
+
+    assert remote_status.status == DeploymentStatus.FAILED
+    assert remote_status.url == "https://ci.example/builds/77"
+    assert remote_status.summary == "Deployment failed: deploy-prod: rollout timed out waiting for deployment"
+    assert remote_status.evidence["status_path"] == "status.state"
+    assert remote_status.evidence["status_platform"] == "jenkins"
+    assert remote_status.evidence["status_identifiers"] == {"pipeline_id": "77", "branch": "main"}
+    assert remote_status.evidence["failure_reason"] == "deploy-prod: rollout timed out waiting for deployment"
+    assert remote_status.evidence["log_url"] == "https://ci.example/builds/77/console"
+    assert remote_status.evidence["failed_status_items"] == [
+        {
+            "name": "deploy-prod",
+            "raw_status": "FAILURE",
+            "normalized_status": "failed",
+            "path": "jobs[0].result",
+            "url": "https://ci.example/jobs/deploy-prod/1",
+            "failure_reason": "rollout timed out waiting for deployment",
+            "duration_seconds": "121",
+            "started_at": "2026-06-16T10:00:00Z",
         }
     ]
     assert "project-deploy-token" not in str(remote_status.evidence)

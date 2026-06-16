@@ -29,7 +29,7 @@
 - 前后端启动/关闭脚本。
 - 后端结构化日志开关：`LOG_FORMAT=json` 输出 JSON Lines 应用日志。
 
-当前是“本地 MVP 闭环”，不是完整生产级系统。近期生产化缺口集中在主链路：真实 Symphony daemon/worker 替换、GitLab/GitHub 评审同步、目标 CI/CD 平台专用部署状态轮询、生产数据库和 Provider 生产联调/质量评估。企业 SSO、复杂业务角色和审计报表平台化不是近期主线。
+当前是“本地 MVP 闭环”，不是完整生产级系统。近期生产化缺口集中在主链路：真实上游 Symphony daemon 目标环境联调、目标 CI/CD 平台专用 payload/日志解析、生产数据库容量基准和 Provider 生产联调/质量评估。企业 SSO、复杂业务角色和审计报表平台化不是近期主线。
 
 ## 2. 总体目标
 
@@ -188,7 +188,7 @@
 
 目标：MR 后能进入测试环境验证，而不是停在代码层。
 
-状态：首版已实现本地测试环境记录与验收记录。当前 `local` 模式只记录测试环境 URL、环境名、验收状态和证据链接；`webhook` 部署 Provider 已可按项目读取 `deploy_token` 调用外部部署入口，并把部署 URL、状态和证据写入 `DeployRecord`。webhook 返回 `status_url` 时，工作台可手动同步单条部署状态并回写门禁、审计和证据；后端提供 `POST /api/v2/deployments/sync-pending` 批量同步 pending 部署，`scripts/deployment_sync_worker.py --loop` 可后台定时同步 pending 部署，项目根目录已提供 `scripts/start-deployment-sync-worker.ps1`、`scripts/stop-deployment-sync-worker.ps1` 和 `scripts/start-dev.ps1 -WithDeploymentSync`。失败部署可从工作台重新部署并保留来源证据。`GET/PUT /api/v2/projects/{project_id}/deployment-environments` 已支持项目级测试环境 URL、日志 URL 和说明配置，访问管理页已提供最小项目测试环境配置入口；创建部署时优先使用项目配置，缺省再回退到 `DEPLOY_ENVIRONMENT_CONFIG_JSON`。部署 provider 返回的日志 URL 和日志尾部会脱敏进入证据。webhook provider 已支持常见 CI/CD 状态字段、嵌套 pipeline/job/stage/step/check/task 状态和状态词归一化，并保留原始状态、状态路径、失败/等待节点摘要证据。目标 CI/CD 平台专用深度状态轮询待在真实环境增强。
+状态：首版已实现本地测试环境记录与验收记录。当前 `local` 模式只记录测试环境 URL、环境名、验收状态和证据链接；`webhook` 部署 Provider 已可按项目读取 `deploy_token` 调用外部部署入口，并把部署 URL、状态和证据写入 `DeployRecord`。webhook 返回 `status_url` 时，工作台可手动同步单条部署状态并回写门禁、审计和证据；后端提供 `POST /api/v2/deployments/sync-pending` 批量同步 pending 部署，`scripts/deployment_sync_worker.py --loop` 可后台定时同步 pending 部署，项目根目录已提供 `scripts/start-deployment-sync-worker.ps1`、`scripts/stop-deployment-sync-worker.ps1` 和 `scripts/start-dev.ps1 -WithDeploymentSync`。失败部署可从工作台重新部署并保留来源证据。`GET/PUT /api/v2/projects/{project_id}/deployment-environments` 已支持项目级测试环境 URL、日志 URL 和说明配置，访问管理页已提供最小项目测试环境配置入口；创建部署时优先使用项目配置，缺省再回退到 `DEPLOY_ENVIRONMENT_CONFIG_JSON`。部署 provider 返回的日志 URL 和日志尾部会脱敏进入证据。webhook provider 已支持常见 CI/CD 状态字段、ArgoCD sync/health、嵌套 pipeline/job/stage/step/check/task 状态、状态词归一化、运行标识、失败原因、日志链接和 links/_links 解析，并保留原始状态、状态路径、失败/等待节点摘要证据。目标 CI/CD 平台专用 payload/日志解析待在真实环境增强。
 
 任务：
 
@@ -208,11 +208,11 @@
 
 目标：通过 Symphony Bridge 把执行从 HTTP 请求迁移到后台编排，并支撑批量任务能力。
 
-状态：首版已实现执行队列可见性、并发上限保护、Symphony internal bridge API、最小命令行 worker、`SymphonyBridgeExecutor`、lease 过期失败恢复、暂停/恢复/取消控制、同一任务活跃 run 幂等保护、手动重试 retry chain，以及本地常驻 worker 启停脚本和 status 文件。常驻 worker 循环默认会在单次异常后记录 `error` 状态并继续轮询，显式 `--fail-fast` 才会在异常时退出。`executor_type=symphony` 的 dispatch 不再退回本地检查，也不会在 HTTP 请求中长时间执行；它会保持 queued，等待 worker claim 后通过 bridge complete 回写最终状态。真实 Symphony daemon 替换和真正并行调度仍待实现。
+状态：首版已实现执行队列可见性、并发上限保护、Symphony internal bridge API、最小命令行 worker、生产 Compose worker profile、`SYMPHONY_RUNNER_COMMAND` 兼容 adapter、`SymphonyBridgeExecutor`、lease 过期失败恢复、暂停/恢复/取消控制、同一任务活跃 run 幂等保护、手动重试 retry chain，以及本地常驻 worker 启停脚本和 status 文件。常驻 worker 循环默认会在单次异常后记录 `error` 状态并继续轮询，显式 `--fail-fast` 才会在异常时退出。`executor_type=symphony` 的 dispatch 不再退回本地检查，也不会在 HTTP 请求中长时间执行；它会保持 queued，等待 worker claim 后通过 bridge complete 回写最终状态。真实上游 Symphony daemon 联调和真正并行调度容量阈值仍待目标环境验证。
 
 任务：
 
-- 按 `docs/symphony-integration-plan.md` 完成 S0-S3。（S0-S2 已完成，S3 已有最小 worker、lease 过期失败恢复、本地常驻启停脚本和 worker 循环异常不中断）
+- 按 `docs/symphony-integration-plan.md` 完成 S0-S3。（S0-S2 已完成，S3 已有最小 worker、生产 Compose worker profile、`SYMPHONY_RUNNER_COMMAND` 兼容 adapter、lease 过期失败恢复、本地常驻启停脚本和 worker 循环异常不中断）
 - 引入任务队列和运行中状态管理。（执行记录队列查询已完成）
 - 增加 internal claim、heartbeat、event、complete API。（已完成首版）
 - 增加 `SymphonyBridgeExecutor`，支持 `executor_type = symphony`。（已完成首版）
@@ -293,7 +293,7 @@ V2 主链路已经完成本地 MVP 闭环，下一步应转入生产化基础建
 3. 做 S1/S2：实现 AI PJM internal execution bridge API 和 `SymphonyBridgeExecutor`。
 4. 完善 SecretStore Provider 消费：Dify/OpenAI/GitLab/GitHub/webhook 部署已完成首版项目级读取，Dify/OpenAI 已有平台级重试和本地降级，OpenAI/GitLab/GitHub 凭证已有只读远端探测、失败原因写回和访问管理页轮换修复入口，Dify 支持显式安全 URL 探测。
 5. 做 S3/S4：用 Symphony 执行低风险任务，创建真实 GitLab/GitHub MR，并补远端评审同步；GitLab 创建、同步、webhook 更新原 MR、自动修复推回源分支已完成首版，GitHub PR 创建、同步、webhook 更新原 PR 和自动修复推回源分支已完成首版。
-6. 做 S5：增强真实测试环境部署 Provider，补目标 CI/CD 平台深度状态轮询；重新部署入口、项目级环境配置 API、访问管理页最小入口、环境 JSON 兜底、日志证据、后台同步启停脚本、常见 CI/CD 状态语义归一化和通用状态节点证据首版已完成。
-7. 再补生产级 Dify/OpenAI 真实环境联调、目标生产容量基准和集中指标平台接入；备份恢复、过期队列恢复、历史 trace 回填、trace 时间线查询、Alembic 迁移链路、Docker PostgreSQL 真库演练、Docker Compose 生产等价最小栈、trace id、只读性能烟测、容量数据准备脚本、统一容量验证脚本、异常失败率、Prometheus 文本指标出口、通用 webhook 告警转发、最小可观测性、OpenAI Provider 和产品化交互首版已完成。
+6. 做 S5：增强真实测试环境部署 Provider，补目标 CI/CD 平台深度状态轮询；重新部署入口、项目级环境配置 API、访问管理页最小入口、环境 JSON 兜底、日志证据、后台同步启停脚本、常见 CI/CD 状态语义归一化、通用状态节点证据、运行标识、失败原因和日志链接首版已完成。后续只针对目标 CI/CD 平台补专用 payload/日志解析。
+7. 再补生产级 Dify/OpenAI 真实环境联调、目标生产容量基准和集中指标平台接入；备份恢复、过期队列恢复、历史 trace 回填、trace 时间线查询、Alembic 迁移链路、Docker PostgreSQL 真库演练、Docker Compose 生产等价最小栈、生产 worker 兼容 adapter、trace id、只读性能烟测、容量数据准备脚本、统一容量验证脚本、异常失败率、Prometheus 文本指标出口、通用 webhook 告警转发、最小可观测性、OpenAI Provider 和产品化交互首版已完成。
 
 原因：生产使用时最大的风险不是缺少复杂组织治理，而是主链路仍需人工搬运、真实 MR/部署没有打通、执行和证据不够可靠。先补这些直接影响交付效率的能力，平台才能真实减少人工介入。
