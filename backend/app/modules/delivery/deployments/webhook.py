@@ -198,7 +198,7 @@ class WebhookDeployClient:
             "progressing",
         }:
             return DeploymentStatus.PENDING
-        return DeploymentStatus.DEPLOYED
+        return DeploymentStatus.PENDING
 
     def _raw_status(self, body: dict) -> str | None:
         signal = self._status_signal(body)

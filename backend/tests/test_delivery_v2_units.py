@@ -2647,6 +2647,7 @@ def test_webhook_deploy_client_normalizes_common_ci_cd_status_shapes():
     assert client._status({"stages": [{"name": "build", "status": "success"}, {"name": "deploy", "state": "failed"}]}) == DeploymentStatus.FAILED
     assert client._status({"workflow_run": {"conclusion": "success"}}) == DeploymentStatus.DEPLOYED
     assert client._status({"status": {"sync": {"status": "Synced"}, "health": {"status": "Degraded"}}}) == DeploymentStatus.FAILED
+    assert client._status({"status": "provider-specific-unknown"}) == DeploymentStatus.PENDING
 
 
 @pytest.mark.asyncio
