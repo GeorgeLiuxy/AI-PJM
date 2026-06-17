@@ -9,6 +9,7 @@ param(
     [switch]$Wait,
     [int]$TimeoutSeconds = 900,
     [int]$PollSeconds = 20,
+    [switch]$AllowAnonymous,
     [switch]$ContinueOnFailure
 )
 
@@ -177,6 +178,39 @@ if (-not $Owner -or -not $Repo) {
 
 if (-not $CommitSha) {
     $CommitSha = (& git -C $Root rev-parse HEAD).Trim()
+}
+
+if (-not $Token -and -not $AllowAnonymous) {
+    $result = [pscustomobject]@{
+        generated_at = (Get-Date).ToUniversalTime().ToString("o")
+        repository = "$Owner/$Repo"
+        branch = $Branch
+        commit_sha = $CommitSha
+        workflow = $Workflow
+        status = "blocked"
+        blocker = $true
+        summary = "GITHUB_TOKEN is required for reliable GitHub Actions validation."
+        next_action = "Set GITHUB_TOKEN and rerun this script. Use -AllowAnonymous only for an intentional unauthenticated check."
+        evidence = @{
+            token_used = $false
+            anonymous_allowed = $false
+        }
+    }
+
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $OutputFile) | Out-Null
+    $result | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $OutputFile -Encoding UTF8
+
+    Write-Host "GitHub Actions validation"
+    Write-Host "Repository: $Owner/$Repo"
+    Write-Host "Commit: $CommitSha"
+    Write-Host "Status: $($result.status)"
+    Write-Host "Summary: $($result.summary)"
+    Write-Host "Report: $OutputFile"
+
+    if (-not $ContinueOnFailure) {
+        exit 1
+    }
+    return
 }
 
 $startedAt = Get-Date

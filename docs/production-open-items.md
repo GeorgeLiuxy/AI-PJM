@@ -8,7 +8,8 @@
 
 1. GitHub Actions 远端 CI 验证
    - 当前应通过 `scripts/check-github-actions.ps1` 读取 `Production Validation` workflow 状态。
-   - 如果报告显示 API 限流、Token 失效、Actions 未启用或账号计费锁定，先修复 GitHub 侧状态，再重新验证。
+   - 默认必须提供 `GITHUB_TOKEN`，避免未认证 GitHub API 被限流；只有明确验证匿名访问时才使用 `-AllowAnonymous`。
+   - 如果报告显示 Token 缺失、Token 失效、Actions 未启用或账号计费锁定，先修复 GitHub 侧状态，再重新验证。
 
 2. NPM 安全审计服务
    - `npm audit --audit-level=high` 依赖 npm registry 的安全审计接口。

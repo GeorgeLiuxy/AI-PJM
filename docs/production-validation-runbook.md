@@ -49,6 +49,8 @@ $env:GITHUB_TOKEN="<github-token>"
 
 该脚本默认读取当前 `HEAD`、`main` 分支和 `Production Validation` workflow，报告写入 `.runtime\github-actions\*.json`。如果 GitHub API 限流、Token 失效、Actions 未启用或账号计费锁定导致 workflow 未执行，脚本会把结果标记为外部阻塞；这类问题不应消耗主链路开发时间，修复 GitHub 侧状态后重新运行即可。
 
+`GITHUB_TOKEN` 是默认必需项，避免未认证 API 被限流。只有明确需要验证匿名访问时，才使用 `-AllowAnonymous`。
+
 本地或目标测试机可用 Docker Compose 启动一套生产等价最小栈：
 
 ```powershell
