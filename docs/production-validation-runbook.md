@@ -16,7 +16,7 @@
 
 - 后端关键测试：认证、交付主链路、可观测性、迁移和健康检查。
 - 本地 Provider 质量烟测：验证 Spec 生成质量下限。
-- 前端安全审计：`npm audit --audit-level=high`。
+- 前端安全审计：`npm audit --audit-level=high`，默认只执行一次，避免 npm registry 或安全审计接口异常时反复阻塞主线。
 - 前端回归测试：Vitest。
 - 前端生产构建：Vite build。
 
@@ -25,18 +25,18 @@
 ```powershell
 .\scripts\check-production-suite.ps1 -IncludePostgres
 .\scripts\check-production-suite.ps1 -Provider all
-.\scripts\check-production-suite.ps1 -AuditRetries 5
+.\scripts\check-production-suite.ps1 -AuditRetries 3
 .\scripts\check-production-readiness.ps1 -SkipFrontend
 .\scripts\check-production-readiness.ps1 -SkipBackend
 .\scripts\check-production-readiness.ps1 -ContinueOnError
-.\scripts\check-production-readiness.ps1 -AuditRetries 5
+.\scripts\check-production-readiness.ps1 -AuditRetries 3
 .\scripts\check-production-compose.ps1
 .\scripts\check-production-suite.ps1 -BuildComposeImages
 .\scripts\check-production-suite.ps1 -CheckRemoteActions
 .\scripts\check-production-compose.ps1 -SmokeUp
 ```
 
-验收标准：脚本所有选中检查通过，且工作区没有未提交的有效代码。
+验收标准：脚本所有选中检查通过，且工作区没有未提交的有效代码。若只有 `npm audit` 因 registry、代理或审计服务不可用失败，应记录为外部阻塞；本地功能验证可临时使用 `-SkipAudit`，修复外部网络或 registry 状态后再补跑审计。
 
 远端仓库已提供 GitHub Actions 工作流 `.github/workflows/production-validation.yml`。每次 push 或 pull request 会自动执行后端关键测试、PostgreSQL 迁移烟测、Provider local smoke、前端依赖审计、前端回归测试和生产构建。正式合并前应以该工作流通过作为最低门禁。
 

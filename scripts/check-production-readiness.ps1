@@ -4,7 +4,7 @@ param(
     [switch]$SkipProviderSmoke,
     [switch]$SkipAudit,
     [switch]$SkipBuild,
-    [int]$AuditRetries = 3,
+    [int]$AuditRetries = 1,
     [switch]$ContinueOnError
 )
 
@@ -90,7 +90,7 @@ if (-not $SkipFrontend) {
                     Start-Sleep -Seconds 3
                 }
             }
-            throw "npm audit failed after $attempts attempt(s)."
+            throw "npm audit failed after $attempts attempt(s). This check depends on the npm registry audit endpoint; treat repeated endpoint failures as an external blocker. Use -SkipAudit for local functional validation or pass -AuditRetries N when you intentionally want retries."
         }
     }
 

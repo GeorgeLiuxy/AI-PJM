@@ -3,7 +3,7 @@ param(
     [ValidateSet("local", "dify", "openai", "all")]
     [string]$Provider = "local",
     [double]$ProviderMinScore = 0.75,
-    [int]$AuditRetries = 3,
+    [int]$AuditRetries = 1,
     [switch]$SkipAudit,
     [switch]$BuildComposeImages,
     [switch]$CheckRemoteActions

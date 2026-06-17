@@ -10,23 +10,27 @@
    - 当前应通过 `scripts/check-github-actions.ps1` 读取 `Production Validation` workflow 状态。
    - 如果报告显示 API 限流、Token 失效、Actions 未启用或账号计费锁定，先修复 GitHub 侧状态，再重新验证。
 
-2. 真实 MR/PR Provider
+2. NPM 安全审计服务
+   - `npm audit --audit-level=high` 依赖 npm registry 的安全审计接口。
+   - 如果 registry、代理或审计接口不可用，先记录为外部阻塞；本地功能验证可临时使用 `-SkipAudit`，不要反复重试消耗时间。
+
+3. 真实 MR/PR Provider
    - 需要在目标环境配置 GitLab/GitHub 仓库、目标分支、项目级 `gitlab_token` 或 `github_token`。
    - 本地已具备创建、同步评审、webhook 回写和修复后推回源分支能力；目标环境要验证的是凭证权限和仓库策略。
 
-3. 真实测试环境部署 Provider
+4. 真实测试环境部署 Provider
    - 需要目标 CI/CD 或部署平台提供 webhook URL、状态 URL、日志 URL 和失败 payload 样例。
    - 通用状态解析已覆盖常见 `pipeline/job/stage/step/check/task` 结构；专用字段应在拿到真实 payload 后再补。
 
-4. 上游 Symphony daemon 联调
+5. 上游 Symphony daemon 联调
    - 当前已有 AI PJM Bridge、最小 worker、Compose worker profile 和 `SYMPHONY_RUNNER_COMMAND` adapter。
    - 如果接入真实 daemon，必须让 daemon 通过 bridge claim/event/complete 回写，不能绕过 AI PJM 门禁。
 
-5. Dify/OpenAI 生产质量评估
+6. Dify/OpenAI 生产质量评估
    - 需要真实 workflow、API Key 和脱敏样例需求。
    - 接入后运行 `scripts/check-provider-quality.ps1 -Provider all`，只允许 Provider 返回结构化草稿，不允许直接推进流程状态。
 
-6. 集中监控和告警渠道
+7. 集中监控和告警渠道
    - 本地已有 Prometheus 文本指标和通用 webhook 告警 worker。
    - 目标环境需要接入实际 Prometheus/日志平台/通知渠道，并验证一条测试告警可被接收和定位。
 
