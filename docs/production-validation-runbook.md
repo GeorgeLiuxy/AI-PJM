@@ -142,6 +142,8 @@ Compose 配置进入固定门禁：
 .\scripts\check-provider-quality.ps1 -Provider all
 ```
 
+`-Provider all` 会预检 Dify/OpenAI 的外部配置。缺少 `DIFY_API_BASE_URL`、`DIFY_API_KEY`、`DIFY_SPEC_WORKFLOW_ID`、`DIFY_IMPACT_WORKFLOW_ID` 或 `OPENAI_API_KEY` 时，脚本会生成 `status=blocked` 的报告并返回可识别的外部阻塞错误；这属于外部条件缺失，不要反复重试。
+
 验收标准：
 
 - local、Dify、OpenAI 的结果都有结构化输出或脱敏失败原因。

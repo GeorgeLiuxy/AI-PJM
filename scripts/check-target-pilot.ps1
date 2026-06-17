@@ -31,7 +31,7 @@ function New-CheckResult {
     param(
         [string]$Id,
         [string]$Title,
-        [ValidateSet("passed", "warning", "failed", "skipped")]
+        [ValidateSet("passed", "warning", "failed", "blocked", "skipped")]
         [string]$Status,
         [bool]$Blocker,
         [string]$Summary,
@@ -318,6 +318,11 @@ if ($RunProviderQuality) {
                 output_file = $providerOutput
                 min_score = $ProviderMinScore
             }
+        } elseif ($LASTEXITCODE -eq 2) {
+            New-CheckResult -Id "provider_quality" -Title "Provider quality" -Status "blocked" -Blocker $true -Summary "Provider quality smoke is blocked by missing external provider configuration." -NextAction "Configure Dify/OpenAI credentials and workflow ids, or run with -Provider local for local-only validation." -Evidence @{
+                provider = $Provider
+                output_file = $providerOutput
+            }
         } else {
             New-CheckResult -Id "provider_quality" -Title "Provider quality" -Status "failed" -Blocker $true -Summary "Provider quality smoke exited with code $LASTEXITCODE." -NextAction "Fix provider configuration or keep provider disabled for pilot." -Evidence @{
                 provider = $Provider
@@ -325,10 +330,19 @@ if ($RunProviderQuality) {
             }
         }
     } catch {
-        New-CheckResult -Id "provider_quality" -Title "Provider quality" -Status "failed" -Blocker $true -Summary "Provider quality smoke failed." -NextAction "Fix provider configuration or keep provider disabled for pilot." -Evidence @{
-            provider = $Provider
-            output_file = $providerOutput
-            error = $_.Exception.Message
+        $message = [string]$_.Exception.Message
+        if ($message -like "Provider quality external blocker:*") {
+            New-CheckResult -Id "provider_quality" -Title "Provider quality" -Status "blocked" -Blocker $true -Summary "Provider quality smoke is blocked by missing external provider configuration." -NextAction "Configure Dify/OpenAI credentials and workflow ids, or run with -Provider local for local-only validation." -Evidence @{
+                provider = $Provider
+                output_file = $providerOutput
+                error = $message
+            }
+        } else {
+            New-CheckResult -Id "provider_quality" -Title "Provider quality" -Status "failed" -Blocker $true -Summary "Provider quality smoke failed." -NextAction "Fix provider configuration or keep provider disabled for pilot." -Evidence @{
+                provider = $Provider
+                output_file = $providerOutput
+                error = $message
+            }
         }
     }
 }

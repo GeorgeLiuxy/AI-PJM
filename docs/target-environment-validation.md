@@ -48,10 +48,12 @@
 
 执行步骤：
 
-1. 运行 `scripts/provider_quality_smoke.py --provider all --demand-file ../docs/provider-quality-samples.example.json --output-file .runtime/provider-quality-report.json`，一次覆盖 local、Dify、OpenAI；必要时也可分别运行单个 provider。
+1. 运行 `scripts/check-provider-quality.ps1 -Provider all -DemandFile docs/provider-quality-samples.example.json -IncludeImpact`，一次覆盖 local、Dify、OpenAI；必要时也可分别运行单个 provider。
 2. 每个 Provider 至少验证 10 条真实历史需求或脱敏样例需求。
 3. 记录 Spec/Impact 的 schema 版本、prompt 版本、workflow/model 和质量分。
 4. 人工抽检低分样例，确认扣分项能解释问题。
+
+如果脚本输出 `status=blocked`，说明缺少真实 Dify/OpenAI 凭证或 workflow id，应先补齐外部配置；本地不再反复重试。
 
 通过标准：
 
