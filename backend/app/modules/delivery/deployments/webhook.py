@@ -207,6 +207,7 @@ class WebhookDeployClient:
         return None
 
     def _status_signal(self, body: dict, path: str = "") -> dict | None:
+        direct_signals: list[dict] = []
         for key in (
             "status",
             "state",
@@ -222,15 +223,21 @@ class WebhookDeployClient:
             if isinstance(raw_value, dict):
                 signal = self._status_signal(raw_value, self._child_path(path, key))
                 if signal:
-                    return signal
+                    direct_signals.append(signal)
                 continue
             value = self._str_or_none(raw_value)
             if value:
-                return {
-                    "raw_status": value,
-                    "path": self._child_path(path, key),
-                    "name": self._status_item_name(body),
-                }
+                direct_signals.append(
+                    {
+                        "raw_status": value,
+                        "path": self._child_path(path, key),
+                        "name": self._status_item_name(body),
+                    }
+                )
+
+        direct_signal = self._choose_status_signal(direct_signals)
+        if direct_signal:
+            return direct_signal
 
         nested_signals: list[dict] = []
         for key in (
@@ -267,7 +274,20 @@ class WebhookDeployClient:
 
     def _list_status_signal(self, body: dict, path: str) -> dict | None:
         signals: list[dict] = []
-        for key in ("jobs", "stages", "steps", "checks", "tasks", "deployments", "pods", "resources", "nodes"):
+        for key in (
+            "jobs",
+            "stages",
+            "steps",
+            "checks",
+            "check_runs",
+            "check_suites",
+            "workflow_runs",
+            "tasks",
+            "deployments",
+            "pods",
+            "resources",
+            "nodes",
+        ):
             items = body.get(key)
             if not isinstance(items, list):
                 continue
@@ -325,7 +345,20 @@ class WebhookDeployClient:
 
     def _status_items(self, body: dict, path: str = "") -> list[dict]:
         items: list[dict] = []
-        for key in ("jobs", "stages", "steps", "checks", "tasks", "deployments", "pods", "resources", "nodes"):
+        for key in (
+            "jobs",
+            "stages",
+            "steps",
+            "checks",
+            "check_runs",
+            "check_suites",
+            "workflow_runs",
+            "tasks",
+            "deployments",
+            "pods",
+            "resources",
+            "nodes",
+        ):
             raw_items = body.get(key)
             if not isinstance(raw_items, list):
                 continue
@@ -389,7 +422,14 @@ class WebhookDeployClient:
                 return value.lower()
         if body.get("object_kind") or body.get("project") or body.get("pipeline"):
             return "gitlab"
-        if body.get("workflow_run") or body.get("check_suite") or body.get("check_run"):
+        if (
+            body.get("workflow_run")
+            or body.get("workflow_runs")
+            or body.get("check_suite")
+            or body.get("check_suites")
+            or body.get("check_run")
+            or body.get("check_runs")
+        ):
             return "github"
         status = body.get("status")
         if body.get("application") and (body.get("sync") or body.get("health")):
@@ -521,7 +561,20 @@ class WebhookDeployClient:
         if reason:
             return reason
 
-        for key in ("jobs", "stages", "steps", "checks", "tasks", "deployments", "pods", "resources", "nodes"):
+        for key in (
+            "jobs",
+            "stages",
+            "steps",
+            "checks",
+            "check_runs",
+            "check_suites",
+            "workflow_runs",
+            "tasks",
+            "deployments",
+            "pods",
+            "resources",
+            "nodes",
+        ):
             raw_items = body.get(key)
             if not isinstance(raw_items, list):
                 continue
@@ -571,6 +624,12 @@ class WebhookDeployClient:
             if value:
                 return redact_text(value)[:1000]
         if include_general_message:
+            output = body.get("output")
+            if isinstance(output, dict):
+                for key in ("summary", "text", "title"):
+                    value = self._str_or_none(output.get(key))
+                    if value:
+                        return redact_text(value)[:1000]
             for key in ("message", "status_message", "description", "detail", "details"):
                 value = self._str_or_none(body.get(key))
                 if value:

@@ -2860,6 +2860,67 @@ def test_webhook_deploy_client_extracts_argocd_status_evidence():
     assert "argocd-resource-token-123456" not in str(evidence)
 
 
+def test_webhook_deploy_client_handles_github_actions_completed_failure_payload():
+    credential = ProviderCredential(
+        provider="webhook",
+        value="project-deploy-token",
+        source="secret_store",
+        project_id=123,
+        secret_name="deploy_token",
+    )
+    client = WebhookDeployClient(credential=credential, webhook_url="https://deploy.example/hooks/test")
+    body = {
+        "workflow_run": {
+            "id": 771,
+            "name": "Production Validation",
+            "status": "completed",
+            "conclusion": "failure",
+            "html_url": "https://github.example/actions/runs/771",
+        },
+        "check_runs": [
+            {
+                "id": 1001,
+                "name": "backend",
+                "status": "completed",
+                "conclusion": "success",
+                "html_url": "https://github.example/checks/1001",
+            },
+            {
+                "id": 1002,
+                "name": "frontend build",
+                "status": "completed",
+                "conclusion": "failure",
+                "html_url": "https://github.example/checks/1002",
+                "output": {
+                    "summary": "npm run build failed token=github-actions-token-123456",
+                },
+            },
+        ],
+        "logs_url": "https://github.example/actions/runs/771/logs",
+    }
+
+    evidence = client._status_evidence(body)
+    log_evidence = client._log_evidence(body)
+
+    assert client._status(body) == DeploymentStatus.FAILED
+    assert evidence["status_platform"] == "github"
+    assert evidence["status_path"] == "workflow_run.conclusion"
+    assert evidence["status_item"] == "Production Validation"
+    assert evidence["failed_status_items"] == [
+        {
+            "name": "frontend build",
+            "raw_status": "failure",
+            "normalized_status": "failed",
+            "path": "check_runs[1].conclusion",
+            "url": "https://github.example/checks/1002",
+            "failure_reason": f"npm run build failed token={REDACTED}",
+            "identifiers": {"id": "1002"},
+        }
+    ]
+    assert log_evidence["log_url"] == "https://github.example/actions/runs/771/logs"
+    assert "github-actions-token-123456" not in str(evidence)
+
+
 @pytest.mark.asyncio
 async def test_delivery_service_creates_gitlab_merge_request_with_project_secret(
     db_session,
