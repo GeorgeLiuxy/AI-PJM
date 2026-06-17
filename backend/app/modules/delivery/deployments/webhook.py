@@ -157,6 +157,12 @@ class WebhookDeployClient:
             "degraded",
             "unhealthy",
             "out_of_sync",
+            "outofsync",
+            "missing",
+            "unknown",
+            "unstable",
+            "aborted",
+            "not_built",
         }:
             return DeploymentStatus.FAILED
         if raw_status in {
@@ -210,6 +216,7 @@ class WebhookDeployClient:
             "detailed_status",
             "pipeline_status",
             "job_status",
+            "phase",
         ):
             raw_value = body.get(key)
             if isinstance(raw_value, dict):
@@ -240,6 +247,9 @@ class WebhookDeployClient:
             "application",
             "sync",
             "health",
+            "status",
+            "operationState",
+            "operation_state",
         ):
             nested = body.get(key)
             if isinstance(nested, dict):
@@ -363,6 +373,9 @@ class WebhookDeployClient:
             "application",
             "sync",
             "health",
+            "status",
+            "operationState",
+            "operation_state",
         ):
             nested = body.get(key)
             if isinstance(nested, dict):
@@ -378,7 +391,12 @@ class WebhookDeployClient:
             return "gitlab"
         if body.get("workflow_run") or body.get("check_suite") or body.get("check_run"):
             return "github"
+        status = body.get("status")
         if body.get("application") and (body.get("sync") or body.get("health")):
+            return "argocd"
+        if isinstance(status, dict) and (
+            status.get("sync") or status.get("health") or status.get("operationState")
+        ):
             return "argocd"
         if body.get("build") or body.get("job"):
             return "jenkins"
@@ -387,6 +405,11 @@ class WebhookDeployClient:
     def _status_item_name(self, body: dict) -> str | None:
         for key in ("name", "stage", "job", "job_name", "display_name", "task", "id"):
             value = self._str_or_none(body.get(key))
+            if value:
+                return value
+        metadata = body.get("metadata")
+        if isinstance(metadata, dict):
+            value = self._str_or_none(metadata.get("name"))
             if value:
                 return value
         return None
@@ -480,6 +503,8 @@ class WebhookDeployClient:
             "check_run_id",
             "commit_sha",
             "sha",
+            "revision",
+            "sync_revision",
             "ref",
             "branch",
             "environment",
@@ -511,6 +536,33 @@ class WebhookDeployClient:
                     item_name = self._status_item_name(item)
                     text = f"{item_name}: {item_reason}" if item_name else item_reason
                     return redact_text(text)[:1000]
+
+        for key in (
+            "pipeline",
+            "job",
+            "deployment",
+            "deploy",
+            "ci",
+            "build",
+            "workflow",
+            "workflow_run",
+            "check_suite",
+            "check_run",
+            "application",
+            "sync",
+            "health",
+            "status",
+            "operationState",
+            "operation_state",
+        ):
+            nested = body.get(key)
+            if not isinstance(nested, dict):
+                continue
+            nested_reason = self._failure_reason(nested)
+            if nested_reason:
+                item_name = self._status_item_name(nested)
+                text = f"{item_name}: {nested_reason}" if item_name else nested_reason
+                return redact_text(text)[:1000]
         return None
 
     def _direct_failure_reason(self, body: dict, *, include_general_message: bool) -> str | None:

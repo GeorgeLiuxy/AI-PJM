@@ -2753,6 +2753,61 @@ async def test_webhook_deploy_client_extracts_deep_ci_cd_failure_evidence(monkey
     assert "project-deploy-token" not in str(remote_status.evidence)
 
 
+def test_webhook_deploy_client_extracts_argocd_status_evidence():
+    credential = ProviderCredential(
+        provider="webhook",
+        value="project-deploy-token",
+        source="secret_store",
+        project_id=123,
+        secret_name="deploy_token",
+    )
+    client = WebhookDeployClient(credential=credential, webhook_url="https://deploy.example/hooks/test")
+    body = {
+        "metadata": {"name": "ai-pjm-test"},
+        "status": {
+            "sync": {"status": "OutOfSync", "revision": "abc123"},
+            "health": {
+                "status": "Degraded",
+                "message": "Application health degraded token=argocd-health-token-123456",
+            },
+            "operationState": {
+                "phase": "Failed",
+                "message": "Sync failed token=argocd-sync-token-123456",
+            },
+            "resources": [
+                {
+                    "kind": "Deployment",
+                    "name": "api",
+                    "status": "OutOfSync",
+                    "health": {
+                        "status": "Degraded",
+                        "message": "CrashLoopBackOff token=argocd-resource-token-123456",
+                    },
+                }
+            ],
+        },
+    }
+
+    evidence = client._status_evidence(body)
+
+    assert client._status(body) == DeploymentStatus.FAILED
+    assert evidence["status_platform"] == "argocd"
+    assert evidence["status_path"] == "status.sync.status"
+    assert evidence["failure_reason"] == f"Application health degraded token={REDACTED}"
+    assert evidence["failed_status_items"] == [
+        {
+            "name": "api",
+            "raw_status": "OutOfSync",
+            "normalized_status": "failed",
+            "path": "status.resources[0].status",
+            "url": None,
+            "failure_reason": f"CrashLoopBackOff token={REDACTED}",
+        }
+    ]
+    assert "argocd-health-token-123456" not in str(evidence)
+    assert "argocd-resource-token-123456" not in str(evidence)
+
+
 @pytest.mark.asyncio
 async def test_delivery_service_creates_gitlab_merge_request_with_project_secret(
     db_session,
