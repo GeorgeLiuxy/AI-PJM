@@ -152,6 +152,12 @@ docker compose --env-file .env.production.local -f docker-compose.production.yml
 .\scripts\check-production-suite.ps1 -CheckRemoteActions
 ```
 
+生产等价 Compose 实跑烟测会使用独立 project name 和避让端口，默认完成后停机：
+
+```powershell
+.\scripts\check-production-compose.ps1 -SmokeUp
+```
+
 远端 GitHub Actions 验证：
 
 ```powershell

@@ -33,6 +33,7 @@
 .\scripts\check-production-compose.ps1
 .\scripts\check-production-suite.ps1 -BuildComposeImages
 .\scripts\check-production-suite.ps1 -CheckRemoteActions
+.\scripts\check-production-compose.ps1 -SmokeUp
 ```
 
 验收标准：脚本所有选中检查通过，且工作区没有未提交的有效代码。
@@ -118,6 +119,14 @@ Compose 配置进入固定门禁：
 ```powershell
 .\scripts\check-production-compose.ps1
 ```
+
+需要验证镜像构建、迁移、后端健康和前端反向代理时，执行隔离实跑烟测：
+
+```powershell
+.\scripts\check-production-compose.ps1 -SmokeUp
+```
+
+该命令默认使用 Compose project `ai-pjm-smoke`、后端端口 `18010`、前端端口 `18080`，完成健康检查后自动 `down --remove-orphans --volumes`，不影响默认开发端口，并保证下次从干净 PostgreSQL 数据卷验证。若需要保留现场排查，可增加 `-KeepRunning`；若只想保留烟测数据卷，可增加 `-PreserveSmokeVolumes`。
 
 如果当前网络可拉取 Docker Hub 基础镜像，可增加镜像构建验证：
 
