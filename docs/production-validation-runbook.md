@@ -154,6 +154,17 @@ Compose 配置进入固定门禁：
 .\scripts\check-provider-quality.ps1 -Provider local
 ```
 
+接入真实 Dify/OpenAI 后，不要只用默认单条需求冒烟。使用脱敏样例文件批量验证：
+
+```powershell
+.\scripts\check-provider-quality.ps1 `
+  -Provider all `
+  -DemandFile docs\provider-quality-samples.example.json `
+  -IncludeImpact
+```
+
+真实试点前可把 `docs/provider-quality-samples.example.json` 替换为目标团队的脱敏历史需求样本。报告会按 provider 和样本逐条输出质量分、扣分项、结构化草稿或脱敏失败原因。
+
 ### P2：容量和运维验证
 
 进入试点生产前执行：

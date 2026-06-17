@@ -167,6 +167,12 @@ $env:GITHUB_TOKEN="<github-token>"
 
 该脚本会读取当前 `HEAD` 对应的 `Production Validation` workflow run，并输出 `.runtime\github-actions\*.json`。如果 GitHub 账号、计费状态或 API 限流导致 workflow 没有真正执行，报告会把它归类为外部阻塞，避免误判为代码问题。
 
+Dify/OpenAI 生产质量评估接入真实凭证后执行：
+
+```powershell
+.\scripts\check-provider-quality.ps1 -Provider all -DemandFile docs\provider-quality-samples.example.json -IncludeImpact
+```
+
 目标环境试点门禁：
 
 ```powershell

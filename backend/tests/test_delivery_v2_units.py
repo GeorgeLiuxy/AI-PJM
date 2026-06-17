@@ -56,7 +56,7 @@ from app.modules.secrets.service import secret_store_service
 from scripts import deployment_sync_worker
 from scripts.database_backup import backup_database, normalize_database_url_for_cli, sqlite_path_from_url
 from scripts.database_restore import RESTORE_CONFIRMATION, restore_database
-from scripts.provider_quality_smoke import run_quality_report
+from scripts.provider_quality_smoke import load_demand_inputs, run_quality_report
 from scripts.recover_symphony_runs import recover_expired_runs
 from scripts.seed_delivery_capacity import seed_capacity_data, validate_safety, workload_status
 from scripts.symphony_worker import Worker, quote_arg, run_loop, tail
@@ -217,6 +217,57 @@ async def test_provider_quality_report_aggregates_providers_and_redacts_errors(m
     error_message = report["results"][1]["error"]["message"]
     assert provider_failure_token not in error_message
     assert "token=[REDACTED]" in error_message
+
+
+def test_provider_quality_loads_json_demand_samples(tmp_path):
+    sample_file = tmp_path / "samples.json"
+    sample_file.write_text(
+        json.dumps(
+            [
+                {"raw_input": "Fix a deployment status bug."},
+                {"demand": "Add provider quality evidence."},
+                "Improve trace visibility.",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    demands = load_demand_inputs(str(sample_file), fallback="fallback", sample_limit=2)
+
+    assert demands == ["Fix a deployment status bug.", "Add provider quality evidence."]
+
+
+@pytest.mark.asyncio
+async def test_provider_quality_report_aggregates_multiple_samples(monkeypatch):
+    class PassingProvider:
+        async def generate_spec(self, demand):
+            return SpecDraft(
+                title=f"Provider quality report {demand.title}",
+                user_story="As an operator, I can validate provider output quality.",
+                scope="Validate provider outputs with a deterministic smoke report.",
+                acceptance_criteria=["Spec quality is scored.", "Provider metadata is redacted."],
+                constraints=["Do not mutate delivery state."],
+                risks=["Provider output can be malformed."],
+                provider_metadata={"provider": "local"},
+            )
+
+    monkeypatch.setattr(
+        "scripts.provider_quality_smoke.get_workflow_provider",
+        lambda provider_name: PassingProvider(),
+    )
+
+    report = await run_quality_report(
+        provider_names=["local"],
+        raw_inputs=["Add trace evidence.", "Fix deployment status."],
+        min_score=0.65,
+        run_impact=False,
+    )
+
+    assert report["passed"] is True
+    assert report["sample_count"] == 2
+    assert report["summary"] == {"passed": 2, "failed": 0, "total": 2}
+    assert [item["sample_index"] for item in report["results"]] == [1, 2]
+    assert report["results"][0]["input"]["raw_input"] == "Add trace evidence."
 
 
 def test_default_workspace_root_points_to_project_root(monkeypatch):

@@ -48,7 +48,7 @@
 
 执行步骤：
 
-1. 运行 `scripts/provider_quality_smoke.py --provider all --output-file .runtime/provider-quality-report.json`，一次覆盖 local、Dify、OpenAI；必要时也可分别运行单个 provider。
+1. 运行 `scripts/provider_quality_smoke.py --provider all --demand-file ../docs/provider-quality-samples.example.json --output-file .runtime/provider-quality-report.json`，一次覆盖 local、Dify、OpenAI；必要时也可分别运行单个 provider。
 2. 每个 Provider 至少验证 10 条真实历史需求或脱敏样例需求。
 3. 记录 Spec/Impact 的 schema 版本、prompt 版本、workflow/model 和质量分。
 4. 人工抽检低分样例，确认扣分项能解释问题。

@@ -1,0 +1,32 @@
+[
+  {
+    "raw_input": "修复交付工作台中执行状态刷新不及时的问题，要求不影响已有任务列表和证据时间线。"
+  },
+  {
+    "raw_input": "为低风险前端文案调整生成任务包，限制只允许修改 frontend/src/app/pages 下的页面文件，并要求 npm run build 通过。"
+  },
+  {
+    "raw_input": "新增 GitLab MR 阻塞评论同步后的自动修复入口，修复成功后必须推回原 MR 源分支并保留证据。"
+  },
+  {
+    "raw_input": "部署 webhook 返回失败状态时，工作台需要展示失败节点、失败原因、日志链接，并禁止进入验收。"
+  },
+  {
+    "raw_input": "增加项目级 OpenAI API Key 健康检查，只能服务端解密探测，前端和日志不能出现明文。"
+  },
+  {
+    "raw_input": "将一条高风险权限变更需求标记为必须人工审批，未审批前不允许创建执行 run。"
+  },
+  {
+    "raw_input": "为 Symphony worker 过期 lease 增加恢复证据，避免 run 永久停留在 running。"
+  },
+  {
+    "raw_input": "补充 PostgreSQL 迁移验证说明，要求目标环境可从空库升级到 Alembic head。"
+  },
+  {
+    "raw_input": "为测试环境重新部署保留来源部署记录、触发人和新部署状态，避免覆盖旧证据。"
+  },
+  {
+    "raw_input": "增加只读容量烟测入口，统计核心接口 p95、p99 和错误率，并把 JSON 报告写入 .runtime/capacity。"
+  }
+]

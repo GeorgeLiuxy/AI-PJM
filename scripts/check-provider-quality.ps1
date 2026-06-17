@@ -3,6 +3,8 @@ param(
     [string]$Provider = "local",
     [double]$MinScore = 0.75,
     [string]$OutputFile = "",
+    [string]$DemandFile = "",
+    [int]$SampleLimit = 0,
     [switch]$IncludeImpact
 )
 
@@ -11,6 +13,14 @@ Set-StrictMode -Version Latest
 
 $Root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $BackendDir = Join-Path $Root "backend"
+
+if ($DemandFile) {
+    if ([System.IO.Path]::IsPathRooted($DemandFile)) {
+        $DemandFile = (Resolve-Path -LiteralPath $DemandFile).Path
+    } else {
+        $DemandFile = (Resolve-Path -LiteralPath (Join-Path $Root $DemandFile)).Path
+    }
+}
 
 if (-not $OutputFile) {
     $timestamp = (Get-Date).ToUniversalTime().ToString("yyyyMMddTHHmmssZ")
@@ -31,6 +41,12 @@ $argsList = @(
 
 if (-not $IncludeImpact) {
     $argsList += "--spec-only"
+}
+if ($DemandFile) {
+    $argsList += @("--demand-file", $DemandFile)
+}
+if ($SampleLimit -gt 0) {
+    $argsList += @("--sample-limit", [string]$SampleLimit)
 }
 
 Push-Location -LiteralPath $BackendDir
