@@ -32,11 +32,21 @@
 .\scripts\check-production-readiness.ps1 -AuditRetries 5
 .\scripts\check-production-compose.ps1
 .\scripts\check-production-suite.ps1 -BuildComposeImages
+.\scripts\check-production-suite.ps1 -CheckRemoteActions
 ```
 
 验收标准：脚本所有选中检查通过，且工作区没有未提交的有效代码。
 
 远端仓库已提供 GitHub Actions 工作流 `.github/workflows/production-validation.yml`。每次 push 或 pull request 会自动执行后端关键测试、PostgreSQL 迁移烟测、Provider local smoke、前端依赖审计、前端回归测试和生产构建。正式合并前应以该工作流通过作为最低门禁。
+
+推送后用固定脚本读取远端 workflow 状态，并保留 JSON 证据：
+
+```powershell
+$env:GITHUB_TOKEN="<github-token>"
+.\scripts\check-github-actions.ps1 -Wait
+```
+
+该脚本默认读取当前 `HEAD`、`main` 分支和 `Production Validation` workflow，报告写入 `.runtime\github-actions\*.json`。如果 GitHub API 限流、Token 失效、Actions 未启用或账号计费锁定导致 workflow 未执行，脚本会把结果标记为外部阻塞；这类问题不应消耗主链路开发时间，修复 GitHub 侧状态后重新运行即可。
 
 本地或目标测试机可用 Docker Compose 启动一套生产等价最小栈：
 

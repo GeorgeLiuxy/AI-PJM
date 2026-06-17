@@ -5,7 +5,8 @@ param(
     [double]$ProviderMinScore = 0.75,
     [int]$AuditRetries = 3,
     [switch]$SkipAudit,
-    [switch]$BuildComposeImages
+    [switch]$BuildComposeImages,
+    [switch]$CheckRemoteActions
 )
 
 $ErrorActionPreference = "Stop"
@@ -51,6 +52,12 @@ Invoke-Step -Name "Production compose config" -Command {
 
 Invoke-Step -Name "Provider quality smoke" -Command {
     & (Join-Path $Root "scripts\check-provider-quality.ps1") -Provider $Provider -MinScore $ProviderMinScore
+}
+
+if ($CheckRemoteActions) {
+    Invoke-Step -Name "GitHub Actions validation" -Command {
+        & (Join-Path $Root "scripts\check-github-actions.ps1") -Wait
+    }
 }
 
 Write-Host ""
