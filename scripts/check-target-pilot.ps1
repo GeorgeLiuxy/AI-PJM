@@ -216,6 +216,24 @@ if ($token) {
             }
         }
         $warnings = @($configData.checks | Where-Object { $_.status -eq "warning" })
+        $pilotBlockerDetails = @($pilotBlockers | ForEach-Object {
+            [pscustomobject]@{
+                id = [string]$_.id
+                status = [string]$_.status
+                title = [string]$_.title
+                summary = [string]$_.summary
+                next_action = [string]$_.next_action
+            }
+        })
+        $warningDetails = @($warnings | ForEach-Object {
+            [pscustomobject]@{
+                id = [string]$_.id
+                status = [string]$_.status
+                title = [string]$_.title
+                summary = [string]$_.summary
+                next_action = [string]$_.next_action
+            }
+        })
 
         if ($criticalChecks.Count -gt 0 -or $pilotBlockers.Count -gt 0) {
             New-CheckResult -Id "config_health" -Title "Configuration health" -Status "failed" -Blocker $true -Summary "Configuration has pilot-blocking issues." -NextAction "Fix database/workspace/git/secrets/MR/deployment/worker configuration before a real pilot." -Evidence @{
@@ -223,11 +241,14 @@ if ($token) {
                 critical_count = $criticalChecks.Count
                 pilot_blockers = @($pilotBlockers | ForEach-Object { "$($_.id):$($_.status)" })
                 warnings = @($warnings | ForEach-Object { "$($_.id):$($_.status)" })
+                pilot_blocker_details = $pilotBlockerDetails
+                warning_details = $warningDetails
             }
         } elseif ($warnings.Count -gt 0) {
             New-CheckResult -Id "config_health" -Title "Configuration health" -Status "warning" -Blocker $false -Summary "Configuration is usable, with non-blocking warnings." -NextAction "Review warning checks after the pilot path is stable." -Evidence @{
                 overall_status = [string]$configData.status
                 warnings = @($warnings | ForEach-Object { "$($_.id):$($_.status)" })
+                warning_details = $warningDetails
             }
         } else {
             New-CheckResult -Id "config_health" -Title "Configuration health" -Status "passed" -Blocker $true -Summary "Configuration health is ready for pilot validation." -Evidence @{
