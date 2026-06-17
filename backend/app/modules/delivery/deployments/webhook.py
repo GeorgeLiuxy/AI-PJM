@@ -251,6 +251,7 @@ class WebhookDeployClient:
             "workflow_run",
             "check_suite",
             "check_run",
+            "object_attributes",
             "application",
             "sync",
             "health",
@@ -282,6 +283,7 @@ class WebhookDeployClient:
             "check_runs",
             "check_suites",
             "workflow_runs",
+            "builds",
             "tasks",
             "deployments",
             "pods",
@@ -353,6 +355,7 @@ class WebhookDeployClient:
             "check_runs",
             "check_suites",
             "workflow_runs",
+            "builds",
             "tasks",
             "deployments",
             "pods",
@@ -403,6 +406,7 @@ class WebhookDeployClient:
             "workflow_run",
             "check_suite",
             "check_run",
+            "object_attributes",
             "application",
             "sync",
             "health",
@@ -420,7 +424,7 @@ class WebhookDeployClient:
             value = self._str_or_none(body.get(key))
             if value:
                 return value.lower()
-        if body.get("object_kind") or body.get("project") or body.get("pipeline"):
+        if body.get("object_kind") or body.get("project") or body.get("pipeline") or body.get("object_attributes"):
             return "gitlab"
         if (
             body.get("workflow_run")
@@ -503,6 +507,7 @@ class WebhookDeployClient:
             "id",
             "deployment_id",
             "pipeline_id",
+            "pipeline_iid",
             "job_id",
             "run_id",
             "build_id",
@@ -541,6 +546,7 @@ class WebhookDeployClient:
             "workflow_id",
             "workflow_run_id",
             "check_run_id",
+            "iid",
             "commit_sha",
             "sha",
             "revision",
@@ -552,6 +558,10 @@ class WebhookDeployClient:
             value = self._str_or_none(body.get(key))
             if value:
                 identifiers[key] = value
+        object_attributes = body.get("object_attributes")
+        if isinstance(object_attributes, dict):
+            for key, value in self._status_identifiers(object_attributes).items():
+                identifiers.setdefault(key, value)
         return identifiers
 
     def _failure_reason(self, body: dict) -> str | None:
@@ -569,6 +579,7 @@ class WebhookDeployClient:
             "check_runs",
             "check_suites",
             "workflow_runs",
+            "builds",
             "tasks",
             "deployments",
             "pods",
@@ -601,6 +612,7 @@ class WebhookDeployClient:
             "workflow_run",
             "check_suite",
             "check_run",
+            "object_attributes",
             "application",
             "sync",
             "health",

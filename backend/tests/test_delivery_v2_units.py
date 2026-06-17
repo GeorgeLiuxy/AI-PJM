@@ -2921,6 +2921,68 @@ def test_webhook_deploy_client_handles_github_actions_completed_failure_payload(
     assert "github-actions-token-123456" not in str(evidence)
 
 
+def test_webhook_deploy_client_handles_gitlab_pipeline_webhook_payload():
+    credential = ProviderCredential(
+        provider="webhook",
+        value="project-deploy-token",
+        source="secret_store",
+        project_id=123,
+        secret_name="deploy_token",
+    )
+    client = WebhookDeployClient(credential=credential, webhook_url="https://deploy.example/hooks/test")
+    body = {
+        "object_kind": "pipeline",
+        "object_attributes": {
+            "id": 314,
+            "iid": 22,
+            "status": "failed",
+            "ref": "main",
+            "sha": "abc123",
+            "url": "https://gitlab.example/group/demo/-/pipelines/314",
+        },
+        "builds": [
+            {
+                "id": 9001,
+                "name": "unit",
+                "stage": "test",
+                "status": "success",
+                "web_url": "https://gitlab.example/group/demo/-/jobs/9001",
+            },
+            {
+                "id": 9002,
+                "name": "deploy-test",
+                "stage": "deploy",
+                "status": "failed",
+                "failure_reason": "script failed token=gitlab-job-token-123456",
+                "duration": 47,
+                "web_url": "https://gitlab.example/group/demo/-/jobs/9002",
+            },
+        ],
+    }
+
+    evidence = client._status_evidence(body)
+
+    assert client._status(body) == DeploymentStatus.FAILED
+    assert evidence["status_platform"] == "gitlab"
+    assert evidence["status_path"] == "object_attributes.status"
+    assert evidence["status_item"] == "314"
+    assert evidence["status_identifiers"] == {"id": "314", "iid": "22", "sha": "abc123", "ref": "main"}
+    assert evidence["failure_reason"] == f"deploy-test: script failed token={REDACTED}"
+    assert evidence["failed_status_items"] == [
+        {
+            "name": "deploy-test",
+            "raw_status": "failed",
+            "normalized_status": "failed",
+            "path": "builds[1].status",
+            "url": "https://gitlab.example/group/demo/-/jobs/9002",
+            "failure_reason": f"script failed token={REDACTED}",
+            "identifiers": {"id": "9002"},
+            "duration_seconds": "47",
+        }
+    ]
+    assert "gitlab-job-token-123456" not in str(evidence)
+
+
 @pytest.mark.asyncio
 async def test_delivery_service_creates_gitlab_merge_request_with_project_secret(
     db_session,
