@@ -11,6 +11,17 @@
 - 启动后端、前端、Symphony worker、部署同步 worker、可观测告警 worker。
 - 若暂未接入上游 Symphony daemon，先把 `SYMPHONY_RUNNER_COMMAND` 配置为目标环境可用的 Codex/Symphony 命令模板；该命令会收到 `{workspace}`、`{task_package_file}` 和 `{task_prompt_file}`。
 
+先运行一次试点门禁汇总，确认哪些是阻塞项，哪些只是后续 follow-up：
+
+```powershell
+.\scripts\check-target-pilot.ps1 `
+  -BaseUrl https://ai-pjm-test.example.com `
+  -ApiToken <monitor-or-admin-token> `
+  -SymphonyBridgeToken <bridge-token>
+```
+
+输出报告位于 `.runtime\target-pilot\*.json`。`status=blocked` 时只处理 `blockers`；普通 warning 记录到后续优化，不阻塞主链路试点。
+
 ## 2. Symphony 执行联调
 
 验收目标：低风险任务能从 AI PJM 入队，由 Symphony/Codex 执行并回写证据。

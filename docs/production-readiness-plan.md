@@ -547,6 +547,7 @@ AI 不允许直接决定：
 - 任务可通过 Symphony Bridge 后台执行。
 - 低风险任务可自动创建真实 MR。
 - 所有人工动作可审计。
+- `scripts/check-target-pilot.ps1` 在目标环境无 blocker，或 blocker 已明确记录为外部环境待配置项并有责任人。
 
 ### 阶段 B：完整测试闭环
 
@@ -597,6 +598,7 @@ AI 不允许直接决定：
 - 每个完成任务有完整证据链。
 - 关键操作有审计记录。
 - 有基本监控和告警。（工作台最小告警、Prometheus 指标出口和 Prometheus 告警规则样例已完成，目标平台接入待验证）
+- 目标环境试点门禁脚本 `scripts/check-target-pilot.ps1` 输出 `status=ready`；若为 `blocked`，只处理 `blockers`，非阻塞 follow-up 不拖慢试点。
 
 ## 8. 生产验收清单
 

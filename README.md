@@ -150,6 +150,17 @@ docker compose --env-file .env.production.local -f docker-compose.production.yml
 .\scripts\check-production-compose.ps1
 ```
 
+目标环境试点门禁：
+
+```powershell
+.\scripts\check-target-pilot.ps1 `
+  -BaseUrl https://ai-pjm-test.example.com `
+  -ApiToken <monitor-or-admin-token> `
+  -SymphonyBridgeToken <bridge-token>
+```
+
+该脚本会输出 `.runtime\target-pilot\*.json`，把真实阻塞项和非阻塞 follow-up 分开；试点前优先处理 blocker，不要被普通 warning 牵引。
+
 目标环境容量验证需要后端服务已启动：
 
 ```powershell
