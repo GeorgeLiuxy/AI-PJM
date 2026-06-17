@@ -41,6 +41,7 @@ def main() -> int:
             concurrency=args.concurrency,
             timeout_seconds=args.timeout_seconds,
             token=args.token,
+            trust_env=args.trust_env,
         )
     )
     print(json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True))
@@ -88,6 +89,11 @@ def parse_args() -> argparse.Namespace:
         help="Optional Bearer token when AUTH_ENABLED=true.",
     )
     parser.add_argument(
+        "--trust-env",
+        action="store_true",
+        help="Use proxy and SSL settings from the environment. Disabled by default for stable target smoke tests.",
+    )
+    parser.add_argument(
         "--max-p95-ms",
         type=float,
         default=float(os.environ.get("AI_PJM_PERF_MAX_P95_MS", "1000")),
@@ -110,6 +116,7 @@ async def run_smoke(
     concurrency: int,
     timeout_seconds: float,
     token: str = "",
+    trust_env: bool = False,
 ) -> dict:
     endpoint_list = tuple(endpoints or DEFAULT_ENDPOINTS)
     if not endpoint_list:
@@ -122,7 +129,12 @@ async def run_smoke(
     base = base_url.rstrip("/")
     timeout = httpx.Timeout(timeout_seconds)
 
-    async with httpx.AsyncClient(base_url=base, headers=headers, timeout=timeout) as client:
+    async with httpx.AsyncClient(
+        base_url=base,
+        headers=headers,
+        timeout=timeout,
+        trust_env=trust_env,
+    ) as client:
         tasks = [
             asyncio.create_task(_timed_get(client, endpoint_list[index % len(endpoint_list)], semaphore))
             for index in range(safe_total)

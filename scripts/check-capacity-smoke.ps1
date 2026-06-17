@@ -10,7 +10,8 @@ param(
     [int]$Concurrency = 12,
     [double]$MaxP95Ms = 1000,
     [double]$MaxErrorRatePercent = 1,
-    [string]$Token = $(if ($env:AI_PJM_API_TOKEN) { $env:AI_PJM_API_TOKEN } else { "" })
+    [string]$Token = $(if ($env:AI_PJM_API_TOKEN) { $env:AI_PJM_API_TOKEN } else { "" }),
+    [switch]$TrustEnv
 )
 
 $ErrorActionPreference = "Stop"
@@ -88,6 +89,9 @@ $perfArgs = @(
 )
 if ($Token) {
     $perfArgs += @("--token", $Token)
+}
+if ($TrustEnv) {
+    $perfArgs += "--trust-env"
 }
 
 $perfCommand = @("python") + $perfArgs

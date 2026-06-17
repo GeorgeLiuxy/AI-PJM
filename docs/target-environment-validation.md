@@ -116,6 +116,8 @@
 .\scripts\check-capacity-smoke.ps1 -SkipSeed -BaseUrl https://ai-pjm-test.example.com -Requests 120 -Concurrency 12
 ```
 
+容量脚本默认让 `performance_smoke.py` 直连目标地址，避免本地代理把 `127.0.0.1` 或内网地址误判为 502；如果目标环境必须通过代理访问，再显式增加 `-TrustEnv`。
+
 建议记录：
 
 - 数据量：需求数、任务数、run 数、日志数、MR/PR 数。
