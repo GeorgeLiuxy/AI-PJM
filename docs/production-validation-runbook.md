@@ -32,13 +32,12 @@
 .\scripts\check-production-readiness.ps1 -AuditRetries 3
 .\scripts\check-production-compose.ps1
 .\scripts\check-production-suite.ps1 -BuildComposeImages
-.\scripts\check-production-suite.ps1 -CheckRemoteActions
 .\scripts\check-production-compose.ps1 -SmokeUp
 ```
 
 验收标准：脚本所有选中检查通过，且工作区没有未提交的有效代码。若只有 `npm audit` 因 registry、代理或审计服务不可用失败，应记录为外部阻塞；本地功能验证可临时使用 `-SkipAudit`，修复外部网络或 registry 状态后再补跑审计。
 
-远端仓库已提供 GitHub Actions 工作流 `.github/workflows/production-validation.yml`。每次 push 或 pull request 会自动执行后端关键测试、PostgreSQL 迁移烟测、Provider local smoke、前端依赖审计、前端回归测试和生产构建。正式合并前应以该工作流通过作为最低门禁。
+远端仓库提供可选 GitHub Actions 工作流 `.github/workflows/production-validation.yml`。该工作流只允许手动 `workflow_dispatch` 触发，不会在 push 或 pull request 时自动运行，避免 GitHub 账号计费状态或 Actions 配额阻塞主链路。正式合并前的最低门禁以本地 `check-production-suite.ps1`、生产等价 Compose 验证和目标环境试点证据为准。
 
 推送后用固定脚本读取远端 workflow 状态，并保留 JSON 证据：
 
@@ -48,6 +47,8 @@ $env:GITHUB_TOKEN="<github-token>"
 ```
 
 该脚本默认读取当前 `HEAD`、`main` 分支和 `Production Validation` workflow，报告写入 `.runtime\github-actions\*.json`。如果 GitHub API 限流、Token 失效、Actions 未启用或账号计费锁定导致 workflow 未执行，脚本会把结果标记为外部阻塞；这类问题不应消耗主链路开发时间，修复 GitHub 侧状态后重新运行即可。
+
+如团队当前不使用付费 GitHub Actions 或账号处于计费锁定状态，不需要为了试点生产强行处理；保持远端 CI 为可选增强项即可。
 
 `GITHUB_TOKEN` 是默认必需项，避免未认证 API 被限流。只有明确需要验证匿名访问时，才使用 `-AllowAnonymous`。
 

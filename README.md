@@ -149,7 +149,6 @@ docker compose --env-file .env.production.local -f docker-compose.production.yml
 ```powershell
 .\scripts\check-production-suite.ps1
 .\scripts\check-production-compose.ps1
-.\scripts\check-production-suite.ps1 -CheckRemoteActions
 ```
 
 生产等价 Compose 实跑烟测会使用独立 project name 和避让端口，默认完成后停机：
@@ -158,14 +157,14 @@ docker compose --env-file .env.production.local -f docker-compose.production.yml
 .\scripts\check-production-compose.ps1 -SmokeUp
 ```
 
-远端 GitHub Actions 验证：
+可选远端 GitHub Actions 验证：
 
 ```powershell
 $env:GITHUB_TOKEN="<github-token>"
 .\scripts\check-github-actions.ps1 -Wait
 ```
 
-该脚本会读取当前 `HEAD` 对应的 `Production Validation` workflow run，并输出 `.runtime\github-actions\*.json`。如果 GitHub 账号、计费状态或 API 限流导致 workflow 没有真正执行，报告会把它归类为外部阻塞，避免误判为代码问题。
+GitHub Actions 现在只支持手动 `workflow_dispatch`，不会在 push 或 PR 时自动触发，避免账号计费或 Actions 配额影响主链路。该脚本会读取当前 `HEAD` 对应的 `Production Validation` workflow run，并输出 `.runtime\github-actions\*.json`。如果 GitHub 账号、计费状态或 API 限流导致 workflow 没有真正执行，报告会把它归类为外部阻塞，避免误判为代码问题。
 
 Dify/OpenAI 生产质量评估接入真实凭证后执行：
 
