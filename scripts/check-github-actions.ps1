@@ -108,6 +108,57 @@ function Convert-ApiError {
     return $Message
 }
 
+function Get-CheckRunDiagnostics {
+    param([object]$Job)
+
+    if (-not $Job.check_run_url) {
+        return [pscustomobject]@{
+            title = ""
+            summary = ""
+            text = ""
+            annotations = @()
+        }
+    }
+
+    $checkResult = Invoke-GitHubApi -Uri ([string]$Job.check_run_url)
+    if (-not $checkResult.ok -or -not $checkResult.body) {
+        return [pscustomobject]@{
+            title = ""
+            summary = ""
+            text = ""
+            annotations = @()
+        }
+    }
+
+    $check = $checkResult.body
+    $annotations = @()
+    $annotationCount = 0
+    if ($check.output -and $check.output.annotations_count) {
+        $annotationCount = [int]$check.output.annotations_count
+    }
+    if ($annotationCount -gt 0) {
+        $annotationsResult = Invoke-GitHubApi -Uri "$($Job.check_run_url)/annotations?per_page=50"
+        if ($annotationsResult.ok -and $annotationsResult.body) {
+            $annotations = @($annotationsResult.body | ForEach-Object {
+                [pscustomobject]@{
+                    path = $_.path
+                    start_line = $_.start_line
+                    end_line = $_.end_line
+                    annotation_level = $_.annotation_level
+                    message = $_.message
+                }
+            })
+        }
+    }
+
+    return [pscustomobject]@{
+        title = $(if ($check.output) { [string]$check.output.title } else { "" })
+        summary = $(if ($check.output) { [string]$check.output.summary } else { "" })
+        text = $(if ($check.output) { [string]$check.output.text } else { "" })
+        annotations = $annotations
+    }
+}
+
 function Get-RunClassification {
     param([object]$Run, [object[]]$Jobs)
 
@@ -120,11 +171,27 @@ function Get-RunClassification {
         if ($job.name) {
             $jobMessages += "$($job.name): status=$($job.status), conclusion=$($job.conclusion)"
         }
+        if ($job.output_title) {
+            $jobMessages += [string]$job.output_title
+        }
+        if ($job.output_summary) {
+            $jobMessages += [string]$job.output_summary
+        }
+        if ($job.output_text) {
+            $jobMessages += [string]$job.output_text
+        }
+        foreach ($annotation in @($job.annotations)) {
+            if ($annotation.message) {
+                $jobMessages += [string]$annotation.message
+            }
+        }
     }
 
     $raw = ($jobMessages -join " `n")
     if ($raw -match "billing" -or $raw -match "account.*locked") {
         $externalReason = "GitHub did not start CI because the account or billing state is locked."
+    } elseif ($raw -match "job was not started" -or $raw -match "runner.*not.*started") {
+        $externalReason = "GitHub did not start one or more CI jobs before assigning a runner."
     }
 
     if ($status -eq "completed" -and $conclusion -eq "success") {
@@ -143,7 +210,7 @@ function Get-RunClassification {
             $summary = $externalReason
         }
         return [pscustomobject]@{
-            status = "failed"
+            status = $(if ($externalReason) { "blocked" } else { "failed" })
             blocker = $true
             summary = $summary
             next_action = $(if ($externalReason) { "Fix the GitHub account or billing lock, then rerun the workflow." } else { "Open the run URL, fix failed checks, and push again." })
@@ -267,7 +334,24 @@ do {
     if ($run.jobs_url) {
         $jobsResult = Invoke-GitHubApi -Uri ([string]$run.jobs_url)
         if ($jobsResult.ok) {
-            $jobs = @($jobsResult.body.jobs)
+            $jobs = @($jobsResult.body.jobs | ForEach-Object {
+                $diagnostics = Get-CheckRunDiagnostics -Job $_
+                [pscustomobject]@{
+                    name = $_.name
+                    status = $_.status
+                    conclusion = $_.conclusion
+                    started_at = $_.started_at
+                    completed_at = $_.completed_at
+                    html_url = $_.html_url
+                    check_run_url = $_.check_run_url
+                    runner_id = $_.runner_id
+                    runner_name = $_.runner_name
+                    output_title = $diagnostics.title
+                    output_summary = $diagnostics.summary
+                    output_text = $diagnostics.text
+                    annotations = @($diagnostics.annotations)
+                }
+            })
         }
     }
 
@@ -300,6 +384,12 @@ do {
                     started_at = $_.started_at
                     completed_at = $_.completed_at
                     html_url = $_.html_url
+                    runner_id = $_.runner_id
+                    runner_name = $_.runner_name
+                    output_title = $_.output_title
+                    output_summary = $_.output_summary
+                    output_text = $_.output_text
+                    annotations = @($_.annotations)
                 }
             })
         }
