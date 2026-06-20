@@ -35,11 +35,15 @@
 .\scripts\check-production-compose.ps1 -SmokeUp
 .\scripts\check-symphony-runner.ps1 -UseRecommendedCodexCommand -RequireCodex
 .\scripts\check-production-suite.ps1 -CheckSymphonyRunner -UseRecommendedCodexRunner -RequireCodexRunner
+.\scripts\check-merge-request-provider.ps1 -Provider github
+.\scripts\check-production-suite.ps1 -CheckMergeRequestProvider -MergeRequestProvider github
 ```
 
 验收标准：脚本所有选中检查通过，且工作区没有未提交的有效代码。若只有 `npm audit` 因 registry、代理或审计服务不可用失败，应记录为外部阻塞；本地功能验证可临时使用 `-SkipAudit`，修复外部网络或 registry 状态后再补跑审计。
 
 Symphony/Codex runner 配置验证默认不执行 AI 编码任务，只生成样例 task package 和 prompt 文件，检查 `SYMPHONY_RUNNER_COMMAND` 或推荐 Codex 命令模板能否展开，并确认 Codex CLI 是否在 PATH 中。只有明确需要端到端执行命令时才增加 `-Execute`。
+
+MR/PR Provider 预检默认只读仓库、目标分支和 MR/PR 列表，不创建 PR/MR、不推送分支。通过后仍需确认 token 具备创建 PR/MR 和源分支 push 权限，再进入真实低风险需求试点。
 
 远端仓库提供可选 GitHub Actions 工作流 `.github/workflows/production-validation.yml`。该工作流只允许手动 `workflow_dispatch` 触发，不会在 push 或 pull request 时自动运行，避免 GitHub 账号计费状态或 Actions 配额阻塞主链路。正式合并前的最低门禁以本地 `check-production-suite.ps1`、生产等价 Compose 验证和目标环境试点证据为准。
 

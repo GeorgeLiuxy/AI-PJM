@@ -12,6 +12,7 @@
 
 2. 真实 MR/PR Provider
    - 需要在目标环境配置 GitLab/GitHub 仓库、目标分支、项目级 `gitlab_token` 或 `github_token`。
+   - 本地可用 `scripts/check-merge-request-provider.ps1 -Provider github` 或 `-Provider gitlab` 做只读预检；该检查不会创建 MR/PR 或推送分支。
    - 本地已具备创建、同步评审、webhook 回写和修复后推回源分支能力；目标环境要验证的是凭证权限和仓库策略。
 
 3. 真实测试环境部署 Provider

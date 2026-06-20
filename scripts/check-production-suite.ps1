@@ -10,6 +10,9 @@ param(
     [switch]$UseRecommendedCodexRunner,
     [switch]$RequireCodexRunner,
     [switch]$ExecuteSymphonyRunner,
+    [switch]$CheckMergeRequestProvider,
+    [ValidateSet("auto", "github", "gitlab", "both")]
+    [string]$MergeRequestProvider = "auto",
     [switch]$CheckRemoteActions
 )
 
@@ -64,6 +67,12 @@ if ($CheckSymphonyRunner) {
             -UseRecommendedCodexCommand:$UseRecommendedCodexRunner `
             -RequireCodex:$RequireCodexRunner `
             -Execute:$ExecuteSymphonyRunner
+    }
+}
+
+if ($CheckMergeRequestProvider) {
+    Invoke-Step -Name "Merge request provider validation" -Command {
+        & (Join-Path $Root "scripts\check-merge-request-provider.ps1") -Provider $MergeRequestProvider
     }
 }
 
