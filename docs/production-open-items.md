@@ -17,6 +17,7 @@
 
 3. 真实测试环境部署 Provider
    - 需要目标 CI/CD 或部署平台提供 webhook URL、状态 URL、日志 URL 和失败 payload 样例。
+   - 本地可用 `scripts/check-deployment-provider.ps1` 做无副作用预检；该检查不会触发部署，只验证 webhook、token 和环境配置。
    - 通用状态解析已覆盖常见 `pipeline/job/stage/step/check/task` 结构；专用字段应在拿到真实 payload 后再补。
 
 4. 上游 Symphony daemon 联调

@@ -13,6 +13,9 @@ param(
     [switch]$CheckMergeRequestProvider,
     [ValidateSet("auto", "github", "gitlab", "both")]
     [string]$MergeRequestProvider = "auto",
+    [switch]$CheckDeploymentProvider,
+    [ValidateSet("webhook", "local-config")]
+    [string]$DeploymentProvider = "webhook",
     [switch]$CheckRemoteActions
 )
 
@@ -73,6 +76,12 @@ if ($CheckSymphonyRunner) {
 if ($CheckMergeRequestProvider) {
     Invoke-Step -Name "Merge request provider validation" -Command {
         & (Join-Path $Root "scripts\check-merge-request-provider.ps1") -Provider $MergeRequestProvider
+    }
+}
+
+if ($CheckDeploymentProvider) {
+    Invoke-Step -Name "Deployment provider validation" -Command {
+        & (Join-Path $Root "scripts\check-deployment-provider.ps1") -Provider $DeploymentProvider
     }
 }
 
