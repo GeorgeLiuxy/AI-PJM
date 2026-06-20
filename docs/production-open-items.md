@@ -20,6 +20,7 @@
 
 4. 上游 Symphony daemon 联调
    - 当前已有 AI PJM Bridge、最小 worker、Compose worker profile 和 `SYMPHONY_RUNNER_COMMAND` adapter。
+   - 本地可用 `scripts/check-symphony-runner.ps1 -UseRecommendedCodexCommand -RequireCodex` 验证命令行 runner 模板和 Codex CLI，不需要触发真实 AI 编码。
    - 如果接入真实 daemon，必须让 daemon 通过 bridge claim/event/complete 回写，不能绕过 AI PJM 门禁。
 
 5. Dify/OpenAI 生产质量评估

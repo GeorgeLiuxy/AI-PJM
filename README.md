@@ -157,6 +157,13 @@ docker compose --env-file .env.production.local -f docker-compose.production.yml
 .\scripts\check-production-compose.ps1 -SmokeUp
 ```
 
+Symphony/Codex runner 配置验证默认不调用 AI，只检查命令模板、占位符和 Codex CLI：
+
+```powershell
+.\scripts\check-symphony-runner.ps1 -UseRecommendedCodexCommand -RequireCodex
+.\scripts\check-production-suite.ps1 -CheckSymphonyRunner -UseRecommendedCodexRunner -RequireCodexRunner
+```
+
 可选远端 GitHub Actions 验证：
 
 ```powershell

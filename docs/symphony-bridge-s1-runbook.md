@@ -212,6 +212,12 @@ python scripts/symphony_worker.py `
 `--workspace` 建议使用项目根目录，这样 changed files 会以仓库相对路径回写，AI PJM 才能准确校验 allowed paths。required checks 会按常见命令自动选择 `backend` 或 `frontend` 子目录运行。
 路径里包含空格时，runner command 应优先使用 `{workspace_q}`、`{task_prompt_file_q}`、`{task_package_file_q}` 这类已转义占位符。
 
+启动 worker 前可先做本地 runner 模板验证。该命令默认不调用 AI，只检查推荐 Codex 命令模板、占位符展开和 Codex CLI 是否可用：
+
+```powershell
+.\scripts\check-symphony-runner.ps1 -UseRecommendedCodexCommand -RequireCodex
+```
+
 后续接真实 Symphony 时，优先把 `--runner-command` 替换为 Symphony/Codex 的本地执行入口；不要让前端页面或 `/dispatch` HTTP 请求承担长任务执行。
 
 ## 8. 本地常驻 worker

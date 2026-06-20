@@ -6,6 +6,10 @@ param(
     [int]$AuditRetries = 1,
     [switch]$SkipAudit,
     [switch]$BuildComposeImages,
+    [switch]$CheckSymphonyRunner,
+    [switch]$UseRecommendedCodexRunner,
+    [switch]$RequireCodexRunner,
+    [switch]$ExecuteSymphonyRunner,
     [switch]$CheckRemoteActions
 )
 
@@ -52,6 +56,15 @@ Invoke-Step -Name "Production compose config" -Command {
 
 Invoke-Step -Name "Provider quality smoke" -Command {
     & (Join-Path $Root "scripts\check-provider-quality.ps1") -Provider $Provider -MinScore $ProviderMinScore
+}
+
+if ($CheckSymphonyRunner) {
+    Invoke-Step -Name "Symphony runner validation" -Command {
+        & (Join-Path $Root "scripts\check-symphony-runner.ps1") `
+            -UseRecommendedCodexCommand:$UseRecommendedCodexRunner `
+            -RequireCodex:$RequireCodexRunner `
+            -Execute:$ExecuteSymphonyRunner
+    }
 }
 
 if ($CheckRemoteActions) {
