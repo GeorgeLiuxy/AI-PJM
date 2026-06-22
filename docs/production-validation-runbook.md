@@ -24,7 +24,6 @@
 
 ```powershell
 .\scripts\check-production-suite.ps1 -IncludePostgres
-.\scripts\check-production-suite.ps1 -Provider all
 .\scripts\check-production-suite.ps1 -AuditRetries 3
 .\scripts\check-production-readiness.ps1 -SkipFrontend
 .\scripts\check-production-readiness.ps1 -SkipBackend
