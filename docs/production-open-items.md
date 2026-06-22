@@ -25,15 +25,11 @@
    - 本地可用 `scripts/check-symphony-runner.ps1 -UseRecommendedCodexCommand -RequireCodex` 验证命令行 runner 模板和 Codex CLI，不需要触发真实 AI 编码。
    - 如果接入真实 daemon，必须让 daemon 通过 bridge claim/event/complete 回写，不能绕过 AI PJM 门禁。
 
-5. Dify/OpenAI 生产质量评估
-   - 需要真实 workflow、API Key 和脱敏样例需求。
-   - 接入后运行 `scripts/check-provider-quality.ps1 -Provider all`，只允许 Provider 返回结构化草稿，不允许直接推进流程状态。
-
-6. 集中监控和告警渠道
+5. 集中监控和告警渠道
    - 本地已有 Prometheus 文本指标和通用 webhook 告警 worker。
    - 目标环境需要接入实际 Prometheus/日志平台/通知渠道，并验证一条测试告警可被接收和定位。
 
-7. 可选 GitHub Actions 远端 CI 验证
+6. 可选 GitHub Actions 远端 CI 验证
    - 远端 workflow 已改为只允许手动 `workflow_dispatch` 触发，不再随 push 或 PR 自动运行。
    - 如团队有可用的免费 public repo、self-hosted runner 或已解除计费锁定的 GitHub Actions，可通过 `scripts/check-github-actions.ps1` 读取 `Production Validation` workflow 状态。
    - 默认必须提供 `GITHUB_TOKEN`，避免未认证 GitHub API 被限流；只有明确验证匿名访问时才使用 `-AllowAnonymous`。
@@ -50,6 +46,7 @@
 - 大规模多 Agent 自动评审。
 - 知识图谱或长期语义记忆体系。
 - 进一步 UI 视觉打磨。
+- Dify/OpenAI 质量对照；固定研发流程主路径先使用本地规则 Provider 和受控任务包，只有需要外部 AI 方案质量评估时再接入真实 workflow、API Key 和脱敏样例。
 
 ## 当前优先验证顺序
 

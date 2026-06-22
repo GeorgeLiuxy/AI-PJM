@@ -6,7 +6,7 @@
 
 - 使用非默认管理员密码。
 - 使用目标环境数据库，执行 `backend/scripts/migrate.py upgrade head`。
-- 配置项目级 `openai_api_key`、`dify_api_key`、`gitlab_token` 或 `github_token`、`deploy_token`。
+- 配置项目级 `gitlab_token` 或 `github_token`、`deploy_token`。`openai_api_key`、`dify_api_key` 只在需要外部 AI 质量对照时配置，不作为试点主链路前置条件。
 - 配置真实代码仓库路径、默认分支、MR/PR 目标仓库和测试环境地址。
 - 启动后端、前端、Symphony worker、部署同步 worker、可观测告警 worker。
 - 若暂未接入上游 Symphony daemon，先把 `SYMPHONY_RUNNER_COMMAND` 配置为目标环境可用的 Codex/Symphony 命令模板；该命令会收到 `{workspace}`、`{task_package_file}` 和 `{task_prompt_file}`。
@@ -42,9 +42,9 @@
 - cancelled run 的 late complete 会被拒绝。
 - changed files 超出 allowed paths 时，run 不得进入 succeeded。
 
-## 3. Dify/OpenAI 生产质量评估
+## 3. 可选 Dify/OpenAI 质量评估
 
-验收目标：远端 Provider 只生成草稿，不绕过门禁，并能量化输出质量。
+验收目标：在需要外部 AI 对照时，远端 Provider 只生成草稿，不绕过门禁，并能量化输出质量。固定研发流程下可先跳过本节，使用本地规则 Provider 完成试点主链路。
 
 执行步骤：
 
@@ -53,7 +53,7 @@
 3. 记录 Spec/Impact 的 schema 版本、prompt 版本、workflow/model 和质量分。
 4. 人工抽检低分样例，确认扣分项能解释问题。
 
-如果脚本输出 `status=blocked`，说明缺少真实 Dify/OpenAI 凭证或 workflow id，应先补齐外部配置；本地不再反复重试。
+如果脚本输出 `status=blocked`，说明缺少真实 Dify/OpenAI 凭证或 workflow id。除非本次试点明确要比较外部 Provider 质量，否则记录为 follow-up，不阻塞 MR/PR、部署和验收闭环。
 
 通过标准：
 

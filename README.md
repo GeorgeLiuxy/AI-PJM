@@ -1,6 +1,6 @@
 # AI PJM
 
-> 当前状态校正：生产化进度以 `docs/v2-execution-roadmap.md` 和 `docs/production-readiness-plan.md` 为准。当前 GitLab MR、GitHub PR、GitLab/GitHub webhook、部署 pending 后台同步、最小告警 worker、Prometheus 文本指标出口、PostgreSQL/Alembic 迁移链路、Docker Compose 生产等价最小栈、Symphony 生产 worker 兼容 adapter、通用 CI/CD 深度状态轮询和 Dify/OpenAI Provider 首版都已具备本地可验证实现；仍需在真实环境完成上游 Symphony daemon 联调、目标 CI/CD 平台专用 payload/日志解析、Dify/OpenAI 生产联调、容量基准和集中监控接入。
+> 当前状态校正：生产化进度以 `docs/v2-execution-roadmap.md` 和 `docs/production-readiness-plan.md` 为准。当前 GitLab MR、GitHub PR、GitLab/GitHub webhook、部署 pending 后台同步、最小告警 worker、Prometheus 文本指标出口、PostgreSQL/Alembic 迁移链路、Docker Compose 生产等价最小栈、Symphony 生产 worker 兼容 adapter、通用 CI/CD 深度状态轮询和 Dify/OpenAI Provider 首版都已具备本地可验证实现；仍需在真实环境完成上游 Symphony daemon 联调、目标 CI/CD 平台专用 payload/日志解析、容量基准和集中监控接入。Dify/OpenAI 生产联调降为可选质量增强。
 
 AI PJM 是一个 AI 辅助工程交付编排平台。它不是通用项目管理工具，不是企业治理平台，也不是替代 Codex 的编码器；它负责把业务输入转成可审计、可验证、可协作的工程交付链路。
 
@@ -187,7 +187,7 @@ $env:GITHUB_TOKEN="<github-token>"
 
 GitHub Actions 现在只支持手动 `workflow_dispatch`，不会在 push 或 PR 时自动触发，避免账号计费或 Actions 配额影响主链路。该脚本会读取当前 `HEAD` 对应的 `Production Validation` workflow run，并输出 `.runtime\github-actions\*.json`。如果 GitHub 账号、计费状态或 API 限流导致 workflow 没有真正执行，报告会把它归类为外部阻塞，避免误判为代码问题。
 
-Dify/OpenAI 生产质量评估接入真实凭证后执行：
+可选 Dify/OpenAI 质量评估接入真实凭证后执行；固定研发流程试点不依赖该步骤：
 
 ```powershell
 .\scripts\check-provider-quality.ps1 -Provider all -DemandFile docs\provider-quality-samples.example.json -IncludeImpact

@@ -450,11 +450,11 @@ AI 不允许直接决定：
 
 - AI 会放大低质量变更的交付速度。
 
-### P10：Dify/OpenAI 生产接入
+### P10：可选 Dify/OpenAI 质量增强
 
-目标：让外部 AI 编排提高方案质量，而不是接管平台状态。
+目标：在固定研发流程之外需要质量对照或特殊分析增强时，让外部 AI Provider 提供结构化草稿；默认试点生产不依赖 Dify/OpenAI。
 
-当前状态：Dify/OpenAI Provider 首版已完成，默认不启用。Dify 使用配置的 workflow 生成 Spec/Impact 结构化草稿；OpenAI 使用 Responses API 的 JSON Schema 结构化输出生成 Spec/Impact 草稿。两者都只返回草稿，不直接改数据库状态、不执行代码、不绕过门禁。已具备必填字段、列表字段、风险等级和置信度校验；超时、平台级重试和本地规则降级首版已完成。降级会记录失败 provider、尝试次数和脱敏错误，并在 Spec open questions、门禁 evidence 或 Impact metadata 中可追溯。OpenAI/GitLab 凭证已有只读可用性探测，Dify 支持显式安全 URL 探测；Spec/Impact 会记录 workflow/model、schema name、schema version、prompt version 和本地确定性质量评分。`scripts/provider_quality_smoke.py` 已提供只读质量烟测入口，可在目标环境调用 local/Dify/OpenAI 生成草稿并输出质量分，支持 `--provider all` 聚合报告、`--output-file` 留存 JSON 证据，以及 provider 异常的脱敏错误条目。远端生产联调仍待在真实 Dify/OpenAI 环境执行。
+当前状态：Dify/OpenAI Provider 首版已完成，默认不启用。Dify 使用配置的 workflow 生成 Spec/Impact 结构化草稿；OpenAI 使用 Responses API 的 JSON Schema 结构化输出生成 Spec/Impact 草稿。两者都只返回草稿，不直接改数据库状态、不执行代码、不绕过门禁。已具备必填字段、列表字段、风险等级和置信度校验；超时、平台级重试和本地规则降级首版已完成。降级会记录失败 provider、尝试次数和脱敏错误，并在 Spec open questions、门禁 evidence 或 Impact metadata 中可追溯。固定研发流程下，主路径优先使用本地规则 Provider、任务包和门禁；远端 Dify/OpenAI 生产联调只作为可选质量增强，不作为试点生产硬门槛。
 
 实施内容：
 
@@ -476,7 +476,7 @@ AI 不允许直接决定：
 
 不做风险：
 
-- 外部 AI 输出不可控，问题难以复盘。
+- 如果把 Dify/OpenAI 放入主路径，容易引入额外凭证、workflow 漂移和外部平台可用性风险，反而降低试点落地速度。
 
 ### P11：可观测性和运维
 
@@ -569,11 +569,11 @@ AI 不允许直接决定：
 
 完成后可以扩大到多项目、多任务。
 
-1. P10 Dify/OpenAI 生产接入。
-2. P12 产品化交互。
-3. 队列取消、暂停、恢复。
-4. 多项目看板。
-5. 批量任务调度。
+1. P12 产品化交互。
+2. 队列取消、暂停、恢复。
+3. 多项目看板。
+4. 批量任务调度。
+5. 可选 Dify/OpenAI 质量增强。
 6. 企业 SSO、复杂角色、审计报表聚合。
 
 阶段 C 验收：

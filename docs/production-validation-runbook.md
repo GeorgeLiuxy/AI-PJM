@@ -149,15 +149,15 @@ Compose 配置进入固定门禁：
 .\scripts\check-production-compose.ps1 -BuildImages
 ```
 
-### P1：外部 Provider 质量验证
+### P3：可选外部 Provider 质量验证
 
-本地规则 Provider 只能证明平台链路可用，不能证明生产 AI 质量。接入真实 Dify/OpenAI 后执行：
+当前生产试点主路径不依赖 Dify/OpenAI。本地规则 Provider 已足够支撑固定研发流程下的 Spec、任务包和门禁流转；外部 Provider 只用于后续质量对照或特殊需求分析增强。接入真实 Dify/OpenAI 后可执行：
 
 ```powershell
 .\scripts\check-provider-quality.ps1 -Provider all
 ```
 
-`-Provider all` 会预检 Dify/OpenAI 的外部配置。缺少 `DIFY_API_BASE_URL`、`DIFY_API_KEY`、`DIFY_SPEC_WORKFLOW_ID`、`DIFY_IMPACT_WORKFLOW_ID` 或 `OPENAI_API_KEY` 时，脚本会生成 `status=blocked` 的报告并返回可识别的外部阻塞错误；这属于外部条件缺失，不要反复重试。
+`-Provider all` 会预检 Dify/OpenAI 的外部配置。缺少 `DIFY_API_BASE_URL`、`DIFY_API_KEY`、`DIFY_SPEC_WORKFLOW_ID`、`DIFY_IMPACT_WORKFLOW_ID` 或 `OPENAI_API_KEY` 时，脚本会生成 `status=blocked` 的报告并返回可识别的外部条件缺失；这不阻塞本地生产验证、目标试点门禁或真实低风险需求闭环，不要反复重试。
 
 验收标准：
 

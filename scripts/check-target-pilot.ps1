@@ -319,7 +319,7 @@ if ($RunProviderQuality) {
                 min_score = $ProviderMinScore
             }
         } elseif ($LASTEXITCODE -eq 2) {
-            New-CheckResult -Id "provider_quality" -Title "Provider quality" -Status "blocked" -Blocker $true -Summary "Provider quality smoke is blocked by missing external provider configuration." -NextAction "Configure Dify/OpenAI credentials and workflow ids, or run with -Provider local for local-only validation." -Evidence @{
+            New-CheckResult -Id "provider_quality" -Title "Provider quality" -Status "warning" -Blocker $false -Summary "External provider quality smoke is skipped because optional external provider configuration is missing." -NextAction "Keep the pilot on the local provider path, or configure Dify/OpenAI later only if external AI quality evaluation is in scope." -Evidence @{
                 provider = $Provider
                 output_file = $providerOutput
             }
@@ -332,7 +332,7 @@ if ($RunProviderQuality) {
     } catch {
         $message = [string]$_.Exception.Message
         if ($message -like "Provider quality external blocker:*") {
-            New-CheckResult -Id "provider_quality" -Title "Provider quality" -Status "blocked" -Blocker $true -Summary "Provider quality smoke is blocked by missing external provider configuration." -NextAction "Configure Dify/OpenAI credentials and workflow ids, or run with -Provider local for local-only validation." -Evidence @{
+            New-CheckResult -Id "provider_quality" -Title "Provider quality" -Status "warning" -Blocker $false -Summary "External provider quality smoke is skipped because optional external provider configuration is missing." -NextAction "Keep the pilot on the local provider path, or configure Dify/OpenAI later only if external AI quality evaluation is in scope." -Evidence @{
                 provider = $Provider
                 output_file = $providerOutput
                 error = $message
